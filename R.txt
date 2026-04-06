@@ -1,0 +1,11 @@
+int attr autoPlay 0x0
+int attr enableAutomaticInitialization 0x0
+int attr handleNetworkEvents 0x0
+int attr videoId 0x0
+int id view_tree_lifecycle_owner 0x0
+int raw ayp_youtube_player 0x0
+int[] styleable YouTubePlayerView { 0x0, 0x0, 0x0, 0x0 }
+int styleable YouTubePlayerView_autoPlay 0
+int styleable YouTubePlayerView_enableAutomaticInitialization 1
+int styleable YouTubePlayerView_handleNetworkEvents 2
+int styleable YouTubePlayerView_videoId 3

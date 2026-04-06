@@ -1,0 +1,15 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Base.Theme.Sleppify" parent="Theme.Material3.Dark.NoActionBar">
+        <!-- Customize your light/dark theme here. -->
+        <item name="colorPrimary">@color/stitch_blue</item>
+        <item name="colorSecondary">@color/stitch_blue_light</item>
+        <item name="android:windowBackground">@color/surface_dark</item>
+        <item name="android:navigationBarColor">@color/surface_dark</item>
+        <item name="android:statusBarColor">@color/surface_dark</item>
+        <item name="android:textColorPrimary">@color/text_primary</item>
+        <item name="android:textColorSecondary">@color/text_secondary</item>
+    </style>
+
+    <style name="Theme.Sleppify" parent="Base.Theme.Sleppify" />
+</resources>
