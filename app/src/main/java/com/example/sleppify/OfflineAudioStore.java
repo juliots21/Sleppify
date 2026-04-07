@@ -30,22 +30,6 @@ public final class OfflineAudioStore {
     private OfflineAudioStore() {
     }
 
-    public static boolean isOfflineDownloadConfigured() {
-        return !TextUtils.isEmpty(getOfflineDownloadBaseUrl());
-    }
-
-    @NonNull
-    public static String getOfflineDownloadBaseUrl() {
-        String value = BuildConfig.OFFLINE_AUDIO_BASE_URL == null
-                ? ""
-                : BuildConfig.OFFLINE_AUDIO_BASE_URL.trim();
-
-        if (value.endsWith("/")) {
-            value = value.substring(0, value.length() - 1);
-        }
-        return value;
-    }
-
     @NonNull
     public static File getOfflineAudioDir(@NonNull Context context) {
         return new File(context.getFilesDir(), OFFLINE_AUDIO_DIR);

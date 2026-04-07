@@ -14,7 +14,7 @@
         <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="592dp"
-            android:layout_marginBottom="6dp"
+            android:layout_marginBottom="0dp"
             android:clipChildren="false"
             android:clipToPadding="false">
 
@@ -184,47 +184,11 @@
         </FrameLayout>
     </LinearLayout>
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="24dp"
-        android:layout_marginStart="24dp"
-        android:layout_marginEnd="24dp"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
-
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:fontFamily="@font/manrope_variable"
-            android:text="Lista"
-            android:textColor="@color/text_primary"
-            android:textSize="20sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:fontFamily="@font/inter_variable"
-            android:text="Ordenar por"
-            android:textColor="@color/stitch_blue"
-            android:textSize="12sp"
-            android:textStyle="bold" />
-
-        <ImageView
-            android:layout_width="18dp"
-            android:layout_height="18dp"
-            android:layout_marginStart="3dp"
-            android:src="@drawable/ic_expand_more"
-            app:tint="@color/stitch_blue" />
-    </LinearLayout>
-
     <TextView
         android:id="@+id/tvTracksState"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
+        android:layout_marginTop="0dp"
         android:layout_marginStart="24dp"
         android:layout_marginEnd="24dp"
         android:fontFamily="@font/inter_variable"
@@ -236,7 +200,7 @@
         android:id="@+id/llOfflineLoadingIndicator"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="3dp"
         android:layout_marginStart="24dp"
         android:gravity="center_vertical"
         android:orientation="horizontal"

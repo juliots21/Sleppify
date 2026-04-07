@@ -2,6 +2,7 @@ package com.example.sleppify;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
@@ -9,15 +10,19 @@ import android.util.Log;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.app.NotificationManagerCompat;
+import androidx.work.WorkManager;
 
 import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.FirebaseFirestoreException;
+import com.google.firebase.firestore.QuerySnapshot;
 import com.google.firebase.firestore.Source;
 import com.google.firebase.firestore.WriteBatch;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -57,6 +62,7 @@ public final class CloudSyncManager {
     private static final String FIELD_PREFS = "prefs";
     private static final String FIELD_UPDATED_AT = "updatedAt";
     private static final String FIELD_AGENDA_JSON = "agendaJson";
+    private static final String OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME = "offline_playlist_queue";
     private static final String LEGACY_SELECTED_PRESET = "selected_preset";
     private static final String LEGACY_ACTIVE_PROFILE_ID = "active_profile_id";
     private static final String LEGACY_DEVICE_PROFILE_PREFIX = "device_profile_";
@@ -391,7 +397,17 @@ public final class CloudSyncManager {
         handler.removeCallbacks(agendaSyncRunnable);
         clearUploadRetryCallbacks();
         resetUploadRetryAttempts();
+        pauseUserScopedBackgroundWork();
         forceClearSyncState();
+    }
+
+    public void pauseUserScopedBackgroundWork() {
+        try {
+            WorkManager manager = WorkManager.getInstance(appContext);
+            manager.cancelUniqueWork(OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME);
+            manager.cancelAllWorkByTag(OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME);
+        } catch (Throwable ignored) {
+        }
     }
 
     public void deleteUserDataFromCloud(@NonNull String userId, @NonNull SyncCallback callback) {
@@ -402,38 +418,71 @@ public final class CloudSyncManager {
 
         beginNetworkSync();
 
-        // Evita listar la subcoleccion completa (operacion que suele requerir reglas mas amplias).
-        // Borramos directamente los documentos conocidos del alcance de la app.
+        DocumentReference userDoc = firestore.collection(USERS_COLLECTION).document(userId);
+        userDoc.collection(APP_SCOPE_COLLECTION)
+                .get(Source.SERVER)
+                .addOnSuccessListener(scopeDocs -> deleteScopeDocumentsThenParent(userId, scopeDocs, callback))
+                .addOnFailureListener(listError -> {
+                    // Fallback: borra docs conocidos aunque no sea posible listar la coleccion completa.
+                    WriteBatch fallbackBatch = firestore.batch();
+                    fallbackBatch.delete(eqDoc(userId));
+                    fallbackBatch.delete(settingsDoc(userId));
+                    fallbackBatch.delete(agendaDoc(userId));
+                    fallbackBatch.delete(userScope(userId));
+                    fallbackBatch.commit()
+                            .addOnSuccessListener(unused -> deleteUserDocBestEffort(userId, callback))
+                            .addOnFailureListener(e -> {
+                                endNetworkSync();
+                                callback.onComplete(false, toUserFacingSyncError(e));
+                            });
+                });
+    }
+
+    private void deleteScopeDocumentsThenParent(
+            @NonNull String userId,
+            @NonNull QuerySnapshot scopeDocs,
+            @NonNull SyncCallback callback
+    ) {
         WriteBatch batch = firestore.batch();
-        batch.delete(eqDoc(userId));
-        batch.delete(settingsDoc(userId));
-        batch.delete(agendaDoc(userId));
+        int deleteCount = 0;
+
+        for (DocumentSnapshot doc : scopeDocs.getDocuments()) {
+            batch.delete(doc.getReference());
+            deleteCount++;
+        }
+
+        if (deleteCount == 0) {
+            batch.delete(eqDoc(userId));
+            batch.delete(settingsDoc(userId));
+            batch.delete(agendaDoc(userId));
+            batch.delete(userScope(userId));
+        }
 
         batch.commit()
-                .addOnSuccessListener(unused -> {
-                    // Intento best-effort: eliminar el doc raiz del usuario puede estar bloqueado por reglas.
-                    // Si falla por permisos pero los docs scoped ya se eliminaron, no bloqueamos el flujo.
-                    DocumentReference userDoc = firestore.collection(USERS_COLLECTION).document(userId);
-                    userDoc.delete()
-                            .addOnSuccessListener(ignore -> {
-                                endNetworkSync();
-                                callback.onComplete(true, null);
-                            })
-                            .addOnFailureListener(parentDeleteError -> {
-                                if (parentDeleteError instanceof FirebaseFirestoreException
-                                        && ((FirebaseFirestoreException) parentDeleteError).getCode() == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
-                                    endNetworkSync();
-                                    callback.onComplete(true, null);
-                                    return;
-                                }
-
-                                endNetworkSync();
-                                callback.onComplete(false, toUserFacingSyncError(parentDeleteError));
-                            });
-                })
+                .addOnSuccessListener(unused -> deleteUserDocBestEffort(userId, callback))
                 .addOnFailureListener(e -> {
                     endNetworkSync();
                     callback.onComplete(false, toUserFacingSyncError(e));
+                });
+    }
+
+    private void deleteUserDocBestEffort(@NonNull String userId, @NonNull SyncCallback callback) {
+        DocumentReference userDoc = firestore.collection(USERS_COLLECTION).document(userId);
+        userDoc.delete()
+                .addOnSuccessListener(ignore -> {
+                    endNetworkSync();
+                    callback.onComplete(true, null);
+                })
+                .addOnFailureListener(parentDeleteError -> {
+                    if (parentDeleteError instanceof FirebaseFirestoreException
+                            && ((FirebaseFirestoreException) parentDeleteError).getCode() == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                        endNetworkSync();
+                        callback.onComplete(true, null);
+                        return;
+                    }
+
+                    endNetworkSync();
+                    callback.onComplete(false, toUserFacingSyncError(parentDeleteError));
                 });
     }
 
@@ -455,6 +504,137 @@ public final class CloudSyncManager {
         ensureEqDefaults();
         ensureSettingsDefaults();
         ensureAgendaDefaults();
+    }
+
+    public void clearLocalUserDataCompletely() {
+        onUserSignedOut();
+
+        try {
+            WorkManager.getInstance(appContext).cancelAllWork();
+        } catch (Throwable ignored) {
+        }
+
+        try {
+            NotificationManagerCompat.from(appContext).cancelAll();
+        } catch (Throwable ignored) {
+        }
+
+        clearAllSharedPreferencesFiles();
+        clearAllDatabases();
+
+        clearDirectoryContents(appContext.getFilesDir());
+        clearDirectoryContents(appContext.getCacheDir());
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            clearDirectoryContents(appContext.getNoBackupFilesDir());
+            clearDirectoryContents(appContext.getCodeCacheDir());
+        }
+
+        File[] externalFiles = appContext.getExternalFilesDirs(null);
+        if (externalFiles != null) {
+            for (File dir : externalFiles) {
+                clearDirectoryContents(dir);
+            }
+        }
+
+        File[] externalCaches = appContext.getExternalCacheDirs();
+        if (externalCaches != null) {
+            for (File dir : externalCaches) {
+                clearDirectoryContents(dir);
+            }
+        }
+    }
+
+    private void clearAllSharedPreferencesFiles() {
+        try {
+            File sharedPrefsDir = new File(appContext.getApplicationInfo().dataDir, "shared_prefs");
+            File[] prefFiles = sharedPrefsDir.listFiles();
+            if (prefFiles == null) {
+                return;
+            }
+
+            for (File prefFile : prefFiles) {
+                if (prefFile == null) {
+                    continue;
+                }
+                String fileName = prefFile.getName();
+                if (TextUtils.isEmpty(fileName) || !fileName.endsWith(".xml")) {
+                    continue;
+                }
+
+                String prefName = fileName.substring(0, fileName.length() - 4);
+                try {
+                    appContext.getSharedPreferences(prefName, Context.MODE_PRIVATE)
+                            .edit()
+                            .clear()
+                            .commit();
+                } catch (Throwable ignored) {
+                }
+                // Best-effort physical cleanup after clear.
+                try {
+                    //noinspection ResultOfMethodCallIgnored
+                    prefFile.delete();
+                } catch (Throwable ignored) {
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void clearAllDatabases() {
+        try {
+            String[] databaseNames = appContext.databaseList();
+            if (databaseNames == null) {
+                return;
+            }
+
+            for (String dbName : databaseNames) {
+                if (TextUtils.isEmpty(dbName)) {
+                    continue;
+                }
+                try {
+                    appContext.deleteDatabase(dbName);
+                } catch (Throwable ignored) {
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void clearDirectoryContents(@Nullable File rootDir) {
+        if (rootDir == null || !rootDir.exists() || !rootDir.isDirectory()) {
+            return;
+        }
+
+        File[] children = rootDir.listFiles();
+        if (children == null) {
+            return;
+        }
+
+        for (File child : children) {
+            deleteRecursively(child);
+        }
+    }
+
+    private void deleteRecursively(@Nullable File node) {
+        if (node == null || !node.exists()) {
+            return;
+        }
+
+        if (node.isDirectory()) {
+            File[] children = node.listFiles();
+            if (children != null) {
+                for (File child : children) {
+                    deleteRecursively(child);
+                }
+            }
+        }
+
+        try {
+            //noinspection ResultOfMethodCallIgnored
+            node.delete();
+        } catch (Throwable ignored) {
+        }
     }
 
     @NonNull

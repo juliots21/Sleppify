@@ -36,6 +36,7 @@ import androidx.fragment.app.Fragment;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.slider.Slider;
+import com.google.android.material.switchmaterial.SwitchMaterial;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -89,18 +90,18 @@ public class EqualizerFragment extends Fragment {
         };
 
     private static final PresetConfig[] PRESET_CONFIGS = new PresetConfig[]{
-            new PresetConfig(PRESET_DEFAULT, "Flat", new float[]{0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f}, 0f, BASS_DEFAULT_FREQUENCY_HZ, AudioEffectsService.BASS_TYPE_NATURAL),
-            new PresetConfig(PRESET_DARK, "Dark", new float[]{4.0f, 3.0f, 2.0f, 1.0f, 0.0f, -1.0f, -2.0f, -3.0f, -4.0f}, 0f, BASS_DEFAULT_FREQUENCY_HZ, AudioEffectsService.BASS_TYPE_NATURAL),
-            new PresetConfig(PRESET_BRIGHT, "Bright", new float[]{-4.0f, -3.0f, -2.0f, -1.0f, 0.0f, 1.0f, 2.0f, 3.0f, 4.0f}, 0f, BASS_DEFAULT_FREQUENCY_HZ, AudioEffectsService.BASS_TYPE_NATURAL),
-            new PresetConfig(PRESET_BASS_BOOST, "Bass boost", new float[]{5.5f, 4.5f, 1.5f, 0.2f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}, 3.0f, AudioEffectsService.bassSliderFromCutoffHz(80f), AudioEffectsService.BASS_TYPE_NATURAL),
-            new PresetConfig(PRESET_BASS_REDUCTION, "Bass reduction", new float[]{-5.5f, -4.5f, -1.5f, -0.2f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}, 0f, BASS_DEFAULT_FREQUENCY_HZ, AudioEffectsService.BASS_TYPE_NATURAL),
-            new PresetConfig(PRESET_TREBLE_BOOST, "Treble boost", new float[]{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.2f, 1.5f, 5.3f, 3.8f}, 0f, BASS_DEFAULT_FREQUENCY_HZ, AudioEffectsService.BASS_TYPE_NATURAL),
-            new PresetConfig(PRESET_TREBLE_REDUCTION, "Treble reduction", new float[]{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, -0.2f, -1.5f, -5.3f, -3.8f}, 0f, BASS_DEFAULT_FREQUENCY_HZ, AudioEffectsService.BASS_TYPE_NATURAL),
-            new PresetConfig(PRESET_VOCAL_BOOST, "Vocal boost", new float[]{-1.0f, -1.1f, -0.6f, 0.7f, 3.1f, 4.6f, 3.3f, 0.6f, 0.0f}, 0f, BASS_DEFAULT_FREQUENCY_HZ, AudioEffectsService.BASS_TYPE_NATURAL),
-            new PresetConfig(PRESET_M_SHAPED, "M-shaped", new float[]{-3.0f, 0.0f, 2.8f, 0.5f, -2.0f, 0.5f, 2.8f, 0.0f, -3.0f}, 0f, BASS_DEFAULT_FREQUENCY_HZ, AudioEffectsService.BASS_TYPE_NATURAL),
-            new PresetConfig(PRESET_U_SHAPED, "U-shaped", new float[]{4.0f, 0.0f, -2.0f, -2.6f, -2.7f, -2.6f, -2.0f, 0.0f, 4.0f}, 0f, BASS_DEFAULT_FREQUENCY_HZ, AudioEffectsService.BASS_TYPE_NATURAL),
-            new PresetConfig(PRESET_V_SHAPE, "V-shaped", new float[]{4.0f, 2.9f, 0.2f, -2.3f, -4.0f, -2.3f, 0.2f, 2.9f, 4.0f}, 0f, BASS_DEFAULT_FREQUENCY_HZ, AudioEffectsService.BASS_TYPE_NATURAL),
-            new PresetConfig(PRESET_W_SHAPED, "W-shaped", new float[]{3.0f, 0.0f, -2.8f, -0.5f, 2.0f, -0.5f, -2.8f, 0.0f, 3.0f}, 0f, BASS_DEFAULT_FREQUENCY_HZ, AudioEffectsService.BASS_TYPE_NATURAL)
+            new PresetConfig(PRESET_DEFAULT, "Plano", new float[]{0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f}, 0f, BASS_DEFAULT_FREQUENCY_HZ, AudioEffectsService.BASS_TYPE_NATURAL),
+            new PresetConfig(PRESET_DARK, "Oscuro", new float[]{4.0f, 3.0f, 2.0f, 1.0f, 0.0f, -1.0f, -2.0f, -3.0f, -4.0f}, 0f, BASS_DEFAULT_FREQUENCY_HZ, AudioEffectsService.BASS_TYPE_NATURAL),
+            new PresetConfig(PRESET_BRIGHT, "Brillante", new float[]{-4.0f, -3.0f, -2.0f, -1.0f, 0.0f, 1.0f, 2.0f, 3.0f, 4.0f}, 0f, BASS_DEFAULT_FREQUENCY_HZ, AudioEffectsService.BASS_TYPE_NATURAL),
+            new PresetConfig(PRESET_BASS_BOOST, "Refuerzo de graves", new float[]{5.5f, 4.5f, 1.5f, 0.2f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}, 3.0f, AudioEffectsService.bassSliderFromCutoffHz(80f), AudioEffectsService.BASS_TYPE_NATURAL),
+            new PresetConfig(PRESET_BASS_REDUCTION, "Reduccion de graves", new float[]{-5.5f, -4.5f, -1.5f, -0.2f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}, 0f, BASS_DEFAULT_FREQUENCY_HZ, AudioEffectsService.BASS_TYPE_NATURAL),
+            new PresetConfig(PRESET_TREBLE_BOOST, "Refuerzo de agudos", new float[]{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.2f, 1.5f, 5.3f, 3.8f}, 0f, BASS_DEFAULT_FREQUENCY_HZ, AudioEffectsService.BASS_TYPE_NATURAL),
+            new PresetConfig(PRESET_TREBLE_REDUCTION, "Reduccion de agudos", new float[]{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, -0.2f, -1.5f, -5.3f, -3.8f}, 0f, BASS_DEFAULT_FREQUENCY_HZ, AudioEffectsService.BASS_TYPE_NATURAL),
+            new PresetConfig(PRESET_VOCAL_BOOST, "Refuerzo vocal", new float[]{-1.0f, -1.1f, -0.6f, 0.7f, 3.1f, 4.6f, 3.3f, 0.6f, 0.0f}, 0f, BASS_DEFAULT_FREQUENCY_HZ, AudioEffectsService.BASS_TYPE_NATURAL),
+            new PresetConfig(PRESET_M_SHAPED, "Forma M", new float[]{-3.0f, 0.0f, 2.8f, 0.5f, -2.0f, 0.5f, 2.8f, 0.0f, -3.0f}, 0f, BASS_DEFAULT_FREQUENCY_HZ, AudioEffectsService.BASS_TYPE_NATURAL),
+            new PresetConfig(PRESET_U_SHAPED, "Forma U", new float[]{4.0f, 0.0f, -2.0f, -2.6f, -2.7f, -2.6f, -2.0f, 0.0f, 4.0f}, 0f, BASS_DEFAULT_FREQUENCY_HZ, AudioEffectsService.BASS_TYPE_NATURAL),
+            new PresetConfig(PRESET_V_SHAPE, "Forma V", new float[]{4.0f, 2.9f, 0.2f, -2.3f, -4.0f, -2.3f, 0.2f, 2.9f, 4.0f}, 0f, BASS_DEFAULT_FREQUENCY_HZ, AudioEffectsService.BASS_TYPE_NATURAL),
+            new PresetConfig(PRESET_W_SHAPED, "Forma W", new float[]{3.0f, 0.0f, -2.8f, -0.5f, 2.0f, -0.5f, -2.8f, 0.0f, 3.0f}, 0f, BASS_DEFAULT_FREQUENCY_HZ, AudioEffectsService.BASS_TYPE_NATURAL)
     };
 
     private static final BassTypeOption[] BASS_TYPE_OPTIONS = new BassTypeOption[]{
@@ -123,13 +124,14 @@ public class EqualizerFragment extends Fragment {
     private TextView tvEqAiSuggestionText;
     private MaterialButton btnEqAiApply;
     private MaterialButton btnEqAiDismiss;
-    private MaterialButton btnEqEnableOverlay;
-    private View scrollEqContent;
-    private View layoutEqDisabledOverlay;
     private TextView tvSelectedPreset;
     private View cardPresetSelector;
     private View cardGraphicEq;
+    private View cardBassTuner;
     private EqCurveEditorView eqCurveView;
+    private SwitchMaterial switchEqEnabled;
+    @Nullable
+    private PopupWindow activePopupWindow;
     private Slider sliderBassGain;
     private TextView tvBassGainValue;
     private TextView tvSelectedBassType;
@@ -222,13 +224,12 @@ public class EqualizerFragment extends Fragment {
         tvEqAiSuggestionText = view.findViewById(R.id.tvEqAiSuggestionText);
         btnEqAiApply = view.findViewById(R.id.btnEqAiApply);
         btnEqAiDismiss = view.findViewById(R.id.btnEqAiDismiss);
-        btnEqEnableOverlay = view.findViewById(R.id.btnEqEnableOverlay);
-        scrollEqContent = view.findViewById(R.id.scrollEqContent);
-        layoutEqDisabledOverlay = view.findViewById(R.id.layoutEqDisabledOverlay);
         tvSelectedPreset = view.findViewById(R.id.tvSelectedPreset);
         cardPresetSelector = view.findViewById(R.id.cardPresetSelector);
         cardGraphicEq = view.findViewById(R.id.cardGraphicEq);
+        cardBassTuner = view.findViewById(R.id.cardBassTuner);
         eqCurveView = view.findViewById(R.id.eqCurveView);
+        switchEqEnabled = view.findViewById(R.id.switchEqEnabled);
 
         sliderBassGain = view.findViewById(R.id.sliderBassGain);
         tvBassGainValue = view.findViewById(R.id.tvBassGainValue);
@@ -280,9 +281,32 @@ public class EqualizerFragment extends Fragment {
 
     @Override
     public void onStop() {
+        dismissActivePopupWindow();
         unregisterOutputDeviceCallback();
         stopEqAiLoadingAnimation();
         super.onStop();
+    }
+
+    private void dismissActivePopupWindow() {
+        if (activePopupWindow == null) {
+            return;
+        }
+        try {
+            activePopupWindow.dismiss();
+        } catch (Throwable ignored) {
+            // Evita crash por ventanas desacopladas al cambiar de modulo.
+        }
+        activePopupWindow = null;
+    }
+
+    private void registerActivePopupWindow(@NonNull PopupWindow popupWindow) {
+        dismissActivePopupWindow();
+        activePopupWindow = popupWindow;
+        popupWindow.setOnDismissListener(() -> {
+            if (activePopupWindow == popupWindow) {
+                activePopupWindow = null;
+            }
+        });
     }
 
     private void loadPreferencesIntoUi() {
@@ -372,14 +396,26 @@ public class EqualizerFragment extends Fragment {
 
         cardPresetSelector.setOnClickListener(v -> showPresetPopup());
 
+        if (switchEqEnabled != null) {
+            switchEqEnabled.setOnCheckedChangeListener((buttonView, isChecked) -> {
+                if (restoringUi || preferences == null) {
+                    return;
+                }
+                preferences.edit().putBoolean(AudioEffectsService.KEY_ENABLED, isChecked).apply();
+                if (isChecked) {
+                    startOrUpdateService();
+                } else {
+                    stopEqService();
+                }
+                refreshEqModuleState();
+            });
+        }
+
         if (btnEqAiApply != null) {
             btnEqAiApply.setOnClickListener(v -> applyAiSuggestion());
         }
         if (btnEqAiDismiss != null) {
             btnEqAiDismiss.setOnClickListener(v -> undoAiSuggestion());
-        }
-        if (btnEqEnableOverlay != null) {
-            btnEqEnableOverlay.setOnClickListener(v -> enableEqFromOverlay());
         }
     }
 
@@ -406,67 +442,55 @@ public class EqualizerFragment extends Fragment {
         return preferences != null && preferences.getBoolean(AudioEffectsService.KEY_ENABLED, false);
     }
 
-    private void enableEqFromOverlay() {
-        if (preferences == null) {
-            return;
-        }
-
-        AudioDeviceInfo selectedOutput = null;
-        if (audioManager != null) {
-            try {
-                selectedOutput = selectPreferredOutput(audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS));
-            } catch (Throwable ignored) {
-                // Si falla la lectura de salida, seguimos con el perfil activo actual.
-            }
-        }
-
-        AudioDeviceProfileStore.restoreActiveValuesForOutput(preferences, selectedOutput);
-        preferences.edit().putBoolean(AudioEffectsService.KEY_ENABLED, true).apply();
-        refreshOutputDeviceAndProfile(false);
-        refreshEqModuleState();
-        startOrUpdateService();
-    }
-
     private void refreshEqModuleState() {
         boolean eqEnabled = isEqEnabled();
 
-        if (scrollEqContent != null) {
-            scrollEqContent.setAlpha(eqEnabled ? 1f : 0.42f);
-        }
-
-        if (layoutEqDisabledOverlay != null) {
-            layoutEqDisabledOverlay.setVisibility(eqEnabled ? View.GONE : View.VISIBLE);
+        if (switchEqEnabled != null && switchEqEnabled.isChecked() != eqEnabled) {
+            restoringUi = true;
+            switchEqEnabled.setChecked(eqEnabled);
+            restoringUi = false;
         }
 
         if (cardPresetSelector != null) {
             cardPresetSelector.setEnabled(eqEnabled);
             cardPresetSelector.setClickable(eqEnabled);
             cardPresetSelector.setFocusable(eqEnabled);
+            cardPresetSelector.setAlpha(eqEnabled ? 1f : 0.45f);
         }
 
         if (cardBassTypeSelector != null) {
             cardBassTypeSelector.setEnabled(eqEnabled);
             cardBassTypeSelector.setClickable(eqEnabled);
             cardBassTypeSelector.setFocusable(eqEnabled);
+            cardBassTypeSelector.setAlpha(eqEnabled ? 1f : 0.45f);
         }
 
         if (cardReverbSelector != null) {
             cardReverbSelector.setEnabled(eqEnabled);
             cardReverbSelector.setClickable(eqEnabled);
             cardReverbSelector.setFocusable(eqEnabled);
+            cardReverbSelector.setAlpha(eqEnabled ? 1f : 0.45f);
         }
 
         if (cardGraphicEq != null) {
             cardGraphicEq.setEnabled(eqEnabled);
             cardGraphicEq.setClickable(eqEnabled);
             cardGraphicEq.setFocusable(eqEnabled);
-            cardGraphicEq.setAlpha(eqEnabled ? 1f : 0.6f);
+            cardGraphicEq.setAlpha(eqEnabled ? 1f : 0.45f);
+        }
+
+        if (cardBassTuner != null) {
+            cardBassTuner.setEnabled(eqEnabled);
+            cardBassTuner.setClickable(eqEnabled);
+            cardBassTuner.setFocusable(eqEnabled);
+            cardBassTuner.setAlpha(eqEnabled ? 1f : 0.45f);
         }
 
         if (eqCurveView != null) {
             eqCurveView.setEnabled(eqEnabled);
             eqCurveView.setEditingEnabled(false);
             eqCurveView.setHandlesVisible(false);
+            eqCurveView.setAlpha(eqEnabled ? 1f : 0.45f);
         }
         if (sliderBassGain != null) {
             sliderBassGain.setEnabled(eqEnabled);
@@ -475,16 +499,13 @@ public class EqualizerFragment extends Fragment {
             sliderBassFrequency.setEnabled(eqEnabled);
         }
         boolean hasSuggestion = pendingEqAiSuggestion != null;
-        boolean canApplySuggestion = eqEnabled && hasSuggestion && !eqAiLoading && !eqAiSuggestionApplied;
-        boolean canUndoSuggestion = eqEnabled && hasSuggestion && !eqAiLoading && eqAiSuggestionApplied && eqAiUndoSnapshot != null;
+        boolean canApplySuggestion = hasSuggestion && !eqAiLoading && !eqAiSuggestionApplied;
+        boolean canUndoSuggestion = hasSuggestion && !eqAiLoading && eqAiSuggestionApplied && eqAiUndoSnapshot != null;
         if (btnEqAiApply != null) {
-            btnEqAiApply.setEnabled(canApplySuggestion);
+            btnEqAiApply.setEnabled(eqEnabled && canApplySuggestion);
         }
         if (btnEqAiDismiss != null) {
-            btnEqAiDismiss.setEnabled(canUndoSuggestion);
-        }
-        if (btnEqEnableOverlay != null) {
-            btnEqEnableOverlay.setEnabled(!eqEnabled);
+            btnEqAiDismiss.setEnabled(eqEnabled && canUndoSuggestion);
         }
     }
 
@@ -530,7 +551,7 @@ public class EqualizerFragment extends Fragment {
         AudioDeviceInfo selected = null;
         if (audioManager == null) {
             setOutputUi(
-                    "Speakers",
+                "Altavoces",
                     R.drawable.ic_output_speaker,
                     "Salida por altavoz"
             );
@@ -548,7 +569,7 @@ public class EqualizerFragment extends Fragment {
 
             if (selected == null) {
                 setOutputUi(
-                        "Speakers",
+                    "Altavoces",
                         R.drawable.ic_output_speaker,
                         "Salida por altavoz"
                 );
@@ -574,7 +595,7 @@ public class EqualizerFragment extends Fragment {
                     );
                 } else {
                     setOutputUi(
-                            "Speakers",
+                            "Altavoces",
                             R.drawable.ic_output_speaker,
                             "Salida por altavoz"
                     );
@@ -1140,9 +1161,10 @@ public class EqualizerFragment extends Fragment {
                 true
         );
         popupWindow.setOutsideTouchable(true);
-        popupWindow.setFocusable(false);
+        popupWindow.setFocusable(true);
         popupWindow.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
         popupWindow.setElevation(dp(8));
+        registerActivePopupWindow(popupWindow);
 
         for (int i = 0; i < PRESET_CONFIGS.length; i++) {
             PresetConfig preset = PRESET_CONFIGS[i];
@@ -1207,9 +1229,10 @@ public class EqualizerFragment extends Fragment {
                 true
         );
         popupWindow.setOutsideTouchable(true);
-        popupWindow.setFocusable(false);
+        popupWindow.setFocusable(true);
         popupWindow.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
         popupWindow.setElevation(dp(8));
+        registerActivePopupWindow(popupWindow);
 
         for (BassTypeOption option : BASS_TYPE_OPTIONS) {
             boolean isSelected = option.value == selectedBassType;
@@ -1251,9 +1274,10 @@ public class EqualizerFragment extends Fragment {
                 true
         );
         popupWindow.setOutsideTouchable(true);
-        popupWindow.setFocusable(false);
+        popupWindow.setFocusable(true);
         popupWindow.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
         popupWindow.setElevation(dp(8));
+        registerActivePopupWindow(popupWindow);
 
         for (ReverbOption option : REVERB_OPTIONS) {
             boolean isSelected = option.value == selectedReverbLevel;
@@ -2258,6 +2282,17 @@ public class EqualizerFragment extends Fragment {
         } catch (Throwable ignored) {
             // Fallback para OEMs que restringen foreground service de forma transitoria.
             context.startService(serviceIntent);
+        }
+    }
+
+    private void stopEqService() {
+        Context context = requireContext().getApplicationContext();
+        Intent serviceIntent = new Intent(context, AudioEffectsService.class);
+        serviceIntent.setAction(AudioEffectsService.ACTION_STOP);
+        try {
+            context.startService(serviceIntent);
+        } catch (Throwable ignored) {
+            // Evita crash por restricciones transitorias de OEM.
         }
     }
 

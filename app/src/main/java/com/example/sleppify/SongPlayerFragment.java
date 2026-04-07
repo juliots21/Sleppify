@@ -35,7 +35,6 @@ import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.SeekBar;
 import android.widget.TextView;
-import android.widget.Toast;
 import android.widget.FrameLayout;
 
 import androidx.annotation.NonNull;
@@ -108,6 +107,7 @@ public class SongPlayerFragment extends Fragment {
 
     private static final String PREFS_PLAYER_STATE = "player_state";
     private static final String PREF_PLAYBACK_POS_PREFIX = "yt_pos_";
+    private static final String PREF_SOCIAL_STATS_PREFIX = "yt_social_stats_";
     private static final String PREF_LAST_PLAYLIST_ID = "stream_last_playlist_id";
     private static final String PREF_LAST_PLAYLIST_TITLE = "stream_last_playlist_title";
     private static final String PREF_LAST_PLAYLIST_SUBTITLE = "stream_last_playlist_subtitle";
@@ -131,6 +131,7 @@ public class SongPlayerFragment extends Fragment {
     private static final int CONNECT_TIMEOUT_MS = 14000;
     private static final int READ_TIMEOUT_MS = 22000;
     private static final long SOURCE_PREPARE_TIMEOUT_MS = 30000L;
+    private static final long PLAYBACK_BOOTSTRAP_GRACE_MS = 1800L;
     private static final int MAX_PLAYBACK_SOURCE_RETRY = 1;
     private static final long PLAYBACK_SOURCE_RETRY_DELAY_MS = 350L;
     private static final String STREAM_HTTP_USER_AGENT = "Sleppify-Stream/1.0";
@@ -151,6 +152,9 @@ public class SongPlayerFragment extends Fragment {
     private YouTubePlayerView youtubePlayerView;
     private TextView tvPlayerTitle;
     private TextView tvPlayerArtist;
+    private TextView tvActionLikeCount;
+    private TextView tvActionDislikeCount;
+    private TextView tvActionCommentCount;
     private TextView tvCurrentTime;
     private TextView tvTotalTime;
     private SeekBar sbPlaybackProgress;
@@ -161,6 +165,9 @@ public class SongPlayerFragment extends Fragment {
     private View vPlayerRepeatIndicator;
     private ImageButton btnPlayPause;
     private RecyclerView rvNextUp;
+    private View actionLike;
+    private View actionDislike;
+    private View actionComments;
 
     private NextUpAdapter nextUpAdapter;
     @Nullable
@@ -211,10 +218,14 @@ public class SongPlayerFragment extends Fragment {
     private boolean usingYoutubeFallbackSource = false;
     private final Handler localProgressHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService streamResolverExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService socialStatsExecutor = Executors.newSingleThreadExecutor();
+    private final Map<String, SocialStats> socialStatsCache = new HashMap<>();
     @Nullable
     private Future<?> pendingStreamResolverFuture;
     @Nullable
     private Runnable sourcePrepareTimeoutRunnable;
+    private boolean localSourcePreparing = false;
+    private long lastPlaybackStartRequestAtMs = 0L;
     private long activePlaybackRequestToken = 0L;
     @Nullable
     private Runnable autoplayRecoveryRunnable;
@@ -234,6 +245,8 @@ public class SongPlayerFragment extends Fragment {
     private boolean embedControlsUnlocked = false;
     private final Set<String> sessionEmbedBlockedVideoIds = new HashSet<>();
     private final Set<String> audiusFallbackAttemptedVideoIds = new HashSet<>();
+    @NonNull
+    private String pendingSocialStatsVideoId = "";
     @NonNull
     private String embedRetryVideoId = "";
     private int embedRetryCount = 0;
@@ -345,6 +358,12 @@ public class SongPlayerFragment extends Fragment {
         }
         tvPlayerTitle = view.findViewById(R.id.tvPlayerTitle);
         tvPlayerArtist = view.findViewById(R.id.tvPlayerArtist);
+        actionLike = view.findViewById(R.id.actionLike);
+        actionDislike = view.findViewById(R.id.actionDislike);
+        actionComments = view.findViewById(R.id.actionComments);
+        tvActionLikeCount = view.findViewById(R.id.tvActionLikeCount);
+        tvActionDislikeCount = view.findViewById(R.id.tvActionDislikeCount);
+        tvActionCommentCount = view.findViewById(R.id.tvActionCommentCount);
         tvCurrentTime = view.findViewById(R.id.tvCurrentTime);
         tvTotalTime = view.findViewById(R.id.tvTotalTime);
         sbPlaybackProgress = view.findViewById(R.id.sbPlaybackProgress);
@@ -360,10 +379,10 @@ public class SongPlayerFragment extends Fragment {
         settingsPrefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Activity.MODE_PRIVATE);
         refreshVideoModePreference();
         setupCoverTapUnlockGesture();
+        setupSocialActions();
         updatePlayerSurfaceForSource();
 
         hydrateTracksFromArgs();
-        setupYouTubePlayer();
         setupMediaSession();
 
         rvNextUp.setLayoutManager(new LinearLayoutManager(requireContext()));
@@ -615,7 +634,15 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
+        long now = SystemClock.elapsedRealtime();
+        boolean bootstrapWindow = (now - lastPlaybackStartRequestAtMs) < PLAYBACK_BOOTSTRAP_GRACE_MS;
+
         if (usingOfflineSource && localMediaPlayer != null) {
+            if (localSourcePreparing && bootstrapWindow) {
+                Log.d(TAG, "ensureActivePlaybackIfExpected: waiting local prepare. reason=" + reason);
+                return;
+            }
+
             boolean alreadyPlaying = false;
             try {
                 alreadyPlaying = localMediaPlayer.isPlaying();
@@ -632,23 +659,42 @@ public class SongPlayerFragment extends Fragment {
                 startLocalProgressTicker();
                 Log.d(TAG, "ensureActivePlaybackIfExpected: restarted local playback. reason=" + reason);
             } catch (Exception e) {
+                if (localSourcePreparing || bootstrapWindow) {
+                    Log.d(TAG, "ensureActivePlaybackIfExpected: local source still bootstrapping. reason=" + reason);
+                    return;
+                }
                 Log.w(TAG, "ensureActivePlaybackIfExpected: local restart failed, reloading track. reason=" + reason, e);
                 playCurrentTrack();
             }
             return;
         }
 
-        if (usingYoutubeFallbackSource && playerReady && youTubePlayer != null) {
-            try {
-                youTubePlayer.play();
-            } catch (Exception e) {
-                Log.w(TAG, "ensureActivePlaybackIfExpected: youtube play failed, reloading track. reason=" + reason, e);
-                playCurrentTrack();
+        if (usingYoutubeFallbackSource) {
+            if (playerReady && youTubePlayer != null) {
+                try {
+                    youTubePlayer.play();
+                } catch (Exception e) {
+                    if (bootstrapWindow) {
+                        Log.d(TAG, "ensureActivePlaybackIfExpected: youtube still bootstrapping. reason=" + reason);
+                        return;
+                    }
+                    Log.w(TAG, "ensureActivePlaybackIfExpected: youtube play failed, reloading track. reason=" + reason, e);
+                    playCurrentTrack();
+                }
+                return;
             }
-            return;
+
+            if (youtubePlayerInitStarted && bootstrapWindow) {
+                Log.d(TAG, "ensureActivePlaybackIfExpected: waiting youtube init. reason=" + reason);
+                return;
+            }
         }
 
         if (!hasPendingStreamResolution()) {
+            if (bootstrapWindow || localSourcePreparing) {
+                Log.d(TAG, "ensureActivePlaybackIfExpected: skip replay during bootstrap. reason=" + reason);
+                return;
+            }
             playCurrentTrack();
         } else {
             Log.d(TAG, "ensureActivePlaybackIfExpected: resolver already running. reason=" + reason);
@@ -743,7 +789,7 @@ public class SongPlayerFragment extends Fragment {
         coverTapCount = 0;
         if (!videoModeEnabled) {
             if (isAdded()) {
-                Toast.makeText(requireContext(), "Activa 'Modo video en canciones' desde Ajustes para mostrar el video.", Toast.LENGTH_SHORT).show();
+                
             }
             return;
         }
@@ -752,7 +798,7 @@ public class SongPlayerFragment extends Fragment {
             embedControlsUnlocked = true;
             updatePlayerSurfaceForSource();
             if (isAdded()) {
-                Toast.makeText(requireContext(), "Modo video desbloqueado para esta cancion.", Toast.LENGTH_SHORT).show();
+                
             }
         }
     }
@@ -820,6 +866,13 @@ public class SongPlayerFragment extends Fragment {
                     resetPlaybackErrorState();
                     resetEmbedErrorAutoskipWindow();
                     playerEngineRecoveryAttempts = 0;
+                    String currentVideoId = loadedVideoId;
+                    if (TextUtils.isEmpty(currentVideoId)
+                            && currentIndex >= 0
+                            && currentIndex < tracks.size()) {
+                        currentVideoId = tracks.get(currentIndex).videoId;
+                    }
+                    clearTrackRestrictionIfAny(currentVideoId);
                     isPlaying = true;
                     pauseRequestedByUser = false;
                     updatePlayPauseIcon();
@@ -1060,7 +1113,13 @@ public class SongPlayerFragment extends Fragment {
 
         currentIndex = targetIndex;
         isPlaying = true;
-        bindCurrentTrack(true);
+        String targetVideoId = tracks.get(currentIndex).videoId;
+        if (!TextUtils.isEmpty(targetVideoId)) {
+            clearPersistedPositionFor(targetVideoId);
+        }
+        currentSeconds = 0;
+        lastPersistedSecond = -1;
+        bindCurrentTrack(false);
         playCurrentTrack();
         if (fromCompletion) {
             scheduleAutoplayRecoveryForCurrentTrack();
@@ -1070,19 +1129,27 @@ public class SongPlayerFragment extends Fragment {
         syncMiniStateWithPlaylist();
     }
 
-    private boolean shouldSkipRestrictedTrackOffline(@NonNull String videoId, boolean hasOfflineLocal) {
+    private boolean shouldSkipRestrictedTrack(@NonNull String videoId, boolean hasOfflineLocal) {
         if (!isAdded() || TextUtils.isEmpty(videoId) || hasOfflineLocal) {
             return false;
         }
         if (!OfflineRestrictionStore.isRestricted(requireContext(), videoId)) {
             return false;
         }
+        // Con red permitimos reintento para limpiar falsos positivos.
         return !isNetworkAvailable();
     }
 
-    private boolean skipRestrictedTrackInOfflinePlayback() {
+    private void clearTrackRestrictionIfAny(@Nullable String videoId) {
+        if (!isAdded() || TextUtils.isEmpty(videoId)) {
+            return;
+        }
+        OfflineRestrictionStore.unmarkRestricted(requireContext(), videoId);
+    }
+
+    private boolean skipRestrictedTrackInQueue() {
         if (tracks.size() <= 1) {
-            markPlaybackUnavailable("Esta canción está restringida para modo offline.");
+            markPlaybackUnavailable("Esta canción está restringida.");
             return false;
         }
 
@@ -1095,7 +1162,7 @@ public class SongPlayerFragment extends Fragment {
             }
 
             boolean hasOfflineLocal = OfflineAudioStore.hasOfflineAudio(requireContext(), candidate.videoId);
-            if (shouldSkipRestrictedTrackOffline(candidate.videoId, hasOfflineLocal)) {
+            if (shouldSkipRestrictedTrack(candidate.videoId, hasOfflineLocal)) {
                 continue;
             }
 
@@ -1109,7 +1176,7 @@ public class SongPlayerFragment extends Fragment {
             return true;
         }
 
-        markPlaybackUnavailable("No hay canciones reproducibles offline en la cola.");
+        markPlaybackUnavailable("No hay canciones reproducibles en la cola.");
         return false;
     }
 
@@ -1435,7 +1502,7 @@ public class SongPlayerFragment extends Fragment {
         updateMediaNotification();
         persistPlaybackSnapshot(false);
         if (isAdded()) {
-            Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show();
+            
         }
     }
 
@@ -1632,6 +1699,8 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
+        lastPlaybackStartRequestAtMs = SystemClock.elapsedRealtime();
+
         usingYoutubeFallbackSource = false;
 
         if (currentIndex < 0 || currentIndex >= tracks.size()) {
@@ -1641,7 +1710,7 @@ public class SongPlayerFragment extends Fragment {
         PlayerTrack track = tracks.get(currentIndex);
         if (TextUtils.isEmpty(track.videoId)) {
             if (isAdded()) {
-                Toast.makeText(requireContext(), "Este tema no tiene videoId valido.", Toast.LENGTH_SHORT).show();
+                
             }
             return;
         }
@@ -1662,9 +1731,9 @@ public class SongPlayerFragment extends Fragment {
         long requestToken = ++activePlaybackRequestToken;
 
         boolean hasOfflineLocal = isAdded() && OfflineAudioStore.hasOfflineAudio(requireContext(), track.videoId);
-        if (shouldSkipRestrictedTrackOffline(track.videoId, hasOfflineLocal)) {
-            Log.d(TAG, "playCurrentTrack: restricted track skipped in offline mode. videoId=" + track.videoId);
-            if (skipRestrictedTrackInOfflinePlayback()) {
+        if (shouldSkipRestrictedTrack(track.videoId, hasOfflineLocal)) {
+            Log.d(TAG, "playCurrentTrack: restricted track skipped in queue. videoId=" + track.videoId);
+            if (skipRestrictedTrackInQueue()) {
                 return;
             }
         }
@@ -1765,6 +1834,7 @@ public class SongPlayerFragment extends Fragment {
             long requestToken,
             @NonNull Runnable onFailure
     ) {
+        final boolean networkSource = isHttpStreamSource(source);
         Log.d(TAG, "startMediaPlaybackFromSource: source=" + maskUrlForLog(source)
             + " videoId=" + track.videoId
             + " token=" + requestToken);
@@ -1773,6 +1843,7 @@ public class SongPlayerFragment extends Fragment {
         releaseLocalMediaPlayer();
         usingOfflineSource = true;
         usingYoutubeFallbackSource = false;
+        localSourcePreparing = true;
         updatePlayerSurfaceForSource();
 
         MediaPlayer player = new MediaPlayer();
@@ -1784,6 +1855,7 @@ public class SongPlayerFragment extends Fragment {
 
         player.setOnPreparedListener(mp -> {
             cancelSourcePrepareTimeout();
+            localSourcePreparing = false;
             Log.d(TAG, "onPrepared: videoId=" + track.videoId + " token=" + requestToken);
 
             if (!isAdded()
@@ -1820,6 +1892,9 @@ public class SongPlayerFragment extends Fragment {
                     mp.start();
                     Log.d(TAG, "onPrepared: playback started videoId=" + track.videoId
                             + " durationSec=" + totalSeconds);
+                    if (networkSource) {
+                        clearTrackRestrictionIfAny(track.videoId);
+                    }
                     startLocalProgressTicker();
                 } catch (Exception startError) {
                     Log.e(TAG, "onPrepared: start failed for videoId=" + track.videoId, startError);
@@ -1848,6 +1923,7 @@ public class SongPlayerFragment extends Fragment {
 
         player.setOnErrorListener((mp, what, extra) -> {
             cancelSourcePrepareTimeout();
+            localSourcePreparing = false;
             Log.e(TAG, "onError: what=" + what
                     + " extra=" + extra
                     + " source=" + maskUrlForLog(source)
@@ -1884,6 +1960,7 @@ public class SongPlayerFragment extends Fragment {
             scheduleSourcePrepareTimeout(track, requestToken, player, onFailure);
         } catch (Exception e) {
             cancelSourcePrepareTimeout();
+            localSourcePreparing = false;
             Log.e(TAG, "startMediaPlaybackFromSource: setDataSource/prepareAsync failed for source="
                     + maskUrlForLog(source), e);
             if (localMediaPlayer == player) {
@@ -1941,24 +2018,7 @@ public class SongPlayerFragment extends Fragment {
                 orderedSources.add(file.getAbsolutePath());
             }
         }
-
-        orderedSources.addAll(buildBaseUrlCandidates(videoId));
         return new ArrayList<>(orderedSources);
-    }
-
-    @NonNull
-    private List<String> buildBaseUrlCandidates(@NonNull String videoId) {
-        List<String> candidates = new ArrayList<>();
-        String baseUrl = OfflineAudioStore.getOfflineDownloadBaseUrl();
-        if (TextUtils.isEmpty(baseUrl) || TextUtils.isEmpty(videoId)) {
-            return candidates;
-        }
-
-        String escapedId = Uri.encode(videoId);
-        candidates.add(baseUrl + "/" + escapedId + ".m4a");
-        candidates.add(baseUrl + "/" + escapedId + ".mp3");
-        candidates.add(baseUrl + "/" + escapedId);
-        return candidates;
     }
 
     private void cancelPendingStreamResolver() {
@@ -2047,7 +2107,7 @@ public class SongPlayerFragment extends Fragment {
         }
 
         audiusFallbackAttemptedVideoIds.add(track.videoId);
-        Toast.makeText(requireContext(), "Buscando audio alternativo en API gratuita...", Toast.LENGTH_SHORT).show();
+        
         Log.w(TAG, "tryResolveAudiusAndReplay: start videoId=" + track.videoId + " requestToken=" + requestToken);
 
         cancelPendingStreamResolver();
@@ -2297,6 +2357,7 @@ public class SongPlayerFragment extends Fragment {
             Log.e(TAG, "scheduleSourcePrepareTimeout: prepare timeout reached for videoId=" + track.videoId
                     + " token=" + requestToken
                     + " timeoutMs=" + SOURCE_PREPARE_TIMEOUT_MS);
+        localSourcePreparing = false;
             stopLocalProgressTicker();
             releaseLocalMediaPlayer();
             onFailure.run();
@@ -2337,7 +2398,7 @@ public class SongPlayerFragment extends Fragment {
         persistPlaybackSnapshot(false);
 
         if (isAdded() && !message.trim().isEmpty()) {
-            Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show();
+            
         }
     }
 
@@ -2465,6 +2526,7 @@ public class SongPlayerFragment extends Fragment {
 
     private void releaseLocalMediaPlayer() {
         cancelSourcePrepareTimeout();
+        localSourcePreparing = false;
         if (localMediaPlayer == null) {
             return;
         }
@@ -2590,7 +2652,6 @@ public class SongPlayerFragment extends Fragment {
         Glide.with(this)
                 .asBitmap()
                 .load(imageUrl)
-                .transform(ArtworkTrimTransformation.obtain())
                 .placeholder(R.drawable.ic_music)
                 .error(R.drawable.ic_music)
                 .into(playerCoverTarget);
@@ -2600,6 +2661,7 @@ public class SongPlayerFragment extends Fragment {
     public void onDestroy() {
         cancelPendingStreamResolver();
         streamResolverExecutor.shutdownNow();
+        socialStatsExecutor.shutdownNow();
         super.onDestroy();
     }
 
@@ -2614,6 +2676,7 @@ public class SongPlayerFragment extends Fragment {
         PlayerTrack track = tracks.get(currentIndex);
         tvPlayerTitle.setText(track.title);
         tvPlayerArtist.setText(track.artist);
+        refreshSocialActionsForCurrentTrack(track);
 
         totalSeconds = Math.max(1, parseDurationSeconds(track.duration));
         if (resetProgress) {
@@ -2635,7 +2698,7 @@ public class SongPlayerFragment extends Fragment {
             if (ivPlayerBackdrop != null) {
                 Glide.with(this)
                         .load(track.imageUrl)
-                        .transform(ArtworkTrimTransformation.obtain(), new com.bumptech.glide.load.resource.bitmap.CenterCrop())
+                    .centerCrop()
                         .placeholder(R.drawable.ic_music)
                         .error(R.drawable.ic_music)
                         .into(ivPlayerBackdrop);
@@ -2652,6 +2715,211 @@ public class SongPlayerFragment extends Fragment {
         refreshNextUp();
         syncMiniStateWithPlaylist();
         persistPlaybackSnapshot(false);
+    }
+
+    private void setupSocialActions() {
+        applySocialStatsToUi(SocialStats.unavailable());
+
+        if (actionLike != null) {
+            actionLike.setOnClickListener(v -> {
+                // Visual only for now.
+            });
+        }
+        if (actionDislike != null) {
+            actionDislike.setOnClickListener(v -> {
+                // Visual only for now.
+            });
+        }
+        if (actionComments != null) {
+            actionComments.setOnClickListener(v -> {
+                // Visual only for now.
+            });
+        }
+    }
+
+    private void refreshSocialActionsForCurrentTrack(@Nullable PlayerTrack track) {
+        if (track == null || TextUtils.isEmpty(track.videoId)) {
+            pendingSocialStatsVideoId = "";
+            applySocialStatsToUi(SocialStats.unavailable());
+            return;
+        }
+
+        pendingSocialStatsVideoId = track.videoId;
+        SocialStats cached = socialStatsCache.get(track.videoId);
+        if (cached == null) {
+            cached = readSocialStatsFromCache(track.videoId);
+            if (cached != null) {
+                socialStatsCache.put(track.videoId, cached);
+            }
+        }
+        if (cached != null) {
+            applySocialStatsToUi(cached);
+        } else {
+            applySocialStatsToUi(SocialStats.loading());
+        }
+
+        String apiKey = BuildConfig.YOUTUBE_DATA_API_KEY == null
+                ? ""
+                : BuildConfig.YOUTUBE_DATA_API_KEY.trim();
+        if (apiKey.isEmpty()) {
+            if (cached == null) {
+                applySocialStatsToUi(SocialStats.unavailable());
+            }
+            return;
+        }
+
+        String requestVideoId = track.videoId;
+        SocialStats cachedSnapshot = cached;
+        socialStatsExecutor.execute(() -> {
+            SocialStats stats = fetchSocialStats(requestVideoId, apiKey);
+            localProgressHandler.post(() -> {
+                if (!isAdded() || !TextUtils.equals(pendingSocialStatsVideoId, requestVideoId)) {
+                    return;
+                }
+
+                if (stats.unavailable && cachedSnapshot != null) {
+                    applySocialStatsToUi(cachedSnapshot);
+                    return;
+                }
+
+                socialStatsCache.put(requestVideoId, stats);
+                persistSocialStatsToCache(requestVideoId, stats);
+                applySocialStatsToUi(stats);
+            });
+        });
+    }
+
+    @Nullable
+    private SocialStats readSocialStatsFromCache(@NonNull String videoId) {
+        if (playerStatePrefs == null || TextUtils.isEmpty(videoId)) {
+            return null;
+        }
+
+        String raw = playerStatePrefs.getString(PREF_SOCIAL_STATS_PREFIX + videoId, "");
+        if (TextUtils.isEmpty(raw)) {
+            return null;
+        }
+
+        try {
+            JSONObject json = new JSONObject(raw);
+            String like = json.optString("like", "");
+            String dislike = json.optString("dislike", "");
+            String comments = json.optString("comments", "");
+            if (TextUtils.isEmpty(like) || TextUtils.isEmpty(dislike) || TextUtils.isEmpty(comments)) {
+                return null;
+            }
+            return new SocialStats(like, dislike, comments, false);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private void persistSocialStatsToCache(@NonNull String videoId, @NonNull SocialStats stats) {
+        if (playerStatePrefs == null || TextUtils.isEmpty(videoId) || stats.unavailable) {
+            return;
+        }
+
+        try {
+            JSONObject json = new JSONObject();
+            json.put("like", stats.likeCount);
+            json.put("dislike", stats.dislikeCount);
+            json.put("comments", stats.commentCount);
+            playerStatePrefs.edit()
+                    .putString(PREF_SOCIAL_STATS_PREFIX + videoId, json.toString())
+                    .apply();
+        } catch (Exception ignored) {
+        }
+    }
+
+    @NonNull
+    private SocialStats fetchSocialStats(@NonNull String videoId, @NonNull String apiKey) {
+        String endpoint = "https://www.googleapis.com/youtube/v3/videos?part=statistics&id="
+                + Uri.encode(videoId)
+                + "&key="
+                + Uri.encode(apiKey);
+        String body = readTextResponse(endpoint, "application/json");
+        if (body.isEmpty()) {
+            return SocialStats.unavailable();
+        }
+
+        try {
+            JSONObject root = new JSONObject(body);
+            JSONArray items = root.optJSONArray("items");
+            if (items == null || items.length() == 0) {
+                return SocialStats.unavailable();
+            }
+
+            JSONObject first = items.optJSONObject(0);
+            JSONObject statistics = first == null ? null : first.optJSONObject("statistics");
+            if (statistics == null) {
+                return SocialStats.unavailable();
+            }
+
+            long likeCount = parseSafeLong(statistics.optString("likeCount", ""));
+            long commentCount = parseSafeLong(statistics.optString("commentCount", ""));
+            return new SocialStats(
+                    formatCompactCount(likeCount),
+                    "0",
+                    formatCompactCount(commentCount),
+                    false
+            );
+        } catch (Exception ignored) {
+            return SocialStats.unavailable();
+        }
+    }
+
+    private void applySocialStatsToUi(@NonNull SocialStats stats) {
+        if (tvActionLikeCount != null) {
+            tvActionLikeCount.setText(stats.likeCount);
+        }
+        if (tvActionDislikeCount != null) {
+            tvActionDislikeCount.setText(stats.dislikeCount);
+        }
+        if (tvActionCommentCount != null) {
+            tvActionCommentCount.setText(stats.commentCount);
+        }
+    }
+
+    @NonNull
+    private String formatCompactCount(long value) {
+        if (value <= 0) {
+            return "0";
+        }
+        if (value < 1000L) {
+            return String.valueOf(value);
+        }
+
+        double compact = value;
+        String suffix = "";
+        if (value >= 1_000_000_000L) {
+            compact = value / 1_000_000_000d;
+            suffix = "B";
+        } else if (value >= 1_000_000L) {
+            compact = value / 1_000_000d;
+            suffix = "M";
+        } else {
+            compact = value / 1000d;
+            suffix = "K";
+        }
+
+        if (compact >= 100d) {
+            return String.format(Locale.US, "%.0f%s", compact, suffix);
+        }
+        if (compact >= 10d) {
+            return String.format(Locale.US, "%.1f%s", compact, suffix);
+        }
+        return String.format(Locale.US, "%.2f%s", compact, suffix);
+    }
+
+    private long parseSafeLong(@Nullable String raw) {
+        if (TextUtils.isEmpty(raw)) {
+            return -1L;
+        }
+        try {
+            return Long.parseLong(raw.trim());
+        } catch (Exception ignored) {
+            return -1L;
+        }
     }
 
     public void externalPlayTrack(int index) {
@@ -2673,6 +2941,15 @@ public class SongPlayerFragment extends Fragment {
 
         if (!sameAsLoaded) {
             persistPositionForLoadedTrack();
+        }
+
+        if (!startFromBeginning
+                && sameAsLoaded
+                && currentIndex == index
+                && isEffectivePlaying()) {
+            syncMiniStateWithPlaylist();
+            persistPlaybackSnapshot(false);
+            return;
         }
 
         if (startFromBeginning && !TextUtils.isEmpty(targetVideoId)) {
@@ -2699,6 +2976,22 @@ public class SongPlayerFragment extends Fragment {
 
     public void externalTogglePlayback() {
         togglePlayback();
+    }
+
+    public void externalPauseForSessionExit() {
+        pauseRequestedByUser = true;
+        cancelAutoplayRecovery();
+        cancelPendingStreamResolver();
+        pauseYouTubePlaybackEngine("session_exit");
+        persistPositionForLoadedTrack();
+        stopLocalProgressTicker();
+        releaseLocalMediaPlayer();
+        isPlaying = false;
+        updatePlayPauseIcon();
+        updateMediaSessionState();
+        clearMediaNotification();
+        syncMiniStateWithPlaylist();
+        persistPlaybackSnapshot(true);
     }
 
     public void externalSetReturnTargetTag(@NonNull String targetTag) {
@@ -2874,6 +3167,10 @@ public class SongPlayerFragment extends Fragment {
         collapseToMiniMode(true);
     }
 
+    public boolean externalTryEnterMiniMode() {
+        return collapseToMiniMode(true);
+    }
+
     private void setupBackPressToMiniMode() {
         if (!isAdded()) {
             return;
@@ -2935,17 +3232,17 @@ public class SongPlayerFragment extends Fragment {
         applyPlayerBackdropBlur();
     }
 
-    private void collapseToMiniMode(boolean animate) {
+    private boolean collapseToMiniMode(boolean animate) {
         if (!isAdded()) {
-            return;
+            return false;
         }
         if (collapsingToMiniMode) {
-            return;
+            return true;
         }
 
         FragmentManager fm = getParentFragmentManager();
         if (fm.isStateSaved()) {
-            return;
+            return false;
         }
 
         collapsingToMiniMode = true;
@@ -2970,6 +3267,7 @@ public class SongPlayerFragment extends Fragment {
 
         transaction.runOnCommit(() -> collapsingToMiniMode = false);
         transaction.commit();
+        return true;
     }
 
     @Nullable
@@ -3085,7 +3383,7 @@ public class SongPlayerFragment extends Fragment {
         SharedPreferences prefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
         String playlistId = safeValue(prefs.getString(PREF_LAST_PLAYLIST_ID, ""));
         if (TextUtils.isEmpty(playlistId)) {
-            Toast.makeText(requireContext(), "No hay playlist disponible para mostrar.", Toast.LENGTH_SHORT).show();
+            
             return;
         }
 
@@ -3546,6 +3844,35 @@ public class SongPlayerFragment extends Fragment {
         }
     }
 
+    private static final class SocialStats {
+        final String likeCount;
+        final String dislikeCount;
+        final String commentCount;
+        final boolean unavailable;
+
+        SocialStats(
+                @NonNull String likeCount,
+                @NonNull String dislikeCount,
+                @NonNull String commentCount,
+                boolean unavailable
+        ) {
+            this.likeCount = likeCount;
+            this.dislikeCount = dislikeCount;
+            this.commentCount = commentCount;
+            this.unavailable = unavailable;
+        }
+
+        @NonNull
+        static SocialStats loading() {
+            return new SocialStats("0", "0", "0", true);
+        }
+
+        @NonNull
+        static SocialStats unavailable() {
+            return new SocialStats("0", "0", "0", true);
+        }
+    }
+
     private static final class NextUpAdapter extends RecyclerView.Adapter<NextUpAdapter.NextUpViewHolder> {
 
         interface OnNextUpTap {
@@ -3603,7 +3930,7 @@ public class SongPlayerFragment extends Fragment {
             if (!TextUtils.isEmpty(item.imageUrl)) {
                 Glide.with(holder.itemView)
                         .load(item.imageUrl)
-                        .transform(ArtworkTrimTransformation.obtain(), new com.bumptech.glide.load.resource.bitmap.CenterCrop())
+                        .centerCrop()
                         .placeholder(R.drawable.ic_music)
                         .error(R.drawable.ic_music)
                         .into(holder.ivNextUpArt);
@@ -3649,3 +3976,4 @@ public class SongPlayerFragment extends Fragment {
         }
     }
 }
+

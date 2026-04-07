@@ -37,7 +37,6 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -262,11 +261,7 @@ public class AppsFragment extends Fragment {
                 registerRecentlyForceStoppedPackages(confirmedPackages);
                 invalidateBackgroundAppsCache();
 
-                Toast.makeText(
-                        requireContext(),
-                    getString(R.string.apps_force_stop_finished_toast, confirmedCount, targetCount),
-                        Toast.LENGTH_LONG
-                ).show();
+                
                 updateRamMetrics();
                 refreshBackgroundAppsVerificationList();
             }
@@ -329,7 +324,7 @@ public class AppsFragment extends Fragment {
 
         boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
         if (!granted) {
-            Toast.makeText(requireContext(), getString(R.string.apps_storage_permission_denied_toast), Toast.LENGTH_SHORT).show();
+            
         }
     }
 
@@ -544,11 +539,7 @@ public class AppsFragment extends Fragment {
 
                     Context context = getContext();
                     if (context != null) {
-                        Toast.makeText(
-                                context,
-                                getString(R.string.apps_deep_clean_done_toast, formatStorageSize(freedBytes)),
-                                Toast.LENGTH_LONG
-                        ).show();
+                        
                     }
                     dialog.dismiss();
                 });
@@ -1148,20 +1139,12 @@ public class AppsFragment extends Fragment {
             boolean clearRecentsStarted = AppAccessibilityService.requestClearRecentApps();
             Log.i(STOP_APPS_LOG_TAG, "No direct targets. Recents fallback started=" + clearRecentsStarted);
             if (clearRecentsStarted) {
-                Toast.makeText(
-                        requireContext(),
-                        getString(R.string.apps_force_stop_clear_recents_fallback_toast),
-                        Toast.LENGTH_LONG
-                ).show();
+                
                 metricsHandler.postDelayed(this::refreshBackgroundAppsVerificationList, 1200L);
                 return;
             }
 
-            Toast.makeText(
-                    requireContext(),
-                    getString(R.string.apps_force_stop_no_targets_toast),
-                    Toast.LENGTH_LONG
-            ).show();
+            
             return;
         }
 
@@ -1205,11 +1188,7 @@ public class AppsFragment extends Fragment {
             Log.e(STOP_APPS_LOG_TAG, "Failed to start force-stop automation after max retries.");
             finishForceStopUiFlow();
             if (isAdded()) {
-                Toast.makeText(
-                        requireContext(),
-                        getString(R.string.apps_force_stop_start_failed_toast),
-                        Toast.LENGTH_LONG
-                ).show();
+                
             }
             return;
         }
@@ -1225,11 +1204,7 @@ public class AppsFragment extends Fragment {
         scheduleForceStopSafetyTimeout(targetPackages.size());
         Log.i(STOP_APPS_LOG_TAG, "Force-stop automation started. Waiting for completion broadcast.");
 
-        Toast.makeText(
-                requireContext(),
-                getString(R.string.apps_force_stop_starting_toast, targetPackages.size()),
-                Toast.LENGTH_LONG
-        ).show();
+        
     }
 
     private void restoreStopButtonIdleState() {
@@ -1281,11 +1256,7 @@ public class AppsFragment extends Fragment {
                 return;
             }
 
-            Toast.makeText(
-                    requireContext(),
-                    getString(R.string.apps_force_stop_timeout_toast),
-                    Toast.LENGTH_LONG
-            ).show();
+            
             refreshBackgroundAppsVerificationList();
         };
         forceStopSafetyTimeoutRunnable = timeoutRunnable;
@@ -1738,7 +1709,7 @@ public class AppsFragment extends Fragment {
             Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
             startActivity(intent);
         } catch (Throwable throwable) {
-            Toast.makeText(requireContext(), getString(R.string.apps_accessibility_open_failed), Toast.LENGTH_SHORT).show();
+            
         }
     }
 
@@ -1760,7 +1731,7 @@ public class AppsFragment extends Fragment {
             Intent intent = new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS);
             startActivity(intent);
         } catch (Throwable throwable) {
-            Toast.makeText(requireContext(), getString(R.string.apps_usage_access_open_failed), Toast.LENGTH_SHORT).show();
+            
         }
     }
 
@@ -1813,7 +1784,7 @@ public class AppsFragment extends Fragment {
             appDetailsIntent.setData(Uri.fromParts("package", context.getPackageName(), null));
             startActivity(appDetailsIntent);
         } catch (Throwable throwable) {
-            Toast.makeText(context, getString(R.string.apps_storage_permission_open_failed), Toast.LENGTH_SHORT).show();
+            
         }
     }
 
@@ -2711,3 +2682,4 @@ public class AppsFragment extends Fragment {
         }
     }
 }
+

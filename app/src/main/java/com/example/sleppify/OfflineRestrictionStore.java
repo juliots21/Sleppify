@@ -96,6 +96,24 @@ public final class OfflineRestrictionStore {
         markRestricted(context, videoId);
     }
 
+    public static void unmarkRestricted(@NonNull Context context, @NonNull String videoId) {
+        String safeVideoId = sanitize(videoId);
+        if (safeVideoId.isEmpty()) {
+            return;
+        }
+
+        Set<String> ids = getRestrictedIds(context);
+        if (!ids.remove(safeVideoId)) {
+            return;
+        }
+
+        context.getApplicationContext()
+                .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putStringSet(KEY_RESTRICTED_IDS, ids)
+                .apply();
+    }
+
     public static int countRestricted(@NonNull Context context, @NonNull List<String> videoIds) {
         if (videoIds.isEmpty()) {
             return 0;

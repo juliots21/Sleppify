@@ -1,17 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.swiperefreshlayout.widget.SwipeRefreshLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/swipeAgendaRefresh"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/surface_dark"
-    tools:context=".WeeklySchedulerFragment">
+    android:background="@color/surface_dark">
 
-    <ScrollView
+    <androidx.constraintlayout.widget.ConstraintLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:clipToPadding="false"
-        android:paddingBottom="100dp">
+        android:background="@color/surface_dark"
+        tools:context=".WeeklySchedulerFragment">
+
+        <ScrollView
+            android:id="@+id/scrollAgendaContent"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:paddingBottom="100dp">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -217,46 +224,48 @@
                 tools:ignore="WebViewLayout" />
 
         </LinearLayout>
-    </ScrollView>
+        </ScrollView>
 
-    <com.google.android.material.floatingactionbutton.FloatingActionButton
-        android:id="@+id/fabAddTask"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_margin="14dp"
-        android:backgroundTint="@color/stitch_blue"
-        android:contentDescription="Agregar tarea"
-        android:src="@android:drawable/ic_input_add"
-        app:tint="@color/white"
-        app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Medium"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-    <com.google.android.material.card.MaterialCardView
-        android:id="@+id/cardFabHint"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:layout_marginBottom="6dp"
-        android:visibility="gone"
-        app:cardBackgroundColor="@color/surface_low"
-        app:cardCornerRadius="10dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="@id/fabAddTask"
-        app:layout_constraintTop_toBottomOf="@id/fabAddTask"
-        app:strokeColor="#1FFFFFFF"
-        app:strokeWidth="1dp">
-
-        <TextView
-            android:id="@+id/tvFabHint"
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/fabAddTask"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:paddingHorizontal="10dp"
-            android:paddingVertical="4dp"
-            android:text="Inicia sesion para usar +"
-            android:textColor="@color/text_secondary"
-            android:textSize="10sp"
-            android:textStyle="bold" />
-    </com.google.android.material.card.MaterialCardView>
+            android:layout_margin="14dp"
+            android:backgroundTint="@color/stitch_blue"
+            android:contentDescription="Agregar tarea"
+            android:src="@android:drawable/ic_input_add"
+            app:tint="@color/white"
+            app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Medium"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent" />
 
-</androidx.constraintlayout.widget.ConstraintLayout>
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardFabHint"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:layout_marginBottom="6dp"
+            android:visibility="gone"
+            app:cardBackgroundColor="@color/surface_low"
+            app:cardCornerRadius="10dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="@id/fabAddTask"
+            app:layout_constraintTop_toBottomOf="@id/fabAddTask"
+            app:strokeColor="#1FFFFFFF"
+            app:strokeWidth="1dp">
+
+            <TextView
+                android:id="@+id/tvFabHint"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="4dp"
+                android:text="Inicia sesion para usar +"
+                android:textColor="@color/text_secondary"
+                android:textSize="10sp"
+                android:textStyle="bold" />
+        </com.google.android.material.card.MaterialCardView>
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+</androidx.swiperefreshlayout.widget.SwipeRefreshLayout>

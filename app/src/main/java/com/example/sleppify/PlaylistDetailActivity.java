@@ -11,7 +11,6 @@ import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
@@ -33,6 +32,7 @@ public class PlaylistDetailActivity extends AppCompatActivity {
 
     private static final long PLAYLIST_TRACKS_CACHE_TTL_MS = 10 * 60 * 1000L;
     private static final long PLAYLIST_TRACKS_REFRESH_INTERVAL_MS = 90 * 1000L;
+    private static final int PLAYLIST_TRACKS_FETCH_LIMIT = 5000;
     private static final Map<String, List<YouTubeMusicService.PlaylistTrackResult>> TRACKS_CACHE = new HashMap<>();
     private static final Map<String, Long> TRACKS_CACHE_UPDATED_AT = new HashMap<>();
 
@@ -90,10 +90,10 @@ public class PlaylistDetailActivity extends AppCompatActivity {
         bindTrackList(playlistTitle, meta.ownerLabel, playlistId, youtubeAccessToken);
 
         btnBack.setOnClickListener(v -> finish());
-        btnMore.setOnClickListener(v -> Toast.makeText(this, "Mas opciones pronto", Toast.LENGTH_SHORT).show());
-        btnShuffle.setOnClickListener(v -> Toast.makeText(this, "Modo shuffle activado", Toast.LENGTH_SHORT).show());
-        btnDownload.setOnClickListener(v -> Toast.makeText(this, "Descarga offline en desarrollo", Toast.LENGTH_SHORT).show());
-        btnEnhance.setOnClickListener(v -> Toast.makeText(this, "Nexus AI mejorando playlist", Toast.LENGTH_SHORT).show());
+        btnMore.setOnClickListener(v -> { });
+        btnShuffle.setOnClickListener(v -> { });
+        btnDownload.setOnClickListener(v -> { });
+        btnEnhance.setOnClickListener(v -> { });
         btnListenNow.setOnClickListener(v -> openPlaylistExternal(playlistId));
     }
 
@@ -106,13 +106,13 @@ public class PlaylistDetailActivity extends AppCompatActivity {
     private void bindHeader(@NonNull String playlistTitle, @NonNull PlaylistMeta meta, @NonNull String playlistThumbnail) {
         tvPlaylistName.setText(playlistTitle);
         tvPlaylistOwner.setText(meta.ownerLabel);
-        tvPlaylistCount.setText(meta.countLabel);
+        tvPlaylistCount.setText("");
         tvPlaylistDuration.setText(meta.durationLabel);
 
         if (!playlistThumbnail.isEmpty()) {
             Glide.with(this)
                     .load(playlistThumbnail)
-                    .transform(ArtworkTrimTransformation.obtain(), new com.bumptech.glide.load.resource.bitmap.CenterCrop())
+                    .centerCrop()
                     .placeholder(R.drawable.ic_music)
                     .error(R.drawable.ic_music)
                     .into(ivPlaylistCover);
@@ -136,11 +136,14 @@ public class PlaylistDetailActivity extends AppCompatActivity {
         rvTrackList.setLayoutManager(new LinearLayoutManager(this));
 
         List<YouTubeMusicService.PlaylistTrackResult> cachedTracks = getCachedTracks(playlistId);
-        if (!cachedTracks.isEmpty()) {
+        boolean canRequestRemote = !playlistId.isEmpty()
+                && !playlistId.startsWith("preview-")
+                && !accessToken.isEmpty();
+        if (!cachedTracks.isEmpty() && !canRequestRemote) {
             renderTrackResults(playlistId, cachedTracks);
         }
 
-        if (playlistId.isEmpty() || playlistId.startsWith("preview-") || accessToken.isEmpty()) {
+        if (!canRequestRemote) {
             if (cachedTracks.isEmpty()) {
                 tvTracksState.setText("");
                 rvTrackList.setAdapter(new PlaylistTrackAdapter(new ArrayList<>()));
@@ -148,14 +151,8 @@ public class PlaylistDetailActivity extends AppCompatActivity {
             return;
         }
 
-        if (!cachedTracks.isEmpty() && !shouldRefreshPlaylistTracks(playlistId)) {
-            return;
-        }
-
-        if (cachedTracks.isEmpty()) {
-            tvTracksState.setText("Cargando canciones...");
-        }
-        youTubeMusicService.fetchPlaylistTracks(accessToken, playlistId, 50, new YouTubeMusicService.PlaylistTracksCallback() {
+        tvTracksState.setText("Cargando canciones...");
+        youTubeMusicService.fetchPlaylistTracks(accessToken, playlistId, PLAYLIST_TRACKS_FETCH_LIMIT, new YouTubeMusicService.PlaylistTracksCallback() {
             @Override
             public void onSuccess(@NonNull List<YouTubeMusicService.PlaylistTrackResult> tracks) {
                 if (isFinishing() || isDestroyed()) {
@@ -186,6 +183,7 @@ public class PlaylistDetailActivity extends AppCompatActivity {
                 }
 
                 if (!cachedTracks.isEmpty()) {
+                    renderTrackResults(playlistId, cachedTracks);
                     return;
                 }
                 tvTracksState.setText("No se pudo leer la playlist. Mostrando demo.");
@@ -336,12 +334,12 @@ public class PlaylistDetailActivity extends AppCompatActivity {
 
     private void openPlaylistExternal(@NonNull String playlistId) {
         if (YouTubeMusicService.SPECIAL_LIKED_VIDEOS_ID.equals(playlistId)) {
-            Toast.makeText(this, "Abre YouTube para gestionar tus Me gusta.", Toast.LENGTH_SHORT).show();
+            
             return;
         }
 
         if (playlistId.isEmpty() || playlistId.startsWith("preview-")) {
-            Toast.makeText(this, "Vista demo de playlist", Toast.LENGTH_SHORT).show();
+            
             return;
         }
 
@@ -349,7 +347,7 @@ public class PlaylistDetailActivity extends AppCompatActivity {
             String url = "https://music.youtube.com/playlist?list=" + Uri.encode(playlistId);
             startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
         } catch (Exception ignored) {
-            Toast.makeText(this, "No se pudo abrir la playlist", Toast.LENGTH_SHORT).show();
+            
         }
     }
 
@@ -457,7 +455,7 @@ public class PlaylistDetailActivity extends AppCompatActivity {
             if (!TextUtils.isEmpty(track.imageUrl)) {
                 Glide.with(holder.itemView)
                         .load(track.imageUrl)
-                        .transform(ArtworkTrimTransformation.obtain(), new com.bumptech.glide.load.resource.bitmap.CenterCrop())
+                        .centerCrop()
                         .placeholder(R.drawable.ic_music)
                         .error(R.drawable.ic_music)
                         .into(holder.ivTrackArt);
@@ -498,3 +496,4 @@ public class PlaylistDetailActivity extends AppCompatActivity {
         }
     }
 }
+

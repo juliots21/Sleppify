@@ -6,7 +6,6 @@ plugins {
 android {
     namespace = "com.example.sleppify"
     val youtubeDataApiKey = (project.findProperty("YOUTUBE_DATA_API_KEY") as String?) ?: ""
-    val offlineAudioBaseUrl = (project.findProperty("OFFLINE_AUDIO_BASE_URL") as String?) ?: ""
 
     compileSdk {
         version = release(36) {
@@ -21,7 +20,6 @@ android {
         versionCode = 1
         versionName = "1.0"
         buildConfigField("String", "YOUTUBE_DATA_API_KEY", "\"$youtubeDataApiKey\"")
-        buildConfigField("String", "OFFLINE_AUDIO_BASE_URL", "\"$offlineAudioBaseUrl\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -47,6 +45,8 @@ android {
 }
 
 dependencies {
+    val cameraXVersion = "1.4.2"
+
     implementation(libs.appcompat)
     implementation(libs.material)
     implementation(libs.activity)
@@ -60,12 +60,18 @@ dependencies {
     implementation("com.google.android.gms:play-services-auth:21.2.0")
     implementation(libs.glide)
     implementation("androidx.recyclerview:recyclerview:1.3.2")
+    implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
     implementation("androidx.work:work-runtime:2.9.1")
     implementation("androidx.media:media:1.7.0")
     implementation("com.pierfrancescosoffritti.androidyoutubeplayer:core:13.0.0")
     implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.0") {
         exclude(group = "com.google.protobuf", module = "protobuf-javalite")
     }
+    implementation("androidx.camera:camera-core:$cameraXVersion")
+    implementation("androidx.camera:camera-camera2:$cameraXVersion")
+    implementation("androidx.camera:camera-lifecycle:$cameraXVersion")
+    implementation("androidx.camera:camera-view:$cameraXVersion")
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.0.3")
     testImplementation(libs.junit)
     androidTestImplementation(libs.ext.junit)

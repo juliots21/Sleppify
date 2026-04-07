@@ -66,7 +66,7 @@
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="22dp"
+                android:layout_marginTop="18dp"
                 android:orientation="vertical">
 
                 <TextView
@@ -75,29 +75,141 @@
                     android:layout_height="wrap_content"
                     android:ellipsize="end"
                     android:fontFamily="@font/manrope_variable"
-                    android:maxLines="1"
+                    android:lineSpacingExtra="1dp"
+                    android:maxLines="2"
                     android:text="Vuelve"
                     android:textColor="@color/text_primary"
-                    android:textSize="34sp"
+                    android:textSize="42sp"
                     android:textStyle="bold" />
 
                 <TextView
                     android:id="@+id/tvPlayerArtist"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp"
+                    android:layout_marginTop="4dp"
                     android:ellipsize="end"
                     android:fontFamily="@font/manrope_variable"
                     android:maxLines="1"
                     android:text="Daddy Yankee"
-                    android:textColor="@color/stitch_blue"
-                    android:textSize="18sp" />
+                    android:textColor="@color/text_secondary"
+                    android:textSize="16sp" />
             </LinearLayout>
+
+            <HorizontalScrollView
+                android:id="@+id/hsSocialActions"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:clipToPadding="false"
+                android:overScrollMode="never"
+                android:paddingHorizontal="6dp"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:id="@+id/llSocialActionsRow"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="0dp">
+
+                    <LinearLayout
+                        android:id="@+id/actionLike"
+                        android:layout_width="wrap_content"
+                        android:layout_height="34dp"
+                        android:background="@drawable/bg_player_social_chip"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:foreground="?attr/selectableItemBackground"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingHorizontal="10dp">
+
+                        <ImageView
+                            android:layout_width="16dp"
+                            android:layout_height="16dp"
+                            android:src="@drawable/ic_thumb_up_liked" />
+
+                        <TextView
+                            android:id="@+id/tvActionLikeCount"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="5dp"
+                            android:fontFamily="@font/inter_variable"
+                            android:text="0"
+                            android:textColor="@color/text_primary"
+                            android:textSize="13sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/actionDislike"
+                        android:layout_width="wrap_content"
+                        android:layout_height="34dp"
+                        android:layout_marginStart="12dp"
+                        android:background="@drawable/bg_player_social_chip"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:foreground="?attr/selectableItemBackground"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingHorizontal="10dp">
+
+                        <ImageView
+                            android:layout_width="16dp"
+                            android:layout_height="16dp"
+                            android:src="@drawable/ic_social_thumb_down"
+                            app:tint="@color/text_primary" />
+
+                        <TextView
+                            android:id="@+id/tvActionDislikeCount"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="5dp"
+                            android:fontFamily="@font/inter_variable"
+                            android:text="0"
+                            android:textColor="@color/text_primary"
+                            android:textSize="13sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/actionComments"
+                        android:layout_width="wrap_content"
+                        android:layout_height="34dp"
+                        android:layout_marginStart="12dp"
+                        android:background="@drawable/bg_player_social_chip"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:foreground="?attr/selectableItemBackground"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingHorizontal="10dp">
+
+                        <ImageView
+                            android:layout_width="16dp"
+                            android:layout_height="16dp"
+                            android:src="@drawable/ic_social_comment"
+                            app:tint="@color/text_primary" />
+
+                        <TextView
+                            android:id="@+id/tvActionCommentCount"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="5dp"
+                            android:fontFamily="@font/inter_variable"
+                            android:text="0"
+                            android:textColor="@color/text_primary"
+                            android:textSize="13sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+                </LinearLayout>
+            </HorizontalScrollView>
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="22dp"
+                android:layout_marginTop="18dp"
                 android:orientation="vertical">
 
                 <SeekBar

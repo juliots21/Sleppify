@@ -1,7 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.swiperefreshlayout.widget.SwipeRefreshLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/swipeLibraryRefresh"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/surface_dark"
+    android:clipChildren="false"
+    android:clipToPadding="false">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/surface_dark"
@@ -14,26 +22,80 @@
 
     <TextView
         android:id="@+id/tvLibraryTitle"
-        android:layout_width="0dp"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="4dp"
+        android:elevation="4dp"
         android:text="Biblioteca"
         android:textColor="@color/text_primary"
         android:textSize="22sp"
         android:textStyle="bold"
-        app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
+
+    <LinearLayout
+        android:id="@+id/llLibraryInlineSearch"
+        android:layout_width="0dp"
+        android:layout_height="40dp"
+        android:layout_marginStart="12dp"
+        android:elevation="4dp"
+        android:background="@drawable/bg_music_chip_inactive"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="10dp"
+        android:paddingEnd="6dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toEndOf="@id/tvLibraryTitle"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <ImageView
+            android:layout_width="16dp"
+            android:layout_height="16dp"
+            android:src="@android:drawable/ic_menu_search"
+            app:tint="@color/text_secondary" />
+
+        <com.google.android.material.textfield.TextInputEditText
+            android:id="@+id/etLibraryQuickSearch"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:background="@android:color/transparent"
+            android:hint="Buscar canciones"
+            android:imeOptions="actionSearch"
+            android:inputType="text"
+            android:paddingStart="8dp"
+            android:paddingEnd="4dp"
+            android:textColor="@color/text_primary"
+            android:textColorHint="@color/text_secondary"
+            android:textSize="13sp" />
+
+            <ImageView
+                android:id="@+id/ivLibraryQuickClear"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:layout_marginStart="4dp"
+                android:alpha="0.88"
+                android:background="@drawable/bg_library_inline_clear"
+                android:clickable="true"
+                android:contentDescription="Limpiar búsqueda"
+                android:focusable="true"
+                android:padding="6dp"
+                android:src="@android:drawable/ic_menu_close_clear_cancel"
+                android:visibility="gone"
+                app:tint="@color/text_secondary" />
+    </LinearLayout>
 
     <HorizontalScrollView
         android:id="@+id/hsvLibraryFilters"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_marginTop="12dp"
+        android:elevation="4dp"
+        android:background="@color/surface_dark"
         android:scrollbars="none"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/tvLibraryTitle">
+        app:layout_constraintTop_toBottomOf="@id/llLibraryInlineSearch">
 
         <LinearLayout
             android:layout_width="wrap_content"
@@ -108,9 +170,12 @@
         android:id="@+id/llLibrarySortRow"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
+        android:background="@color/surface_dark"
+        android:elevation="5dp"
         android:gravity="center_vertical"
         android:orientation="horizontal"
+        android:paddingTop="12dp"
+        android:paddingBottom="2dp"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/hsvLibraryFilters">
@@ -151,11 +216,27 @@
             app:tint="@color/text_secondary" />
     </LinearLayout>
 
+    <View
+        android:id="@+id/vLibraryTopSolid"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="@color/surface_dark"
+        android:clickable="false"
+        android:elevation="3dp"
+        android:focusable="false"
+        android:importantForAccessibility="no"
+        app:layout_constraintBottom_toBottomOf="@id/llLibrarySortRow"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
     <LinearLayout
         android:id="@+id/llMusicState"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_marginTop="10dp"
+        android:background="@color/surface_dark"
+        android:elevation="4dp"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         app:layout_constraintEnd_toEndOf="parent"
@@ -209,6 +290,121 @@
             app:rippleColor="#2200419E" />
     </LinearLayout>
 
+    <LinearLayout
+        android:id="@+id/llFeaturedResult"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="0dp"
+        android:background="@color/surface_dark"
+        android:elevation="4dp"
+        android:orientation="vertical"
+        android:paddingTop="10dp"
+        android:paddingBottom="6dp"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/llMusicState">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingTop="2dp"
+            android:paddingBottom="2dp">
+
+            <com.google.android.material.imageview.ShapeableImageView
+                android:id="@+id/ivFeaturedThumb"
+                android:layout_width="84dp"
+                android:layout_height="84dp"
+                android:background="@color/surface_high"
+                android:scaleType="centerCrop"
+                android:src="@drawable/ic_music"
+                app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Small" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tvFeaturedTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:fontFamily="@font/manrope_variable"
+                    android:maxLines="2"
+                    android:text="CORA DE HIELO"
+                    android:textAllCaps="true"
+                    android:textColor="@color/text_primary"
+                    android:textSize="20sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvFeaturedSubtitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:ellipsize="end"
+                    android:fontFamily="@font/inter_variable"
+                    android:maxLines="1"
+                    android:text="Canción • Artista"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="14sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnFeaturedPlay"
+                android:layout_width="0dp"
+                android:layout_height="46dp"
+                android:layout_weight="1"
+                android:fontFamily="@font/inter_variable"
+                android:text="Reproducir"
+                android:textAllCaps="false"
+                android:textColor="#111319"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                app:backgroundTint="@color/white"
+                app:cornerRadius="23dp"
+                app:icon="@drawable/ic_player_play"
+                app:iconGravity="textStart"
+                app:iconPadding="6dp"
+                app:iconTint="#111319" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnFeaturedSave"
+                android:layout_width="0dp"
+                android:layout_height="46dp"
+                android:layout_marginStart="10dp"
+                android:layout_weight="1"
+                android:fontFamily="@font/inter_variable"
+                android:text="Compartir"
+                android:textAllCaps="false"
+                android:textColor="@color/text_primary"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                app:backgroundTint="@android:color/transparent"
+                app:cornerRadius="23dp"
+                app:icon="@android:drawable/ic_menu_share"
+                app:iconGravity="textStart"
+                app:iconPadding="6dp"
+                app:iconTint="@color/text_primary"
+                app:rippleColor="#2FFFFFFF"
+                app:strokeColor="@color/surface_high"
+                app:strokeWidth="2dp" />
+        </LinearLayout>
+    </LinearLayout>
+
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/rvMusicResults"
         android:layout_width="0dp"
@@ -219,7 +415,7 @@
         app:layout_constraintBottom_toTopOf="@id/llMiniPlayer"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/llMusicState"
+        app:layout_constraintTop_toBottomOf="@id/llFeaturedResult"
         tools:listitem="@layout/item_music_result" />
 
     <LinearLayout
@@ -317,43 +513,6 @@
             </LinearLayout>
         </HorizontalScrollView>
 
-        <LinearLayout
-            android:id="@+id/llFeaturedResult"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:visibility="gone">
-
-            <ImageView
-                android:id="@+id/ivFeaturedThumb"
-                android:layout_width="1dp"
-                android:layout_height="1dp"
-                android:src="@drawable/ic_music" />
-
-            <TextView
-                android:id="@+id/tvFeaturedTitle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Featured" />
-
-            <TextView
-                android:id="@+id/tvFeaturedSubtitle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Subtitle" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnFeaturedPlay"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Play" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnFeaturedSave"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Save" />
-        </LinearLayout>
     </LinearLayout>
 
     <LinearLayout
@@ -452,4 +611,6 @@
             android:thumbTint="@android:color/transparent" />
     </LinearLayout>
 
-</androidx.constraintlayout.widget.ConstraintLayout>
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+</androidx.swiperefreshlayout.widget.SwipeRefreshLayout>

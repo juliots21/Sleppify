@@ -9,6 +9,10 @@
         android:icon="@drawable/ic_music"
         android:title="Streaming" />
     <item
+        android:id="@+id/nav_scanner"
+        android:icon="@drawable/ic_scanner"
+        android:title="Scanner" />
+    <item
         android:id="@+id/nav_equalizer"
         android:icon="@drawable/ic_equalizer"
         android:title="Equalizer" />

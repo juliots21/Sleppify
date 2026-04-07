@@ -10,7 +10,6 @@ import android.text.TextUtils;
 import android.view.View;
 import android.widget.ImageView;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -33,6 +32,7 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String TAG_MODULE_SCHEDULE = "module_schedule";
     private static final String TAG_MODULE_MUSIC = "module_music";
+    private static final String TAG_MODULE_SCANNER = "module_scanner";
     private static final String TAG_MODULE_EQUALIZER = "module_equalizer";
     private static final String TAG_MODULE_APPS = "module_apps";
     private static final String TAG_MODULE_SETTINGS = "module_settings";
@@ -40,6 +40,8 @@ public class MainActivity extends AppCompatActivity {
     private static final String TAG_SONG_PLAYER = "song_player";
     private static final String PREFS_PLAYER_STATE = "player_state";
     private static final String PREF_LAST_STREAM_SCREEN = "stream_last_screen";
+    private static final String PREFS_BOOT_FLOW = "boot_flow";
+    private static final String KEY_OAUTH_GATE_SHOWN_ONCE = "oauth_gate_shown_once";
     private static final String STREAM_SCREEN_LIBRARY = "library";
     private static final String STREAM_SCREEN_PLAYLIST_DETAIL = "playlist_detail";
     private static final long RESUME_WORK_DELAY_MS = 180L;
@@ -60,6 +62,7 @@ public class MainActivity extends AppCompatActivity {
     private boolean loginGateAuthInProgress;
     private Fragment scheduleFragment;
     private Fragment musicFragment;
+    private Fragment scannerFragment;
     private Fragment equalizerFragment;
     private Fragment appsFragment;
     private Fragment settingsFragment;
@@ -74,7 +77,7 @@ public class MainActivity extends AppCompatActivity {
     private int lastReverbLevel;
     private boolean hasAgendaScheduleSnapshot;
     private boolean lastSmartSuggestionsEnabled;
-    private int lastSummaryIntervalHours;
+    private int lastSummaryTimesPerDay;
     @Nullable
     private Typeface headerBrandTypeface;
     @Nullable
@@ -115,6 +118,17 @@ public class MainActivity extends AppCompatActivity {
                 && snapshot.isPlaying
                 && snapshot.queue != null
                 && !snapshot.queue.isEmpty();
+    }
+
+    public void pauseActiveMediaAndDownloadsForSessionChange() {
+        songPlayerFragment = getSupportFragmentManager().findFragmentByTag(TAG_SONG_PLAYER);
+        if (songPlayerFragment instanceof SongPlayerFragment && songPlayerFragment.isAdded()) {
+            ((SongPlayerFragment) songPlayerFragment).externalPauseForSessionExit();
+        }
+
+        if (cloudSyncManager != null) {
+            cloudSyncManager.pauseUserScopedBackgroundWork();
+        }
     }
 
     @Override
@@ -185,12 +199,14 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
-        if (authManager.isSignedIn() && authManager.getCurrentUser() != null) {
-            showMainShell();
-            handleSignedInUser(authManager.getCurrentUser(), null);
-            prefetchSmartSuggestions(false);
-        } else {
+        if (shouldShowOAuthGateOnFirstInstallLaunch()) {
             showLoginGate();
+        } else {
+            showMainShell();
+            if (authManager.isSignedIn() && authManager.getCurrentUser() != null) {
+                handleSignedInUser(authManager.getCurrentUser(), null);
+                prefetchSmartSuggestions(false);
+            }
         }
     }
 
@@ -227,13 +243,33 @@ public class MainActivity extends AppCompatActivity {
         syncAudioEffectsServiceFromPreferences(false);
         syncDailyAgendaNotificationSchedule(false);
 
-        if (authManager.isSignedIn() && authManager.getCurrentUser() != null) {
-            showMainShell();
-            prefetchSmartSuggestions(false);
+        // If the OAuth gate is currently shown and there is still no active app session,
+        // keep that screen visible instead of forcing the main shell on resume.
+        if (loginGateContainer != null
+                && loginGateContainer.getVisibility() == View.VISIBLE
+                && !(authManager.isSignedIn() && authManager.getCurrentUser() != null)) {
             return;
         }
 
-        showLoginGate();
+        showMainShell();
+        if (authManager.isSignedIn() && authManager.getCurrentUser() != null) {
+            prefetchSmartSuggestions(false);
+        }
+    }
+
+    private boolean shouldShowOAuthGateOnFirstInstallLaunch() {
+        if (authManager.isSignedIn() && authManager.getCurrentUser() != null) {
+            return false;
+        }
+
+        SharedPreferences bootPrefs = getSharedPreferences(PREFS_BOOT_FLOW, MODE_PRIVATE);
+        boolean alreadyShown = bootPrefs.getBoolean(KEY_OAUTH_GATE_SHOWN_ONCE, false);
+        if (alreadyShown) {
+            return false;
+        }
+
+        bootPrefs.edit().putBoolean(KEY_OAUTH_GATE_SHOWN_ONCE, true).apply();
+        return true;
     }
 
     private void syncAudioEffectsServiceFromPreferences(boolean forceSync) {
@@ -294,7 +330,7 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onError(@androidx.annotation.NonNull String message) {
-                Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
+                
                 if (onError != null) {
                     onError.run();
                 }
@@ -372,12 +408,13 @@ public class MainActivity extends AppCompatActivity {
     ) {
         cloudSyncManager.onUserSignedIn(user.getUid(), (ok, message) -> {
             if (!ok && message != null) {
-                Toast.makeText(MainActivity.this, "Sync parcial: " + message, Toast.LENGTH_SHORT).show();
+                
             }
             notifyScheduleHydrationCompleted();
             syncAudioEffectsServiceFromPreferences(true);
             notifyEqualizerHydrationCompleted();
             prefetchSmartSuggestions(true);
+
             if (onSuccess != null) {
                 onSuccess.run();
             }
@@ -393,14 +430,11 @@ public class MainActivity extends AppCompatActivity {
     }
 
     public void refreshSessionUi() {
-        if (!authManager.isSignedIn() || authManager.getCurrentUser() == null) {
-            showLoginGate();
-            return;
-        }
-
         showMainShell();
         syncDailyAgendaNotificationSchedule(false);
-        prefetchSmartSuggestions(false);
+        if (authManager.isSignedIn() && authManager.getCurrentUser() != null) {
+            prefetchSmartSuggestions(false);
+        }
     }
 
     private void notifyEqualizerHydrationCompleted() {
@@ -605,18 +639,18 @@ public class MainActivity extends AppCompatActivity {
                 CloudSyncManager.KEY_SMART_SUGGESTIONS_ENABLED,
                 settingsPrefs.getBoolean(CloudSyncManager.KEY_AI_SHIFT_ENABLED, true)
         );
-        int intervalHours = settingsPrefs.getInt(CloudSyncManager.KEY_DAILY_SUMMARY_INTERVAL_HOURS, 2);
+        int timesPerDay = settingsPrefs.getInt(CloudSyncManager.KEY_DAILY_SUMMARY_INTERVAL_HOURS, 2);
 
         if (!forceSync
                 && hasAgendaScheduleSnapshot
                 && lastSmartSuggestionsEnabled == smartSuggestionsEnabled
-                && lastSummaryIntervalHours == intervalHours) {
+            && lastSummaryTimesPerDay == timesPerDay) {
             return;
         }
 
         hasAgendaScheduleSnapshot = true;
         lastSmartSuggestionsEnabled = smartSuggestionsEnabled;
-        lastSummaryIntervalHours = intervalHours;
+        lastSummaryTimesPerDay = timesPerDay;
 
         if (!smartSuggestionsEnabled) {
             DailyAgendaNotificationWorker.cancel(getApplicationContext());
@@ -624,13 +658,14 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
-        DailyAgendaNotificationWorker.schedule(getApplicationContext(), intervalHours);
+        DailyAgendaNotificationWorker.schedule(getApplicationContext(), timesPerDay);
         TaskReminderScheduler.rescheduleAll(getApplicationContext());
     }
 
     private void restoreMainModuleReferences() {
         scheduleFragment = getSupportFragmentManager().findFragmentByTag(TAG_MODULE_SCHEDULE);
         musicFragment = getSupportFragmentManager().findFragmentByTag(TAG_MODULE_MUSIC);
+        scannerFragment = getSupportFragmentManager().findFragmentByTag(TAG_MODULE_SCANNER);
         equalizerFragment = getSupportFragmentManager().findFragmentByTag(TAG_MODULE_EQUALIZER);
         appsFragment = getSupportFragmentManager().findFragmentByTag(TAG_MODULE_APPS);
         settingsFragment = getSupportFragmentManager().findFragmentByTag(TAG_MODULE_SETTINGS);
@@ -661,6 +696,10 @@ public class MainActivity extends AppCompatActivity {
             musicFragment = new MusicPlayerFragment();
             return musicFragment;
         }
+        if (itemId == R.id.nav_scanner) {
+            scannerFragment = new ScannerFragment();
+            return scannerFragment;
+        }
         if (itemId == R.id.nav_equalizer) {
             equalizerFragment = new EqualizerFragment();
             return equalizerFragment;
@@ -680,6 +719,9 @@ public class MainActivity extends AppCompatActivity {
         if (itemId == R.id.nav_music) {
             return musicFragment;
         }
+        if (itemId == R.id.nav_scanner) {
+            return scannerFragment;
+        }
         if (itemId == R.id.nav_equalizer) {
             return equalizerFragment;
         }
@@ -696,6 +738,9 @@ public class MainActivity extends AppCompatActivity {
         }
         if (itemId == R.id.nav_music) {
             return TAG_MODULE_MUSIC;
+        }
+        if (itemId == R.id.nav_scanner) {
+            return TAG_MODULE_SCANNER;
         }
         if (itemId == R.id.nav_equalizer) {
             return TAG_MODULE_EQUALIZER;
@@ -883,9 +928,58 @@ public class MainActivity extends AppCompatActivity {
             return false;
         }
 
-        markStreamingEntryAsLibrary();
-        ((SongPlayerFragment) songPlayerFragment).enterMiniMode();
+        SongPlayerFragment player = (SongPlayerFragment) songPlayerFragment;
+        snapshotStreamingScreenBeforeNavigation();
+        if (player.externalTryEnterMiniMode()) {
+            return true;
+        }
+
+        if (getSupportFragmentManager().isStateSaved()) {
+            return true;
+        }
+
+        Fragment fallbackTarget = resolveSongPlayerReturnTarget(player.externalGetReturnTargetTag());
+        FragmentTransaction transaction = getSupportFragmentManager()
+                .beginTransaction()
+                .setReorderingAllowed(true)
+                .setCustomAnimations(0, R.anim.player_screen_exit);
+
+        if (fallbackTarget != null
+                && fallbackTarget.isAdded()
+                && fallbackTarget != songPlayerFragment) {
+            transaction.hide(songPlayerFragment).show(fallbackTarget);
+        } else {
+            transaction.remove(songPlayerFragment);
+        }
+        transaction.commit();
         return true;
+    }
+
+    @Nullable
+    private Fragment resolveSongPlayerReturnTarget(@Nullable String preferredTag) {
+        if (!TextUtils.isEmpty(preferredTag)) {
+            Fragment preferred = getSupportFragmentManager().findFragmentByTag(preferredTag);
+            if (preferred != null && preferred.isAdded()) {
+                return preferred;
+            }
+        }
+
+        Fragment playlist = getSupportFragmentManager().findFragmentByTag(TAG_PLAYLIST_DETAIL);
+        if (playlist != null && playlist.isAdded()) {
+            return playlist;
+        }
+
+        Fragment music = getSupportFragmentManager().findFragmentByTag(TAG_MODULE_MUSIC);
+        if (music != null && music.isAdded()) {
+            return music;
+        }
+
+        Fragment currentMain = getMainModuleFragment(currentMainNavItemId);
+        if (currentMain != null && currentMain.isAdded()) {
+            return currentMain;
+        }
+
+        return null;
     }
 
     private boolean handlePlaylistDetailBackPressed() {

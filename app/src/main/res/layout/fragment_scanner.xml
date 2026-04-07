@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#05060A"
+    android:paddingBottom="12dp">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/scanArea"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="#120E171F"
+        app:layout_constraintBottom_toTopOf="@id/btnFlashlight"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <androidx.camera.view.PreviewView
+            android:id="@+id/previewScanner"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            app:implementationMode="performance"
+            app:scaleType="fillCenter" />
+
+        <ImageView
+            android:id="@+id/ivFreezeOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="Frame congelado"
+            android:scaleType="centerCrop"
+            android:visibility="gone" />
+
+        <LinearLayout
+            android:id="@+id/actionImportImages"
+            android:layout_width="wrap_content"
+            android:layout_height="44dp"
+            android:layout_marginTop="14dp"
+            android:layout_marginEnd="14dp"
+            android:background="@drawable/bg_scanner_import_images_pill"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center_vertical"
+            android:minHeight="44dp"
+            android:orientation="horizontal"
+            android:paddingStart="14dp"
+            android:paddingEnd="16dp"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent">
+
+            <ImageView
+                android:id="@+id/ivImportImages"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:src="@android:drawable/ic_menu_gallery"
+                app:tint="#FFFFFFFF" />
+
+            <TextView
+                android:id="@+id/tvImportImages"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="7dp"
+                android:fontFamily="@font/manrope_variable"
+                android:gravity="center"
+                android:text="Imagenes"
+                android:textColor="#FFFFFFFF"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnFlashlight"
+        android:layout_width="wrap_content"
+        android:layout_height="48dp"
+        android:layout_marginBottom="18dp"
+        android:enabled="false"
+        android:text="Encender la linterna"
+        android:textAllCaps="false"
+        android:textColor="#8A909D"
+        app:backgroundTint="#565B64"
+        app:cornerRadius="24dp"
+        app:icon="@drawable/ic_flashlight_off"
+        app:iconPadding="8dp"
+        app:iconTint="#8A909D"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/scanArea" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

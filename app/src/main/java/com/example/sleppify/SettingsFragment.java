@@ -26,7 +26,6 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -64,18 +63,13 @@ public class SettingsFragment extends Fragment {
     private TextView tvProfileName;
     private TextView tvProfileBadge;
     private TextView tvSummaryFrequencyValue;
-    private MaterialCardView cardEqualizerPro;
-    private TextView tvEqualizerProBadge;
     private MaterialCardView cardSpatialAudio;
     private TextView tvSpatialAudioBadge;
     private MaterialCardView cardReverbControl;
     private TextView tvReverbStatus;
     private MaterialSwitch swAiShiftPermissions;
     private MaterialSwitch swAppsTurboMode;
-    private MaterialSwitch swAppsSystemInfo;
-    private MaterialSwitch swPlayerVideoMode;
     private View rowSummaryFrequency;
-    private View btnDeleteAccountData;
     private View rowAppsWhitelist;
     private TextView tvAppsWhitelistValue;
 
@@ -94,10 +88,8 @@ public class SettingsFragment extends Fragment {
     private boolean hasSettingsSnapshot;
     private boolean lastSmartSuggestionsEnabled;
     private boolean lastAppsTurboEnabled;
-    private boolean lastAppsShowSystemInfo;
-    private boolean lastPlayerVideoModeEnabled;
     private int lastWhitelistCount = -1;
-    private int lastSummaryFrequencyHours = -1;
+    private int lastSummaryFrequencyTimes = -1;
     private boolean hasProfileSnapshot;
     private boolean lastProfileSignedIn;
     @Nullable
@@ -126,18 +118,13 @@ public class SettingsFragment extends Fragment {
         tvProfileName = view.findViewById(R.id.tvProfileName);
         tvProfileBadge = view.findViewById(R.id.tvProfileBadge);
         tvSummaryFrequencyValue = view.findViewById(R.id.tvSummaryFrequencyValue);
-        cardEqualizerPro = view.findViewById(R.id.cardEqualizerPro);
-        tvEqualizerProBadge = view.findViewById(R.id.tvEqualizerProBadge);
         cardSpatialAudio = view.findViewById(R.id.cardSpatialAudio);
         tvSpatialAudioBadge = view.findViewById(R.id.tvSpatialAudioBadge);
         cardReverbControl = view.findViewById(R.id.cardReverbControl);
         tvReverbStatus = view.findViewById(R.id.tvReverbStatus);
         swAiShiftPermissions = view.findViewById(R.id.swAiShiftPermissions);
         swAppsTurboMode = view.findViewById(R.id.swAppsTurboMode);
-        swAppsSystemInfo = view.findViewById(R.id.swAppsSystemInfo);
-        swPlayerVideoMode = view.findViewById(R.id.swPlayerVideoMode);
         rowSummaryFrequency = view.findViewById(R.id.rowSummaryFrequency);
-        btnDeleteAccountData = view.findViewById(R.id.btnDeleteAccountData);
         rowAppsWhitelist = view.findViewById(R.id.rowAppsWhitelist);
         tvAppsWhitelistValue = view.findViewById(R.id.tvAppsWhitelistValue);
 
@@ -146,12 +133,8 @@ public class SettingsFragment extends Fragment {
         renderProfileState();
         setupCalendarSettingsInteractions();
         setupAppsSettingsInteractions();
-        setupDangerActions();
         prewarmWhitelistCandidatesAsync();
 
-        if (cardEqualizerPro != null) {
-            cardEqualizerPro.setOnClickListener(v -> toggleEqualizerCard());
-        }
         if (cardSpatialAudio != null) {
             cardSpatialAudio.setOnClickListener(v -> toggleSpatialCard());
         }
@@ -208,19 +191,15 @@ public class SettingsFragment extends Fragment {
                 settingsPrefs.getBoolean(CloudSyncManager.KEY_AI_SHIFT_ENABLED, true)
         );
         boolean appsTurboEnabled = settingsPrefs.getBoolean(CloudSyncManager.KEY_APPS_TURBO_MODE, false);
-        boolean appsShowSystemInfo = settingsPrefs.getBoolean(CloudSyncManager.KEY_APPS_SHOW_SYSTEM_INFO, true);
-        boolean playerVideoModeEnabled = settingsPrefs.getBoolean(CloudSyncManager.KEY_PLAYER_VIDEO_MODE_ENABLED, false);
         int whitelistCount = getWhitelistedPackages().size();
-        int summaryFrequencyHours = settingsPrefs.getInt(CloudSyncManager.KEY_DAILY_SUMMARY_INTERVAL_HOURS, 2);
+        int summaryFrequencyTimes = settingsPrefs.getInt(CloudSyncManager.KEY_DAILY_SUMMARY_INTERVAL_HOURS, 2);
 
         if (settingsUiBound
             && hasSettingsSnapshot
                 && lastSmartSuggestionsEnabled == smartSuggestionsEnabled
                 && lastAppsTurboEnabled == appsTurboEnabled
-                && lastAppsShowSystemInfo == appsShowSystemInfo
-                && lastPlayerVideoModeEnabled == playerVideoModeEnabled
                 && lastWhitelistCount == whitelistCount
-                && lastSummaryFrequencyHours == summaryFrequencyHours) {
+                && lastSummaryFrequencyTimes == summaryFrequencyTimes) {
             return;
         }
 
@@ -228,10 +207,8 @@ public class SettingsFragment extends Fragment {
         settingsUiBound = true;
         lastSmartSuggestionsEnabled = smartSuggestionsEnabled;
         lastAppsTurboEnabled = appsTurboEnabled;
-        lastAppsShowSystemInfo = appsShowSystemInfo;
-        lastPlayerVideoModeEnabled = playerVideoModeEnabled;
         lastWhitelistCount = whitelistCount;
-        lastSummaryFrequencyHours = summaryFrequencyHours;
+        lastSummaryFrequencyTimes = summaryFrequencyTimes;
 
         swAiShiftPermissions.setOnCheckedChangeListener(null);
         swAiShiftPermissions.setChecked(smartSuggestionsEnabled);
@@ -243,8 +220,8 @@ public class SettingsFragment extends Fragment {
 
             Context appContext = requireContext().getApplicationContext();
             if (isChecked) {
-                int interval = settingsPrefs.getInt(CloudSyncManager.KEY_DAILY_SUMMARY_INTERVAL_HOURS, 2);
-                DailyAgendaNotificationWorker.schedule(appContext, interval);
+                int timesPerDay = settingsPrefs.getInt(CloudSyncManager.KEY_DAILY_SUMMARY_INTERVAL_HOURS, 2);
+                DailyAgendaNotificationWorker.schedule(appContext, timesPerDay);
                 TaskReminderScheduler.rescheduleAll(appContext);
             } else {
                 DailyAgendaNotificationWorker.cancel(appContext);
@@ -263,20 +240,6 @@ public class SettingsFragment extends Fragment {
                     settingsPrefs.edit().putBoolean(CloudSyncManager.KEY_APPS_TURBO_MODE, isChecked).apply());
         }
 
-        if (swAppsSystemInfo != null) {
-            swAppsSystemInfo.setOnCheckedChangeListener(null);
-            swAppsSystemInfo.setChecked(appsShowSystemInfo);
-            swAppsSystemInfo.setOnCheckedChangeListener((buttonView, isChecked) ->
-                    settingsPrefs.edit().putBoolean(CloudSyncManager.KEY_APPS_SHOW_SYSTEM_INFO, isChecked).apply());
-        }
-
-        if (swPlayerVideoMode != null) {
-            swPlayerVideoMode.setOnCheckedChangeListener(null);
-            swPlayerVideoMode.setChecked(playerVideoModeEnabled);
-            swPlayerVideoMode.setOnCheckedChangeListener((buttonView, isChecked) ->
-                settingsPrefs.edit().putBoolean(CloudSyncManager.KEY_PLAYER_VIDEO_MODE_ENABLED, isChecked).apply());
-        }
-
         if (tvAppsWhitelistValue != null) {
             if (whitelistCount <= 0) {
                 tvAppsWhitelistValue.setText(R.string.settings_apps_whitelist_none);
@@ -285,7 +248,7 @@ public class SettingsFragment extends Fragment {
             }
         }
 
-        tvSummaryFrequencyValue.setText(formatSummaryFrequency(summaryFrequencyHours));
+        tvSummaryFrequencyValue.setText(formatSummaryFrequency(summaryFrequencyTimes));
     }
 
     private void setupCalendarSettingsInteractions() {
@@ -297,12 +260,6 @@ public class SettingsFragment extends Fragment {
     private void setupAppsSettingsInteractions() {
         if (rowAppsWhitelist != null) {
             rowAppsWhitelist.setOnClickListener(v -> showAppsWhitelistDialog());
-        }
-    }
-
-    private void setupDangerActions() {
-        if (btnDeleteAccountData != null) {
-            btnDeleteAccountData.setOnClickListener(v -> showDeleteAccountDataConfirmation());
         }
     }
 
@@ -352,7 +309,7 @@ public class SettingsFragment extends Fragment {
                 }
 
                 if (finalCandidates.isEmpty()) {
-                    Toast.makeText(requireContext(), R.string.settings_apps_whitelist_empty_toast, Toast.LENGTH_SHORT).show();
+                    
                     return;
                 }
 
@@ -389,7 +346,7 @@ public class SettingsFragment extends Fragment {
                             .apply();
                 CloudSyncManager.getInstance(requireContext()).syncSettingsNowIfSignedIn();
                     renderSettingsState();
-                    Toast.makeText(requireContext(), R.string.settings_apps_whitelist_cleared_toast, Toast.LENGTH_SHORT).show();
+                    
                 })
                 .setPositiveButton(R.string.settings_apps_whitelist_save, (dialog, which) -> {
                     settingsPrefs.edit()
@@ -397,11 +354,7 @@ public class SettingsFragment extends Fragment {
                             .apply();
                 CloudSyncManager.getInstance(requireContext()).syncSettingsNowIfSignedIn();
                     renderSettingsState();
-                    Toast.makeText(
-                            requireContext(),
-                            getString(R.string.settings_apps_whitelist_saved_toast, selectedPackages.size()),
-                            Toast.LENGTH_SHORT
-                    ).show();
+                    
                 })
                 .setNegativeButton(android.R.string.cancel, null)
                 .show();
@@ -588,8 +541,8 @@ public class SettingsFragment extends Fragment {
     }
 
     private void showSummaryFrequencyPicker() {
-        final int[] values = new int[]{1, 2, 4};
-        final String[] labels = new String[]{"Cada 1 hora", "Cada 2 horas", "Cada 4 horas"};
+        final int[] values = new int[]{1, 2, 3, 4, 5};
+        final String[] labels = new String[]{"1 vez", "2 veces", "3 veces", "4 veces", "5 veces"};
         int current = settingsPrefs.getInt(CloudSyncManager.KEY_DAILY_SUMMARY_INTERVAL_HOURS, 2);
         int checked = indexOf(values, current);
 
@@ -602,8 +555,9 @@ public class SettingsFragment extends Fragment {
                             CloudSyncManager.KEY_SMART_SUGGESTIONS_ENABLED,
                             settingsPrefs.getBoolean(CloudSyncManager.KEY_AI_SHIFT_ENABLED, true)
                     );
+                    Context appContext = requireContext().getApplicationContext();
                     if (smartSuggestionsEnabled) {
-                        DailyAgendaNotificationWorker.schedule(requireContext().getApplicationContext(), values[which]);
+                        DailyAgendaNotificationWorker.schedule(appContext, values[which]);
                     }
 
                     renderSettingsState();
@@ -623,14 +577,12 @@ public class SettingsFragment extends Fragment {
     }
 
     private void renderAudioCardsState() {
-        boolean eqEnabled = audioPrefs.getBoolean(AudioEffectsService.KEY_ENABLED, false);
         boolean spatialEnabled = audioPrefs.getBoolean(AudioEffectsService.KEY_SPATIAL_ENABLED, false);
         int reverbLevel = normalizeReverbLevel(
             audioPrefs.getInt(AudioEffectsService.KEY_REVERB_LEVEL, AudioEffectsService.REVERB_LEVEL_OFF)
         );
         boolean reverbEnabled = reverbLevel != AudioEffectsService.REVERB_LEVEL_OFF;
 
-        applyAudioCardVisualState(cardEqualizerPro, tvEqualizerProBadge, eqEnabled);
         applyAudioCardVisualState(cardSpatialAudio, tvSpatialAudioBadge, spatialEnabled);
         applyReverbCardVisualState(reverbEnabled);
     }
@@ -686,14 +638,6 @@ public class SettingsFragment extends Fragment {
                     ? ContextCompat.getColor(requireContext(), R.color.stitch_blue_light)
                     : Color.parseColor("#FFBA9A"));
         }
-    }
-
-    private void toggleEqualizerCard() {
-        boolean current = audioPrefs.getBoolean(AudioEffectsService.KEY_ENABLED, false);
-        boolean next = !current;
-        audioPrefs.edit().putBoolean(AudioEffectsService.KEY_ENABLED, next).apply();
-        updateAudioEffectsServiceState();
-        renderAudioCardsState();
     }
 
     private void toggleSpatialCard() {
@@ -808,15 +752,29 @@ public class SettingsFragment extends Fragment {
         String displayName = authManager.getDisplayName();
         String email = authManager.getEmail();
 
-        new MaterialAlertDialogBuilder(requireContext())
+        AlertDialog dialog = new MaterialAlertDialogBuilder(requireContext())
                 .setTitle(TextUtils.isEmpty(displayName) ? "Cuenta conectada" : displayName)
                 .setMessage(TextUtils.isEmpty(email) ? "¿Quieres cerrar sesion?" : email)
-                .setPositiveButton("Cerrar sesion", (dialog, which) -> performSignOut())
+                .setNeutralButton("Eliminar cuenta", null)
                 .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Cerrar sesion", (d, which) -> performSignOut())
                 .show();
+
+        Button deleteButton = dialog.getButton(AlertDialog.BUTTON_NEUTRAL);
+        if (deleteButton != null) {
+            deleteButton.setTextColor(Color.parseColor("#FF6E6E"));
+            deleteButton.setOnClickListener(v -> {
+                dialog.dismiss();
+                showDeleteAccountDataConfirmation();
+            });
+        }
     }
 
     private void performSignOut() {
+        if (getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).pauseActiveMediaAndDownloadsForSessionChange();
+        }
+
         authManager.signOut((success, message) -> {
             CloudSyncManager.getInstance(requireContext()).onUserSignedOut();
             renderProfileState();
@@ -825,13 +783,13 @@ public class SettingsFragment extends Fragment {
                 ((MainActivity) getActivity()).refreshSessionUi();
             }
 
-            Toast.makeText(requireContext(), "Sesion cerrada", Toast.LENGTH_SHORT).show();
+            
         });
     }
 
     private void showDeleteAccountDataConfirmation() {
         if (!authManager.isSignedIn() || authManager.getCurrentUser() == null) {
-            Toast.makeText(requireContext(), "Primero inicia sesion para eliminar la cuenta.", Toast.LENGTH_SHORT).show();
+            
             return;
         }
 
@@ -839,12 +797,21 @@ public class SettingsFragment extends Fragment {
         confirmInput.setHint("Escribe \"eliminar\"");
         confirmInput.setSingleLine(true);
         confirmInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        confirmInput.setLayoutParams(new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+
+        LinearLayout confirmContainer = new LinearLayout(requireContext());
+        confirmContainer.setOrientation(LinearLayout.VERTICAL);
+        confirmContainer.setPadding(dp(24), dp(6), dp(24), 0);
+        confirmContainer.addView(confirmInput);
 
         AlertDialog dialog = new MaterialAlertDialogBuilder(requireContext())
-            .setTitle("Eliminar cuenta y datos en nube")
-            .setMessage("Esta accion eliminara tu cuenta y tus datos en la nube de forma permanente. Tus datos locales se conservaran en este dispositivo.\n\nPara confirmar, escribe \"eliminar\".")
-                .setView(confirmInput)
-            .setPositiveButton("Eliminar cuenta en nube", null)
+            .setTitle("Eliminar cuenta y borrar todo")
+            .setMessage("Esta accion eliminara de forma permanente tu cuenta, tus datos en la nube y todos los datos locales de la app en este dispositivo.\n\nPara confirmar, escribe \"eliminar\".")
+            .setView(confirmContainer)
+            .setPositiveButton("Eliminar cuenta y todo", null)
                 .setNegativeButton("Cancelar", null)
                 .show();
 
@@ -900,14 +867,17 @@ public class SettingsFragment extends Fragment {
             return;
         }
 
+        if (getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).pauseActiveMediaAndDownloadsForSessionChange();
+        }
+
         FirebaseUser currentUser = authManager.getCurrentUser();
         if (currentUser == null || TextUtils.isEmpty(currentUser.getUid())) {
-            Toast.makeText(requireContext(), "No se encontro una cuenta activa.", Toast.LENGTH_SHORT).show();
+            
             return;
         }
 
         deleteAccountInFlight = true;
-        setDeleteAccountButtonEnabled(false);
 
         Context appContext = requireContext().getApplicationContext();
         CloudSyncManager cloudSync = CloudSyncManager.getInstance(appContext);
@@ -921,57 +891,50 @@ public class SettingsFragment extends Fragment {
 
             if (!cloudOk) {
                 deleteAccountInFlight = false;
-                setDeleteAccountButtonEnabled(true);
                 String safeMessage = TextUtils.isEmpty(cloudMessage)
                         ? "No se pudieron eliminar tus datos en la nube."
                         : cloudMessage;
-                Toast.makeText(requireContext(), safeMessage, Toast.LENGTH_LONG).show();
+                
                 return;
             }
 
-            authManager.deleteCurrentUser((authOk, authMessage) -> {
+            authManager.deleteCurrentUser(requireActivity(), (authOk, authMessage) -> {
                 if (!isAdded()) {
                     deleteAccountInFlight = false;
                     return;
                 }
 
                 deleteAccountInFlight = false;
-                setDeleteAccountButtonEnabled(true);
 
                 if (!authOk) {
                     String safeMessage = TextUtils.isEmpty(authMessage)
                             ? "No se pudo eliminar la cuenta. Intenta iniciar sesion de nuevo y repetir."
                             : authMessage;
-                    Toast.makeText(requireContext(), safeMessage, Toast.LENGTH_LONG).show();
+                    
                     return;
                 }
 
                 cloudSync.onUserSignedOut();
+                cloudSync.clearLocalUserDataCompletely();
 
                 hasProfileSnapshot = false;
+                hasSettingsSnapshot = false;
                 renderProfileState();
+                renderSettingsState();
 
                 if (getActivity() instanceof MainActivity) {
                     ((MainActivity) getActivity()).refreshSessionUi();
                 }
 
-                Toast.makeText(requireContext(), "Cuenta y datos en nube eliminados. Tus datos locales se conservaron.", Toast.LENGTH_LONG).show();
+                
             });
         });
     }
 
-    private void setDeleteAccountButtonEnabled(boolean enabled) {
-        if (btnDeleteAccountData == null) {
-            return;
-        }
-        btnDeleteAccountData.setEnabled(enabled);
-        btnDeleteAccountData.setAlpha(enabled ? 1f : 0.55f);
-    }
-
     @NonNull
-    private String formatSummaryFrequency(int hours) {
-        int safeHours = Math.max(1, Math.min(4, hours));
-        return safeHours == 1 ? "1 hora" : safeHours + " horas";
+    private String formatSummaryFrequency(int timesPerDay) {
+        int safeTimes = Math.max(1, Math.min(5, timesPerDay));
+        return safeTimes == 1 ? "1 vez" : safeTimes + " veces";
     }
 
     private int dp(int value) {
@@ -991,3 +954,4 @@ public class SettingsFragment extends Fragment {
         }
     }
 }
+

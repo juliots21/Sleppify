@@ -61,9 +61,12 @@
 
             <ImageView
                 android:id="@+id/ivTrackMore"
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:padding="2dp"
+                android:layout_width="34dp"
+                android:layout_height="34dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
+                android:focusable="true"
+                android:padding="7dp"
                 android:src="@drawable/ic_more_vert"
                 app:tint="#CCFFFFFF" />
         </LinearLayout>

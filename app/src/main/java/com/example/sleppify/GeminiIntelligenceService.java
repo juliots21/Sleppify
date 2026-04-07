@@ -37,9 +37,9 @@ public class GeminiIntelligenceService {
             "AIzaSyBiSKMB_R3CDMvTeM90ekaJepCRxCZ6Dvk"
     };
 
-        // Single stable model validated for metadata generation in this project.
     private static final String[] MODELS = {
-            "gemini-flash-lite-latest"
+            "gemini-2.0-flash",
+            "gemini-2.0-flash-lite"
     };
 
     private static final String BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/";
@@ -203,7 +203,10 @@ public class GeminiIntelligenceService {
 
         String category = normalizeAiTaskCategory(rawCategory);
         if (category.isEmpty() || isGenericTaskCategory(category)) {
-            category = buildFallbackTaskCategory(taskTitle);
+            category = normalizeAiTaskCategory(buildFallbackTaskCategory(taskTitle));
+        }
+        if (category.isEmpty()) {
+            category = "Pendiente";
         }
         return new TaskMetadata(description, category);
     }
@@ -213,6 +216,8 @@ public class GeminiIntelligenceService {
         return "otros".equals(normalized)
                 || "otro".equals(normalized)
                 || "general".equals(normalized)
+                || "organizacion".equals(normalized)
+                || "organización".equals(normalized)
                 || "varios".equals(normalized)
                 || "misc".equals(normalized);
     }
@@ -1250,21 +1255,22 @@ public class GeminiIntelligenceService {
                 }
 
                 JSONObject root = new JSONObject(response.toString());
-                String text = root.getJSONArray("candidates")
-                        .getJSONObject(0)
-                        .getJSONObject("content")
-                        .getJSONArray("parts")
-                        .getJSONObject(0)
-                        .getString("text");
+                String text = extractResponseText(root);
+                if (TextUtils.isEmpty(text)) {
+                    Log.w(TAG, "Empty text for model=" + model + " key=" + safeKeyPrefix(apiKey));
+                    return new RequestResult(null, -1);
+                }
                 return new RequestResult(text, 200);
             } else {
                 // Try to read error body for logging
                 try {
-                    BufferedReader errBr = new BufferedReader(new InputStreamReader(conn.getErrorStream(), "utf-8"));
-                    StringBuilder errBody = new StringBuilder();
-                    String errLine;
-                    while ((errLine = errBr.readLine()) != null) errBody.append(errLine);
-                    Log.w(TAG, "Error body (HTTP " + code + "): " + errBody.toString().substring(0, Math.min(200, errBody.length())));
+                    if (conn.getErrorStream() != null) {
+                        BufferedReader errBr = new BufferedReader(new InputStreamReader(conn.getErrorStream(), "utf-8"));
+                        StringBuilder errBody = new StringBuilder();
+                        String errLine;
+                        while ((errLine = errBr.readLine()) != null) errBody.append(errLine);
+                        Log.w(TAG, "Error body (HTTP " + code + "): " + errBody.toString().substring(0, Math.min(200, errBody.length())));
+                    }
                 } catch (Exception ignored) {}
                 return new RequestResult(null, code);
             }
@@ -1272,6 +1278,53 @@ public class GeminiIntelligenceService {
             Log.e(TAG, "Exception in request: " + e.getMessage());
             return new RequestResult(null, -1);
         }
+    }
+
+    @NonNull
+    private String extractResponseText(@NonNull JSONObject root) {
+        JSONArray candidates = root.optJSONArray("candidates");
+        if (candidates == null || candidates.length() == 0) {
+            return "";
+        }
+
+        for (int i = 0; i < candidates.length(); i++) {
+            JSONObject candidate = candidates.optJSONObject(i);
+            if (candidate == null) {
+                continue;
+            }
+
+            JSONObject content = candidate.optJSONObject("content");
+            if (content == null) {
+                continue;
+            }
+
+            JSONArray parts = content.optJSONArray("parts");
+            if (parts == null || parts.length() == 0) {
+                continue;
+            }
+
+            StringBuilder joined = new StringBuilder();
+            for (int p = 0; p < parts.length(); p++) {
+                JSONObject part = parts.optJSONObject(p);
+                if (part == null) {
+                    continue;
+                }
+                String partText = part.optString("text", "").trim();
+                if (partText.isEmpty()) {
+                    continue;
+                }
+                if (joined.length() > 0) {
+                    joined.append('\n');
+                }
+                joined.append(partText);
+            }
+
+            String text = joined.toString().trim();
+            if (!text.isEmpty()) {
+                return text;
+            }
+        }
+        return "";
     }
 
     private static class RequestResult {

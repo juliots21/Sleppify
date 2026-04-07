@@ -6,12 +6,16 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Typeface;
 import android.os.Build;
 import android.os.SystemClock;
 import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
 import android.net.Uri;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
 import android.text.TextUtils;
+import android.text.style.StyleSpan;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
@@ -84,6 +88,8 @@ public final class OfflinePlaylistDownloadWorker extends Worker {
     private int notificationTotal;
     private int notificationDownloaded;
     @NonNull
+    private String notificationPlaylistTitle = "Playlist";
+    @NonNull
     private String notificationTrackId = "";
     @NonNull
     private String notificationTrackTitle = "";
@@ -111,9 +117,11 @@ public final class OfflinePlaylistDownloadWorker extends Worker {
                     .build());
         }
 
-        String baseUrl = OfflineAudioStore.getOfflineDownloadBaseUrl();
-        boolean useBaseUrl = !TextUtils.isEmpty(baseUrl);
-        String playlistTitle = getInputData().getString(INPUT_PLAYLIST_TITLE);
+        String playlistTitle = normalizePlaylistTitle(
+            getInputData().getString(INPUT_PLAYLIST_TITLE),
+            getInputData().getString(INPUT_PLAYLIST_ID)
+        );
+        notificationPlaylistTitle = playlistTitle;
         String[] titles = getInputData().getStringArray(INPUT_TITLES);
         String[] artists = getInputData().getStringArray(INPUT_ARTISTS);
 
@@ -129,8 +137,7 @@ public final class OfflinePlaylistDownloadWorker extends Worker {
         Log.d(TAG,
             "doWork:start total=" + total
                 + " pending=" + pendingTotal
-                + " alreadyOffline=" + alreadyOfflineCount
-                + " useBaseUrl=" + useBaseUrl);
+                + " alreadyOffline=" + alreadyOfflineCount);
         updateForegroundNotification(done, total, downloaded, null, null, true);
 
         for (int i = 0; i < ids.length; i++) {
@@ -183,14 +190,8 @@ public final class OfflinePlaylistDownloadWorker extends Worker {
                         encounteredNoNetwork = true;
                         Log.w(TAG, "track:no_network id=" + id);
                     } else {
-                        if (useBaseUrl) {
-                            ok = downloadTrackToOffline(getApplicationContext(), baseUrl, id);
-                            Log.d(TAG, "track:base_url_result id=" + id + " ok=" + ok);
-                        }
-                        if (!ok) {
-                            ok = downloadTrackFromYouTubeExtractor(getApplicationContext(), id);
-                            Log.d(TAG, "track:newpipe_result id=" + id + " ok=" + ok);
-                        }
+                        ok = downloadTrackFromYouTubeExtractor(getApplicationContext(), id);
+                        Log.d(TAG, "track:newpipe_result id=" + id + " ok=" + ok);
                         if (!ok) {
                             ok = downloadTrackFromArchiveCatalog(getApplicationContext(), id, title, artist);
                             Log.d(TAG, "track:archive_result id=" + id + " ok=" + ok);
@@ -309,12 +310,13 @@ public final class OfflinePlaylistDownloadWorker extends Worker {
             resolvedTrackTitle = notificationTrackId;
         }
 
-        String title;
-        if (!TextUtils.isEmpty(resolvedTrackTitle)) {
-            title = "Descargando: " + resolvedTrackTitle;
-        } else {
-            title = "Descargando musica offline";
+        int safeTotal = Math.max(0, notificationTotal);
+        int safeDownloaded = Math.max(0, notificationDownloaded);
+        if (safeTotal > 0) {
+            safeDownloaded = Math.min(safeDownloaded, safeTotal);
         }
+
+        CharSequence title = buildNotificationTitle(notificationPlaylistTitle, safeDownloaded, safeTotal);
 
         StringBuilder content = new StringBuilder();
         if (notificationTrackBytes >= 0 && notificationTrackTotalBytes > 0) {
@@ -323,8 +325,10 @@ public final class OfflinePlaylistDownloadWorker extends Worker {
                     .append(formatBytes(notificationTrackTotalBytes));
         } else if (notificationTrackBytes > 0) {
             content.append(formatBytes(notificationTrackBytes)).append(" descargados");
+        } else if (!TextUtils.isEmpty(resolvedTrackTitle)) {
+            content.append(resolvedTrackTitle);
         } else if (notificationTotal > 0) {
-            content.append("Cancion ").append(Math.max(1, notificationDone + 1)).append(" en curso");
+            content.append("Preparando siguiente canción");
         } else {
             content.append("Preparando descarga");
         }
@@ -350,6 +354,36 @@ public final class OfflinePlaylistDownloadWorker extends Worker {
                 .build();
 
         return new ForegroundInfo(NOTIFICATION_ID, notification);
+    }
+
+    @NonNull
+    private CharSequence buildNotificationTitle(@NonNull String playlistTitle, int downloaded, int total) {
+        String safeTitle = TextUtils.isEmpty(playlistTitle) ? "Playlist" : playlistTitle;
+        String prefix = "Descargando playlist ";
+        String suffix = " " + downloaded + "/" + total;
+
+        SpannableStringBuilder builder = new SpannableStringBuilder(prefix)
+                .append(safeTitle)
+                .append(suffix);
+        int start = prefix.length();
+        int end = start + safeTitle.length();
+        builder.setSpan(new StyleSpan(Typeface.BOLD), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        return builder;
+    }
+
+    @NonNull
+    private String normalizePlaylistTitle(@Nullable String playlistTitle, @Nullable String playlistId) {
+        String resolved = playlistTitle == null ? "" : playlistTitle.trim();
+        if (!TextUtils.isEmpty(resolved)) {
+            return resolved;
+        }
+
+        resolved = playlistId == null ? "" : playlistId.trim();
+        if (!TextUtils.isEmpty(resolved)) {
+            return resolved;
+        }
+
+        return "Playlist";
     }
 
     @NonNull
@@ -424,39 +458,6 @@ public final class OfflinePlaylistDownloadWorker extends Worker {
         }
         String raw = values[index];
         return raw == null ? "" : raw.trim();
-    }
-
-    private boolean downloadTrackToOffline(
-            @NonNull Context context,
-            @NonNull String baseUrl,
-            @NonNull String videoId
-    ) {
-        File target = OfflineAudioStore.getOfflineAudioFile(context, videoId);
-        File parent = target.getParentFile();
-        if (parent == null) {
-            return false;
-        }
-        if (!parent.exists() && !parent.mkdirs()) {
-            return false;
-        }
-
-        String escapedId = Uri.encode(videoId);
-        String[] candidates = new String[] {
-                baseUrl + "/" + escapedId + ".m4a",
-            baseUrl + "/" + escapedId + ".mp3",
-                baseUrl + "/" + escapedId
-        };
-
-        for (String url : candidates) {
-            Log.d(TAG, "baseUrl:attempt id=" + videoId + " url=" + sanitizeUrlForLog(url));
-            if (downloadFromUrl(url, target)) {
-                Log.d(TAG, "baseUrl:success id=" + videoId);
-                return true;
-            }
-        }
-
-        Log.w(TAG, "baseUrl:all_candidates_failed id=" + videoId);
-        return false;
     }
 
     private boolean downloadTrackFromYouTubeExtractor(

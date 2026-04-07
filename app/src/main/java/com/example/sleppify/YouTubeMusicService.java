@@ -18,10 +18,12 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -29,10 +31,11 @@ public final class YouTubeMusicService {
 
     private static final String API_BASE_URL = "https://www.googleapis.com/youtube/v3";
     private static final String YT_SCOPE_READONLY = "https://www.googleapis.com/auth/youtube.readonly";
+    private static final String MUSIC_LIKES_PLAYLIST_ID = "LM";
     public static final String SPECIAL_LIKED_VIDEOS_ID = "__liked_videos__";
     private static final String SPECIAL_LIKED_VIDEOS_TITLE = "Me gusta";
-    private static final int LIKED_TRACK_MIN_SECONDS = 60;
-    private static final int LIKED_TRACK_MAX_SECONDS = 7 * 60;
+    private static final int YOUTUBE_PAGE_MAX_RESULTS = 50;
+    private static final int MIN_PUBLIC_MUSIC_DURATION_SECONDS = 70;
     private static final ExecutorService SHARED_EXECUTOR = Executors.newFixedThreadPool(3);
 
     private final ExecutorService executor = SHARED_EXECUTOR;
@@ -232,7 +235,10 @@ public final class YouTubeMusicService {
             try {
                 List<PlaylistTrackResult> tracks;
                 if (SPECIAL_LIKED_VIDEOS_ID.equals(normalizedPlaylistId)) {
-                    tracks = performLikedVideosTracksRequest(token, Math.max(1, maxResults));
+                    tracks = performMusicLikesTracksRequest(token, Math.max(1, maxResults));
+                    if (tracks.isEmpty()) {
+                        tracks = performLikedVideosTracksRequest(token, Math.max(1, maxResults));
+                    }
                 } else {
                     tracks = performPlaylistTracksRequest(
                             token,
@@ -240,7 +246,8 @@ public final class YouTubeMusicService {
                             Math.max(1, maxResults)
                     );
                 }
-                mainHandler.post(() -> callback.onSuccess(tracks));
+                List<PlaylistTrackResult> finalTracks = tracks;
+                mainHandler.post(() -> callback.onSuccess(finalTracks));
             } catch (Exception e) {
                 String error = e.getMessage() == null ? "No se pudo cargar canciones." : e.getMessage();
                 mainHandler.post(() -> callback.onError(error));
@@ -283,7 +290,9 @@ public final class YouTubeMusicService {
     ) throws Exception {
         String endpoint = API_BASE_URL
                 + "/search?part=snippet"
-                + "&type=video,playlist,channel"
+            + "&type=video"
+            + "&videoCategoryId=10"
+            + "&videoEmbeddable=true"
                 + "&maxResults=" + Math.min(50, maxResults)
                 + "&q=" + safeUrlEncode(query)
                 + "&key=" + safeUrlEncode(apiKey);
@@ -316,18 +325,12 @@ public final class YouTubeMusicService {
                 }
 
                 String kind = idObject.optString("kind", "");
-                String resultType;
-                String contentId;
-                if (kind.endsWith("#playlist")) {
-                    resultType = "playlist";
-                    contentId = idObject.optString("playlistId", "").trim();
-                } else if (kind.endsWith("#channel")) {
-                    resultType = "channel";
-                    contentId = idObject.optString("channelId", "").trim();
-                } else {
-                    resultType = "video";
-                    contentId = idObject.optString("videoId", "").trim();
+                if (!kind.endsWith("#video")) {
+                    continue;
                 }
+
+                String resultType = "video";
+                String contentId = idObject.optString("videoId", "").trim();
 
                 if (contentId.isEmpty()) {
                     continue;
@@ -339,6 +342,9 @@ public final class YouTubeMusicService {
                 }
 
                 String channelTitle = snippet.optString("channelTitle", "").trim();
+                if (!shouldIncludeMusicSearchResult(title, channelTitle)) {
+                    continue;
+                }
                 String subtitle = buildSearchSubtitle(resultType, channelTitle);
                 String thumbnailUrl = extractYouTubeThumbnail(snippet.optJSONObject("thumbnails"));
 
@@ -355,8 +361,8 @@ public final class YouTubeMusicService {
 
                 if (!videoIds.isEmpty()) {
                     try {
-                        Map<String, Boolean> embeddableMap = fetchPublicEmbeddableByIds(apiKey, videoIds);
-                        if (!embeddableMap.isEmpty()) {
+                        Map<String, PublicVideoFilterInfo> filterMap = fetchPublicVideoFiltersByIds(apiKey, videoIds);
+                        if (!filterMap.isEmpty()) {
                             List<TrackResult> filtered = new ArrayList<>(result.size());
                             for (TrackResult item : result) {
                                 if (item == null || !item.isVideo() || TextUtils.isEmpty(item.videoId)) {
@@ -364,10 +370,22 @@ public final class YouTubeMusicService {
                                     continue;
                                 }
 
-                                Boolean embeddable = embeddableMap.get(item.videoId);
-                                if (embeddable == null || embeddable) {
+                                PublicVideoFilterInfo info = filterMap.get(item.videoId);
+                                if (info == null) {
                                     filtered.add(item);
+                                    continue;
                                 }
+
+                                if (!info.embeddable) {
+                                    continue;
+                                }
+
+                                if (info.durationSeconds > 0
+                                        && info.durationSeconds < MIN_PUBLIC_MUSIC_DURATION_SECONDS) {
+                                    continue;
+                                }
+
+                                filtered.add(item);
                             }
                             result = filtered;
                         }
@@ -388,79 +406,107 @@ public final class YouTubeMusicService {
             @NonNull String accessToken,
             int maxResults
     ) throws Exception {
-        String endpoint = API_BASE_URL
-            + "/playlists?part=snippet,contentDetails,status"
-                + "&mine=true"
-                + "&maxResults=" + Math.min(50, maxResults);
+        int targetCount = Math.max(1, maxResults);
+        String pageToken = "";
+        List<PlaylistResult> result = new ArrayList<>();
 
-        HttpURLConnection connection = openGetConnection(endpoint, "Bearer " + accessToken);
-        try {
-            int statusCode = connection.getResponseCode();
-            String body = readResponse(connection, statusCode >= 400);
-            if (statusCode != HttpURLConnection.HTTP_OK) {
-                throw new IllegalStateException(buildApiErrorMessage(body, statusCode));
+        while (result.size() < targetCount) {
+            int pageSize = Math.min(YOUTUBE_PAGE_MAX_RESULTS, targetCount - result.size());
+            String endpoint = API_BASE_URL
+                    + "/playlists?part=snippet,contentDetails,status"
+                    + "&mine=true"
+                    + "&maxResults=" + pageSize;
+            if (!pageToken.isEmpty()) {
+                endpoint += "&pageToken=" + safeUrlEncode(pageToken);
             }
 
-            JSONObject root = new JSONObject(body);
-            JSONArray items = root.optJSONArray("items");
-            List<PlaylistResult> result = new ArrayList<>();
-            if (items == null) {
-                items = new JSONArray();
-            }
-
-            for (int i = 0; i < items.length(); i++) {
-                JSONObject item = items.optJSONObject(i);
-                if (item == null) {
-                    continue;
+            HttpURLConnection connection = openGetConnection(endpoint, "Bearer " + accessToken);
+            try {
+                int statusCode = connection.getResponseCode();
+                String body = readResponse(connection, statusCode >= 400);
+                if (statusCode != HttpURLConnection.HTTP_OK) {
+                    throw new IllegalStateException(buildApiErrorMessage(body, statusCode));
                 }
 
-                String playlistId = item.optString("id", "").trim();
-                JSONObject snippet = item.optJSONObject("snippet");
-                JSONObject contentDetails = item.optJSONObject("contentDetails");
-                if (playlistId.isEmpty() || snippet == null || contentDetails == null) {
-                    continue;
+                JSONObject root = new JSONObject(body);
+                JSONArray items = root.optJSONArray("items");
+                if (items == null) {
+                    items = new JSONArray();
                 }
 
-                String title = snippet.optString("title", "").trim();
-                if (title.isEmpty()) {
-                    continue;
+                for (int i = 0; i < items.length(); i++) {
+                    JSONObject item = items.optJSONObject(i);
+                    if (item == null) {
+                        continue;
+                    }
+
+                    String playlistId = item.optString("id", "").trim();
+                    JSONObject snippet = item.optJSONObject("snippet");
+                    JSONObject contentDetails = item.optJSONObject("contentDetails");
+                    if (playlistId.isEmpty() || snippet == null || contentDetails == null) {
+                        continue;
+                    }
+
+                    String title = snippet.optString("title", "").trim();
+                    if (title.isEmpty()) {
+                        continue;
+                    }
+
+                    int itemCount = contentDetails.optInt("itemCount", 0);
+                    String owner = snippet.optString("channelTitle", "").trim();
+                    String thumbnailUrl = extractYouTubeThumbnail(snippet.optJSONObject("thumbnails"));
+                    JSONObject status = item.optJSONObject("status");
+                    String privacyStatus = status == null ? "" : status.optString("privacyStatus", "").trim();
+                    String publishedAt = snippet.optString("publishedAt", "").trim();
+
+                    result.add(new PlaylistResult(
+                            playlistId,
+                            title,
+                            owner,
+                            itemCount,
+                            thumbnailUrl,
+                            privacyStatus,
+                            publishedAt
+                    ));
+                    if (result.size() >= targetCount) {
+                        break;
+                    }
                 }
 
-                int itemCount = contentDetails.optInt("itemCount", 0);
-                String owner = snippet.optString("channelTitle", "").trim();
-                String thumbnailUrl = extractYouTubeThumbnail(snippet.optJSONObject("thumbnails"));
-                JSONObject status = item.optJSONObject("status");
-                String privacyStatus = status == null ? "" : status.optString("privacyStatus", "").trim();
-                String publishedAt = snippet.optString("publishedAt", "").trim();
-
-                result.add(new PlaylistResult(
-                    playlistId,
-                    title,
-                    owner,
-                    itemCount,
-                    thumbnailUrl,
-                    privacyStatus,
-                    publishedAt
-                ));
+                pageToken = root.optString("nextPageToken", "").trim();
+                if (pageToken.isEmpty()) {
+                    break;
+                }
+            } finally {
+                connection.disconnect();
             }
-
-            String likesPlaylistId = resolveLikesPlaylistId(accessToken);
-            PlaylistResult likesResult = null;
-            if (!likesPlaylistId.isEmpty()) {
-                likesResult = fetchPlaylistById(accessToken, likesPlaylistId);
-            }
-            if (likesResult == null) {
-                likesResult = buildFallbackLikedVideosCollection(accessToken);
-            }
-
-            if (likesResult != null) {
-                upsertPlaylistAtTop(result, likesResult);
-            }
-
-            return result;
-        } finally {
-            connection.disconnect();
         }
+
+        PlaylistResult likesResult = null;
+        PlaylistResult musicLikes = fetchPlaylistById(accessToken, MUSIC_LIKES_PLAYLIST_ID);
+        if (musicLikes != null) {
+            likesResult = toSpecialLikesCollection(musicLikes, "Tu cuenta de YouTube Music");
+        }
+
+        if (likesResult == null) {
+            String likesPlaylistId = resolveLikesPlaylistId(accessToken);
+            if (!likesPlaylistId.isEmpty()) {
+                PlaylistResult youtubeLikes = fetchPlaylistById(accessToken, likesPlaylistId);
+                if (youtubeLikes != null) {
+                    likesResult = toSpecialLikesCollection(youtubeLikes, "Tu cuenta de YouTube");
+                }
+            }
+        }
+
+        if (likesResult == null) {
+            likesResult = buildFallbackLikedVideosCollection(accessToken);
+        }
+
+        if (likesResult != null) {
+            upsertPlaylistAtTop(result, likesResult);
+        }
+
+        return result;
     }
 
     @NonNull
@@ -636,88 +682,106 @@ public final class YouTubeMusicService {
             @NonNull String playlistId,
             int maxResults
     ) throws Exception {
-        String endpoint = API_BASE_URL
-                + "/playlistItems?part=snippet,contentDetails"
-                + "&playlistId=" + safeUrlEncode(playlistId)
-                + "&maxResults=" + Math.min(50, maxResults);
+        int targetCount = Math.max(1, maxResults);
+        String pageToken = "";
+        LinkedHashMap<String, TrackTempData> videoMap = new LinkedHashMap<>();
 
-        HttpURLConnection connection = openGetConnection(endpoint, "Bearer " + accessToken);
-        try {
-            int statusCode = connection.getResponseCode();
-            String body = readResponse(connection, statusCode >= 400);
-            if (statusCode != HttpURLConnection.HTTP_OK) {
-                throw new IllegalStateException(buildApiErrorMessage(body, statusCode));
+        while (videoMap.size() < targetCount) {
+            int pageSize = Math.min(YOUTUBE_PAGE_MAX_RESULTS, targetCount - videoMap.size());
+            String endpoint = API_BASE_URL
+                    + "/playlistItems?part=snippet,contentDetails"
+                    + "&playlistId=" + safeUrlEncode(playlistId)
+                    + "&maxResults=" + pageSize;
+            if (!pageToken.isEmpty()) {
+                endpoint += "&pageToken=" + safeUrlEncode(pageToken);
             }
 
-            JSONObject root = new JSONObject(body);
-            JSONArray items = root.optJSONArray("items");
-            List<PlaylistTrackResult> result = new ArrayList<>();
-            if (items == null) {
-                return result;
+            HttpURLConnection connection = openGetConnection(endpoint, "Bearer " + accessToken);
+            try {
+                int statusCode = connection.getResponseCode();
+                String body = readResponse(connection, statusCode >= 400);
+                if (statusCode != HttpURLConnection.HTTP_OK) {
+                    throw new IllegalStateException(buildApiErrorMessage(body, statusCode));
+                }
+
+                JSONObject root = new JSONObject(body);
+                JSONArray items = root.optJSONArray("items");
+                if (items != null) {
+                    for (int i = 0; i < items.length(); i++) {
+                        JSONObject item = items.optJSONObject(i);
+                        if (item == null) {
+                            continue;
+                        }
+
+                        JSONObject contentDetails = item.optJSONObject("contentDetails");
+                        JSONObject snippet = item.optJSONObject("snippet");
+                        if (contentDetails == null || snippet == null) {
+                            continue;
+                        }
+
+                        String videoId = contentDetails.optString("videoId", "").trim();
+                        if (videoId.isEmpty()) {
+                            continue;
+                        }
+
+                        String title = snippet.optString("title", "").trim();
+                        if (title.isEmpty() || "deleted video".equalsIgnoreCase(title) || "private video".equalsIgnoreCase(title)) {
+                            continue;
+                        }
+
+                        String artist = snippet.optString("videoOwnerChannelTitle", "").trim();
+                        if (artist.isEmpty()) {
+                            artist = snippet.optString("channelTitle", "").trim();
+                        }
+                        if (artist.isEmpty()) {
+                            artist = "Unknown artist";
+                        }
+
+                        String thumbnailUrl = extractYouTubeThumbnail(snippet.optJSONObject("thumbnails"));
+                        videoMap.put(videoId, new TrackTempData(title, artist, thumbnailUrl));
+                        if (videoMap.size() >= targetCount) {
+                            break;
+                        }
+                    }
+                }
+
+                pageToken = root.optString("nextPageToken", "").trim();
+                if (pageToken.isEmpty()) {
+                    break;
+                }
+            } finally {
+                connection.disconnect();
             }
-
-            LinkedHashMap<String, TrackTempData> videoMap = new LinkedHashMap<>();
-            for (int i = 0; i < items.length(); i++) {
-                JSONObject item = items.optJSONObject(i);
-                if (item == null) {
-                    continue;
-                }
-
-                JSONObject contentDetails = item.optJSONObject("contentDetails");
-                JSONObject snippet = item.optJSONObject("snippet");
-                if (contentDetails == null || snippet == null) {
-                    continue;
-                }
-
-                String videoId = contentDetails.optString("videoId", "").trim();
-                if (videoId.isEmpty()) {
-                    continue;
-                }
-
-                String title = snippet.optString("title", "").trim();
-                if (title.isEmpty() || "deleted video".equalsIgnoreCase(title) || "private video".equalsIgnoreCase(title)) {
-                    continue;
-                }
-
-                String artist = snippet.optString("videoOwnerChannelTitle", "").trim();
-                if (artist.isEmpty()) {
-                    artist = snippet.optString("channelTitle", "").trim();
-                }
-                if (artist.isEmpty()) {
-                    artist = "Unknown artist";
-                }
-
-                String thumbnailUrl = extractYouTubeThumbnail(snippet.optJSONObject("thumbnails"));
-                videoMap.put(videoId, new TrackTempData(title, artist, thumbnailUrl));
-            }
-
-            Map<String, VideoPlaybackInfo> playbackInfoMap = fetchVideoPlaybackInfoByIds(accessToken, new ArrayList<>(videoMap.keySet()));
-            for (Map.Entry<String, TrackTempData> entry : videoMap.entrySet()) {
-                String videoId = entry.getKey();
-                TrackTempData data = entry.getValue();
-                VideoPlaybackInfo playbackInfo = playbackInfoMap.get(videoId);
-                if (playbackInfo != null && !playbackInfo.embeddable) {
-                    continue;
-                }
-
-                String duration = playbackInfo == null ? "" : playbackInfo.duration;
-                if (TextUtils.isEmpty(duration)) {
-                    duration = "--:--";
-                }
-
-                result.add(new PlaylistTrackResult(
-                        videoId,
-                        data.title,
-                        data.artist,
-                        duration,
-                        data.thumbnailUrl
-                ));
-            }
-
-            return result;
-        } finally {
-            connection.disconnect();
         }
+
+        List<PlaylistTrackResult> result = new ArrayList<>();
+        Map<String, VideoPlaybackInfo> playbackInfoMap = fetchVideoPlaybackInfoByIdsInBatches(accessToken, new ArrayList<>(videoMap.keySet()));
+        for (Map.Entry<String, TrackTempData> entry : videoMap.entrySet()) {
+            String videoId = entry.getKey();
+            TrackTempData data = entry.getValue();
+            VideoPlaybackInfo playbackInfo = playbackInfoMap.get(videoId);
+            if (playbackInfo != null && !playbackInfo.embeddable) {
+                continue;
+            }
+
+            String duration = playbackInfo == null ? "" : playbackInfo.duration;
+            if (TextUtils.isEmpty(duration)) {
+                duration = "--:--";
+            }
+
+            result.add(new PlaylistTrackResult(
+                    videoId,
+                    data.title,
+                    data.artist,
+                    duration,
+                    data.thumbnailUrl
+            ));
+            if (result.size() >= targetCount) {
+                break;
+            }
+        }
+
+        return result;
     }
 
     @NonNull
@@ -725,72 +789,130 @@ public final class YouTubeMusicService {
             @NonNull String accessToken,
             int maxResults
     ) throws Exception {
-        String endpoint = API_BASE_URL
-            + "/videos?part=snippet,contentDetails,status"
-                + "&myRating=like"
-                + "&maxResults=" + Math.min(50, maxResults);
+        int targetCount = Math.max(1, maxResults);
+        String pageToken = "";
+        Set<String> seenVideoIds = new HashSet<>();
+        List<PlaylistTrackResult> result = new ArrayList<>();
 
-        HttpURLConnection connection = openGetConnection(endpoint, "Bearer " + accessToken);
-        try {
-            int statusCode = connection.getResponseCode();
-            String body = readResponse(connection, statusCode >= 400);
-            if (statusCode != HttpURLConnection.HTTP_OK) {
-                throw new IllegalStateException(buildApiErrorMessage(body, statusCode));
+        while (result.size() < targetCount) {
+            int pageSize = Math.min(YOUTUBE_PAGE_MAX_RESULTS, targetCount - result.size());
+            String endpoint = API_BASE_URL
+                    + "/videos?part=snippet,contentDetails,status"
+                    + "&myRating=like"
+                    + "&maxResults=" + pageSize;
+            if (!pageToken.isEmpty()) {
+                endpoint += "&pageToken=" + safeUrlEncode(pageToken);
             }
 
-            JSONObject root = new JSONObject(body);
-            JSONArray items = root.optJSONArray("items");
-            List<PlaylistTrackResult> result = new ArrayList<>();
-            if (items == null) {
-                return result;
+            HttpURLConnection connection = openGetConnection(endpoint, "Bearer " + accessToken);
+            try {
+                int statusCode = connection.getResponseCode();
+                String body = readResponse(connection, statusCode >= 400);
+                if (statusCode != HttpURLConnection.HTTP_OK) {
+                    throw new IllegalStateException(buildApiErrorMessage(body, statusCode));
+                }
+
+                JSONObject root = new JSONObject(body);
+                JSONArray items = root.optJSONArray("items");
+                if (items != null) {
+                    for (int i = 0; i < items.length(); i++) {
+                        JSONObject item = items.optJSONObject(i);
+                        if (item == null) {
+                            continue;
+                        }
+
+                        String videoId = item.optString("id", "").trim();
+                        JSONObject snippet = item.optJSONObject("snippet");
+                        JSONObject contentDetails = item.optJSONObject("contentDetails");
+                        JSONObject status = item.optJSONObject("status");
+                        if (videoId.isEmpty() || snippet == null || !seenVideoIds.add(videoId)) {
+                            continue;
+                        }
+
+                        if (status != null && !status.optBoolean("embeddable", true)) {
+                            continue;
+                        }
+
+                        String title = snippet.optString("title", "").trim();
+                        if (title.isEmpty() || "deleted video".equalsIgnoreCase(title) || "private video".equalsIgnoreCase(title)) {
+                            continue;
+                        }
+
+                        String artist = snippet.optString("channelTitle", "").trim();
+                        if (artist.isEmpty()) {
+                            artist = "Unknown artist";
+                        }
+
+                        String rawDuration = contentDetails == null ? "" : contentDetails.optString("duration", "").trim();
+                        String duration = formatYoutubeDuration(rawDuration);
+                        if (duration.isEmpty()) {
+                            duration = "--:--";
+                        }
+
+                        String thumbnailUrl = extractYouTubeThumbnail(snippet.optJSONObject("thumbnails"));
+                        result.add(new PlaylistTrackResult(videoId, title, artist, duration, thumbnailUrl));
+                        if (result.size() >= targetCount) {
+                            break;
+                        }
+                    }
+                }
+
+                pageToken = root.optString("nextPageToken", "").trim();
+                if (pageToken.isEmpty()) {
+                    break;
+                }
+            } finally {
+                connection.disconnect();
             }
-
-            for (int i = 0; i < items.length(); i++) {
-                JSONObject item = items.optJSONObject(i);
-                if (item == null) {
-                    continue;
-                }
-
-                String videoId = item.optString("id", "").trim();
-                JSONObject snippet = item.optJSONObject("snippet");
-                JSONObject contentDetails = item.optJSONObject("contentDetails");
-                JSONObject status = item.optJSONObject("status");
-                if (videoId.isEmpty() || snippet == null) {
-                    continue;
-                }
-
-                if (status != null && !status.optBoolean("embeddable", true)) {
-                    continue;
-                }
-
-                String title = snippet.optString("title", "").trim();
-                if (title.isEmpty() || "deleted video".equalsIgnoreCase(title) || "private video".equalsIgnoreCase(title)) {
-                    continue;
-                }
-
-                String artist = snippet.optString("channelTitle", "").trim();
-                if (artist.isEmpty()) {
-                    artist = "Unknown artist";
-                }
-
-                String rawDuration = contentDetails == null ? "" : contentDetails.optString("duration", "").trim();
-                String duration = formatYoutubeDuration(rawDuration);
-                if (duration.isEmpty()) {
-                    duration = "--:--";
-                }
-
-                if (!shouldIncludeLikedTrackDuration(duration)) {
-                    continue;
-                }
-
-                String thumbnailUrl = extractYouTubeThumbnail(snippet.optJSONObject("thumbnails"));
-                result.add(new PlaylistTrackResult(videoId, title, artist, duration, thumbnailUrl));
-            }
-
-            return result;
-        } finally {
-            connection.disconnect();
         }
+
+        return result;
+    }
+
+    @NonNull
+    private List<PlaylistTrackResult> performMusicLikesTracksRequest(
+            @NonNull String accessToken,
+            int maxResults
+    ) throws Exception {
+        try {
+            return performPlaylistTracksRequest(accessToken, MUSIC_LIKES_PLAYLIST_ID, maxResults);
+        } catch (Exception ignored) {
+            return new ArrayList<>();
+        }
+    }
+
+    @NonNull
+    private PlaylistResult toSpecialLikesCollection(
+            @NonNull PlaylistResult source,
+            @NonNull String ownerName
+    ) {
+        return new PlaylistResult(
+                SPECIAL_LIKED_VIDEOS_ID,
+                SPECIAL_LIKED_VIDEOS_TITLE,
+                ownerName,
+                source.itemCount,
+                source.thumbnailUrl,
+                source.privacyStatus,
+                source.publishedAt
+        );
+    }
+
+    @NonNull
+    private Map<String, VideoPlaybackInfo> fetchVideoPlaybackInfoByIdsInBatches(
+            @NonNull String accessToken,
+            @NonNull List<String> videoIds
+    ) throws Exception {
+        Map<String, VideoPlaybackInfo> result = new HashMap<>();
+        if (videoIds.isEmpty()) {
+            return result;
+        }
+
+        for (int start = 0; start < videoIds.size(); start += YOUTUBE_PAGE_MAX_RESULTS) {
+            int end = Math.min(start + YOUTUBE_PAGE_MAX_RESULTS, videoIds.size());
+            List<String> batch = new ArrayList<>(videoIds.subList(start, end));
+            result.putAll(fetchVideoPlaybackInfoByIds(accessToken, batch));
+        }
+        return result;
     }
 
     @NonNull
@@ -856,13 +978,13 @@ public final class YouTubeMusicService {
     }
 
     @NonNull
-    private Map<String, Boolean> fetchPublicEmbeddableByIds(
+    private Map<String, PublicVideoFilterInfo> fetchPublicVideoFiltersByIds(
             @NonNull String apiKey,
             @NonNull List<String> videoIds
     ) throws Exception {
-        Map<String, Boolean> embeddableMap = new HashMap<>();
+        Map<String, PublicVideoFilterInfo> filterMap = new HashMap<>();
         if (videoIds.isEmpty()) {
-            return embeddableMap;
+            return filterMap;
         }
 
         StringBuilder idsBuilder = new StringBuilder();
@@ -875,7 +997,7 @@ public final class YouTubeMusicService {
         }
 
         String endpoint = API_BASE_URL
-                + "/videos?part=status"
+            + "/videos?part=contentDetails,status"
                 + "&id=" + safeUrlEncode(idsBuilder.toString())
                 + "&key=" + safeUrlEncode(apiKey);
 
@@ -890,7 +1012,7 @@ public final class YouTubeMusicService {
             JSONObject root = new JSONObject(body);
             JSONArray items = root.optJSONArray("items");
             if (items == null) {
-                return embeddableMap;
+                return filterMap;
             }
 
             for (int i = 0; i < items.length(); i++) {
@@ -904,15 +1026,32 @@ public final class YouTubeMusicService {
                     continue;
                 }
 
+                JSONObject contentDetails = item.optJSONObject("contentDetails");
+                String rawDuration = contentDetails == null
+                        ? ""
+                        : contentDetails.optString("duration", "").trim();
+                int durationSeconds = parseYoutubeDurationSeconds(rawDuration);
+
                 JSONObject status = item.optJSONObject("status");
                 boolean embeddable = status == null || status.optBoolean("embeddable", true);
-                embeddableMap.put(id, embeddable);
+                filterMap.put(id, new PublicVideoFilterInfo(embeddable, durationSeconds));
             }
 
-            return embeddableMap;
+            return filterMap;
         } finally {
             connection.disconnect();
         }
+    }
+
+    private int parseYoutubeDurationSeconds(@Nullable String rawDuration) {
+        if (TextUtils.isEmpty(rawDuration)) {
+            return 0;
+        }
+
+        int hours = extractDurationComponent(rawDuration, 'H');
+        int minutes = extractDurationComponent(rawDuration, 'M');
+        int seconds = extractDurationComponent(rawDuration, 'S');
+        return Math.max(0, (hours * 3600) + (minutes * 60) + seconds);
     }
 
     @NonNull
@@ -954,44 +1093,6 @@ public final class YouTubeMusicService {
         }
     }
 
-    private boolean shouldIncludeLikedTrackDuration(@Nullable String duration) {
-        int totalSeconds = parseDurationToSeconds(duration);
-        if (totalSeconds < 0) {
-            return true;
-        }
-        return totalSeconds >= LIKED_TRACK_MIN_SECONDS && totalSeconds < LIKED_TRACK_MAX_SECONDS;
-    }
-
-    private int parseDurationToSeconds(@Nullable String duration) {
-        if (TextUtils.isEmpty(duration)) {
-            return -1;
-        }
-
-        String normalized = duration.trim();
-        if (normalized.isEmpty() || normalized.contains("--")) {
-            return -1;
-        }
-
-        String[] parts = normalized.split(":");
-        try {
-            if (parts.length == 2) {
-                int minutes = Integer.parseInt(parts[0]);
-                int seconds = Integer.parseInt(parts[1]);
-                return (minutes * 60) + seconds;
-            }
-            if (parts.length == 3) {
-                int hours = Integer.parseInt(parts[0]);
-                int minutes = Integer.parseInt(parts[1]);
-                int seconds = Integer.parseInt(parts[2]);
-                return (hours * 3600) + (minutes * 60) + seconds;
-            }
-        } catch (NumberFormatException ignored) {
-            return -1;
-        }
-
-        return -1;
-    }
-
     private static final class TrackTempData {
         final String title;
         final String artist;
@@ -1011,6 +1112,16 @@ public final class YouTubeMusicService {
         VideoPlaybackInfo(@NonNull String duration, boolean embeddable) {
             this.duration = duration;
             this.embeddable = embeddable;
+        }
+    }
+
+    private static final class PublicVideoFilterInfo {
+        final boolean embeddable;
+        final int durationSeconds;
+
+        PublicVideoFilterInfo(boolean embeddable, int durationSeconds) {
+            this.embeddable = embeddable;
+            this.durationSeconds = durationSeconds;
         }
     }
 
@@ -1050,6 +1161,34 @@ public final class YouTubeMusicService {
             return typeLabel;
         }
         return typeLabel + " • " + channelTitle;
+    }
+
+    private boolean shouldIncludeMusicSearchResult(
+            @NonNull String title,
+            @Nullable String channelTitle
+    ) {
+        String normalizedTitle = title.toLowerCase(Locale.US);
+
+        if (containsAny(normalizedTitle, "#shorts", " shorts", "shorts ")) {
+            return false;
+        }
+
+        if (containsAny(normalizedTitle,
+                "podcast",
+                "interview",
+                "entrevista",
+                "explica",
+                "explains",
+                "reaction",
+                "trailer",
+                "teaser",
+                "documental",
+                "noticias",
+                "news")) {
+            return false;
+        }
+
+            return true;
     }
 
     @NonNull

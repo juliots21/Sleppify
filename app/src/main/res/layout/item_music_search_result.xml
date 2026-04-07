@@ -7,14 +7,14 @@
     android:focusable="true"
     android:foreground="?attr/selectableItemBackground"
     android:orientation="vertical"
-    android:paddingTop="3dp"
-    android:paddingBottom="3dp">
+    android:paddingTop="5dp"
+    android:paddingBottom="5dp">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center_vertical"
-        android:minHeight="70dp"
+        android:minHeight="72dp"
         android:orientation="horizontal">
 
         <FrameLayout
@@ -25,17 +25,13 @@
                 android:id="@+id/vLikedBackground"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:background="@drawable/bg_music_liked_gradient"
                 android:visibility="gone" />
 
             <ImageView
                 android:id="@+id/ivLikedIcon"
-                android:layout_width="30dp"
-                android:layout_height="30dp"
-                android:layout_gravity="center"
-                android:src="@drawable/ic_thumb_up_liked"
-                android:visibility="gone"
-                app:tint="@android:color/white" />
+                android:layout_width="1dp"
+                android:layout_height="1dp"
+                android:visibility="gone" />
 
             <com.google.android.material.imageview.ShapeableImageView
                 android:id="@+id/ivTrackThumb"
@@ -59,10 +55,11 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:ellipsize="end"
+                android:fontFamily="@font/manrope_variable"
                 android:maxLines="2"
-                android:text="Track"
+                android:text="Título"
                 android:textColor="@color/text_primary"
-                android:textSize="18sp"
+                android:textSize="15sp"
                 android:textStyle="bold" />
 
             <TextView
@@ -71,41 +68,30 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
                 android:ellipsize="end"
+                android:fontFamily="@font/inter_variable"
                 android:maxLines="1"
-                android:text="Playlist"
+                android:text="Canción • Artista"
                 android:textColor="@color/text_secondary"
-                android:textSize="13sp" />
+                android:textSize="12sp" />
         </LinearLayout>
 
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+        <ImageView
+            android:id="@+id/ivPlaylistOfflineAll"
+            android:layout_width="1dp"
+            android:layout_height="1dp"
+            android:visibility="gone" />
+
+        <ImageView
+            android:id="@+id/ivTrackMore"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
             android:layout_marginStart="8dp"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <ImageView
-                android:id="@+id/ivPlaylistOfflineAll"
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:layout_marginEnd="8dp"
-                android:background="@drawable/bg_offline_state_outline_muted"
-                android:padding="4dp"
-                android:src="@drawable/ic_check_small"
-                android:visibility="gone"
-                app:tint="@color/text_secondary" />
-
-            <ImageView
-                android:id="@+id/ivTrackMore"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:clickable="true"
-                android:focusable="true"
-                android:padding="8dp"
-                android:src="@drawable/ic_more_vert"
-                app:tint="#A8FFFFFF" />
-        </LinearLayout>
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:clickable="true"
+            android:focusable="true"
+            android:padding="8dp"
+            android:src="@drawable/ic_more_vert"
+            app:tint="#D8FFFFFF" />
     </LinearLayout>
 
     <View
@@ -114,6 +100,6 @@
         android:layout_height="1dp"
         android:layout_marginStart="76dp"
         android:layout_marginTop="6dp"
-        android:background="#1FFFFFFF" />
+        android:background="#16FFFFFF" />
 
 </LinearLayout>

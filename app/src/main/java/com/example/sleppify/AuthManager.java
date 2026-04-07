@@ -36,6 +36,11 @@ public final class AuthManager {
         void onComplete(boolean success, @Nullable String message);
     }
 
+    private interface AuthCredentialCallback {
+        void onSuccess(@NonNull AuthCredential credential);
+        void onError(@NonNull String message);
+    }
+
     private static volatile AuthManager instance;
 
     private final Context appContext;
@@ -231,6 +236,170 @@ public final class AuthManager {
                             : "No se pudo eliminar la cuenta.";
                     callback.onComplete(false, message);
                 });
+    }
+
+    public void deleteCurrentUser(@NonNull Activity activity, @NonNull SimpleCallback callback) {
+        FirebaseUser user = firebaseAuth.getCurrentUser();
+        if (user == null) {
+            callback.onComplete(false, "No hay sesion activa para eliminar.");
+            return;
+        }
+
+        deleteCurrentUserInternal(activity, user, false, callback);
+    }
+
+    private void deleteCurrentUserInternal(
+            @NonNull Activity activity,
+            @NonNull FirebaseUser user,
+            boolean alreadyRetriedAfterReauth,
+            @NonNull SimpleCallback callback
+    ) {
+        user.delete()
+                .addOnSuccessListener(unused -> {
+                    firebaseAuth.signOut();
+                    clearCredentialState(callback);
+                })
+                .addOnFailureListener(e -> {
+                    if (e instanceof FirebaseAuthRecentLoginRequiredException && !alreadyRetriedAfterReauth) {
+                        reauthenticateForSensitiveAction(activity, new SimpleCallback() {
+                            @Override
+                            public void onComplete(boolean success, @Nullable String message) {
+                                if (!success) {
+                                    callback.onComplete(false, message);
+                                    return;
+                                }
+
+                                FirebaseUser refreshedUser = firebaseAuth.getCurrentUser();
+                                if (refreshedUser == null) {
+                                    callback.onComplete(false, "No se pudo recuperar la sesion para eliminar la cuenta.");
+                                    return;
+                                }
+
+                                deleteCurrentUserInternal(activity, refreshedUser, true, callback);
+                            }
+                        });
+                        return;
+                    }
+
+                    String message = e != null && !TextUtils.isEmpty(e.getMessage())
+                            ? e.getMessage()
+                            : "No se pudo eliminar la cuenta.";
+                    callback.onComplete(false, message);
+                });
+    }
+
+    private void reauthenticateForSensitiveAction(
+            @NonNull Activity activity,
+            @NonNull SimpleCallback callback
+    ) {
+        requestGoogleCredentialForReauth(activity, true, new AuthCredentialCallback() {
+            @Override
+            public void onSuccess(@NonNull AuthCredential credential) {
+                FirebaseUser currentUser = firebaseAuth.getCurrentUser();
+                if (currentUser == null) {
+                    callback.onComplete(false, "No hay sesion activa para reautenticar.");
+                    return;
+                }
+
+                currentUser.reauthenticate(credential)
+                        .addOnSuccessListener(unused -> callback.onComplete(true, null))
+                        .addOnFailureListener(e -> {
+                            String message = e != null && !TextUtils.isEmpty(e.getMessage())
+                                    ? e.getMessage()
+                                    : "No se pudo reautenticar la cuenta.";
+                            callback.onComplete(false, message);
+                        });
+            }
+
+            @Override
+            public void onError(@NonNull String message) {
+                callback.onComplete(false, message);
+            }
+        });
+    }
+
+    private void requestGoogleCredentialForReauth(
+            @NonNull Activity activity,
+            boolean authorizedOnly,
+            @NonNull AuthCredentialCallback callback
+    ) {
+        String serverClientId;
+        try {
+            int resId = activity.getResources().getIdentifier(
+                    "default_web_client_id",
+                    "string",
+                    activity.getPackageName()
+            );
+            serverClientId = resId == 0 ? "" : activity.getString(resId);
+        } catch (Exception ignored) {
+            callback.onError("No se encontro default_web_client_id. Verifica Firebase.");
+            return;
+        }
+
+        if (TextUtils.isEmpty(serverClientId)) {
+            callback.onError("default_web_client_id esta vacio. Revisa Firebase y google-services.json.");
+            return;
+        }
+
+        GetGoogleIdOption googleIdOption = new GetGoogleIdOption.Builder()
+                .setFilterByAuthorizedAccounts(authorizedOnly)
+                .setServerClientId(serverClientId)
+                .setAutoSelectEnabled(true)
+                .build();
+
+        GetCredentialRequest request = new GetCredentialRequest.Builder()
+                .addCredentialOption(googleIdOption)
+                .build();
+
+        credentialManager.getCredentialAsync(
+                activity,
+                request,
+                null,
+                ContextCompat.getMainExecutor(activity),
+                new androidx.credentials.CredentialManagerCallback<GetCredentialResponse, GetCredentialException>() {
+                    @Override
+                    public void onResult(GetCredentialResponse result) {
+                        AuthCredential credential = extractGoogleAuthCredential(result);
+                        if (credential == null) {
+                            callback.onError("No se pudo leer la credencial de Google para confirmar eliminacion.");
+                            return;
+                        }
+                        callback.onSuccess(credential);
+                    }
+
+                    @Override
+                    public void onError(@NonNull GetCredentialException e) {
+                        if (authorizedOnly) {
+                            // Fallback: abre selector de cuenta si no hay autorizada disponible.
+                            requestGoogleCredentialForReauth(activity, false, callback);
+                            return;
+                        }
+                        callback.onError("No fue posible validar la sesion para eliminar la cuenta: " + e.getMessage());
+                    }
+                }
+        );
+    }
+
+    @Nullable
+    private AuthCredential extractGoogleAuthCredential(@NonNull GetCredentialResponse response) {
+        Credential credential = response.getCredential();
+        if (!(credential instanceof CustomCredential)) {
+            return null;
+        }
+
+        CustomCredential customCredential = (CustomCredential) credential;
+        if (!GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL.equals(customCredential.getType())) {
+            return null;
+        }
+
+        GoogleIdTokenCredential googleIdTokenCredential;
+        try {
+            googleIdTokenCredential = GoogleIdTokenCredential.createFrom(customCredential.getData());
+        } catch (Exception e) {
+            return null;
+        }
+
+        return GoogleAuthProvider.getCredential(googleIdTokenCredential.getIdToken(), null);
     }
 
     private void clearCredentialState(@NonNull SimpleCallback callback) {
