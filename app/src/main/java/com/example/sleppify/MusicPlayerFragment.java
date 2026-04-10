@@ -51,6 +51,8 @@ import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 import androidx.work.Data;
 import androidx.work.ExistingWorkPolicy;
 import androidx.work.OneTimeWorkRequest;
+import androidx.work.Constraints;
+import androidx.work.NetworkType;
 import androidx.work.WorkInfo;
 import androidx.work.WorkManager;
 
@@ -763,48 +765,9 @@ public class MusicPlayerFragment extends Fragment {
         }
 
         if (etLibraryQuickSearch != null) {
-            etLibraryQuickSearch.addTextChangedListener(new TextWatcher() {
-                @Override
-                public void beforeTextChanged(CharSequence s, int start, int count, int after) {
-                }
-
-                @Override
-                public void onTextChanged(CharSequence s, int start, int before, int count) {
-                }
-
-                @Override
-                public void afterTextChanged(Editable s) {
-                    updateLibraryInlineClearButton();
-                    applyLibraryInlineSongSearch();
-                    updateClearSearchBackPressedEnabled();
-                }
-            });
-
-            etLibraryQuickSearch.setOnEditorActionListener((textView, actionId, event) -> {
-                submitLibraryInlineSongSearch();
-                return true;
-            });
-
-            etLibraryQuickSearch.setOnFocusChangeListener((v, hasFocus) -> {
-                if (activeScreen != ScreenMode.LIBRARY) {
-                    return;
-                }
-
-                if (hasFocus) {
-                    libraryInlineManualModeActive = true;
-                    showLibraryInlineBlankState();
-                } else if (TextUtils.isEmpty(getLibraryInlineQuery())) {
-                    libraryInlineManualModeActive = false;
-                    renderLibraryResults();
-                }
-
-                updateClearSearchBackPressedEnabled();
-            });
-
+            etLibraryQuickSearch.setFocusable(false);
+            etLibraryQuickSearch.setFocusableInTouchMode(false);
             etLibraryQuickSearch.setOnClickListener(v -> {
-                if (activeScreen != ScreenMode.LIBRARY) {
-                    return;
-                }
                 launchSearchActivity();
             });
         }
@@ -4693,8 +4656,15 @@ public class MusicPlayerFragment extends Fragment {
                 .putBoolean(OfflinePlaylistDownloadWorker.INPUT_MANUAL_QUEUE, false)
                 .build();
 
+        SharedPreferences prefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE);
+        boolean allowMobileData = prefs.getBoolean(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false);
+        Constraints constraints = new Constraints.Builder()
+                .setRequiredNetworkType(allowMobileData ? NetworkType.CONNECTED : NetworkType.UNMETERED)
+                .build();
+
         OneTimeWorkRequest request = new OneTimeWorkRequest.Builder(OfflinePlaylistDownloadWorker.class)
                 .setInputData(input)
+                .setConstraints(constraints)
                 .addTag(OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME)
                 .addTag(OFFLINE_DOWNLOAD_UNIQUE_PREFIX + playlistId)
                 .build();
@@ -4991,8 +4961,15 @@ public class MusicPlayerFragment extends Fragment {
                 .putBoolean(OfflinePlaylistDownloadWorker.INPUT_MANUAL_QUEUE, false)
                 .build();
 
+        SharedPreferences prefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE);
+        boolean allowMobileData = prefs.getBoolean(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false);
+        Constraints constraints = new Constraints.Builder()
+                .setRequiredNetworkType(allowMobileData ? NetworkType.CONNECTED : NetworkType.UNMETERED)
+                .build();
+
         OneTimeWorkRequest.Builder requestBuilder = new OneTimeWorkRequest.Builder(OfflinePlaylistDownloadWorker.class)
                 .setInputData(input)
+                .setConstraints(constraints)
                 .addTag(OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME);
 
         for (String playlistId : candidate.playlistIds) {

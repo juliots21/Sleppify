@@ -58,6 +58,8 @@ import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 import androidx.work.Data;
 import androidx.work.ExistingWorkPolicy;
 import androidx.work.OneTimeWorkRequest;
+import androidx.work.Constraints;
+import androidx.work.NetworkType;
 import androidx.work.WorkInfo;
 import androidx.work.WorkManager;
 
@@ -1596,8 +1598,15 @@ public class PlaylistDetailFragment extends Fragment {
                 + " skippedAlreadyOffline=" + skippedAlreadyOffline
                 + " skippedRestricted=" + skippedRestricted);
 
+        SharedPreferences prefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE);
+        boolean allowMobileData = prefs.getBoolean(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false);
+        Constraints constraints = new Constraints.Builder()
+                .setRequiredNetworkType(allowMobileData ? NetworkType.CONNECTED : NetworkType.UNMETERED)
+                .build();
+
         OneTimeWorkRequest request = new OneTimeWorkRequest.Builder(OfflinePlaylistDownloadWorker.class)
                 .setInputData(input)
+                .setConstraints(constraints)
                 .addTag(uniqueName)
                 .addTag(currentPlaylistOfflineTag())
                 .build();
@@ -3183,8 +3192,15 @@ public class PlaylistDetailFragment extends Fragment {
             .putBoolean(OfflinePlaylistDownloadWorker.INPUT_MANUAL_QUEUE, true)
                 .build();
 
+        SharedPreferences prefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE);
+        boolean allowMobileData = prefs.getBoolean(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false);
+        Constraints constraints = new Constraints.Builder()
+                .setRequiredNetworkType(allowMobileData ? NetworkType.CONNECTED : NetworkType.UNMETERED)
+                .build();
+
         OneTimeWorkRequest request = new OneTimeWorkRequest.Builder(OfflinePlaylistDownloadWorker.class)
                 .setInputData(input)
+                .setConstraints(constraints)
                 .addTag(uniqueName)
                 .addTag(currentPlaylistOfflineTag())
                 .build();

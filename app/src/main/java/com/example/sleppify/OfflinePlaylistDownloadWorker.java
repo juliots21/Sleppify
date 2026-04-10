@@ -82,8 +82,8 @@ public final class OfflinePlaylistDownloadWorker extends Worker {
     private static final int CONNECT_TIMEOUT_MS = 12000;
     private static final int READ_TIMEOUT_MS = 35000;
     private static final long DOWNLOAD_PROGRESS_LOG_STEP_BYTES = 2L * 1024L * 1024L;
-    private static final int DOWNLOAD_MAX_RETRIES = 4;
-    private static final long DOWNLOAD_RETRY_BACKOFF_MS = 900L;
+    private static final int DOWNLOAD_MAX_RETRIES = 15;
+    private static final long DOWNLOAD_RETRY_BACKOFF_MS = 1200L;
     private static final int MAX_PARALLEL_DOWNLOADS_AUTO = 3;
     private static final int MAX_PARALLEL_DOWNLOADS_MANUAL = 1;
     private static final int MAX_NEWPIPE_AUTOMATIC_FAILURES = 3;
@@ -258,12 +258,10 @@ public final class OfflinePlaylistDownloadWorker extends Worker {
         executor.shutdownNow();
 
         String reason = OUTPUT_REASON_NONE;
-        if (downloaded <= 0) {
-            if (encounteredNoNetwork) {
-                reason = OUTPUT_REASON_NO_NETWORK;
-            } else {
-                reason = OUTPUT_REASON_NO_MATCH;
-            }
+        if (encounteredNoNetwork) {
+            reason = OUTPUT_REASON_NO_NETWORK;
+        } else if (downloaded <= 0) {
+            reason = OUTPUT_REASON_NO_MATCH;
         }
 
         Log.d(TAG, "doWork:end downloaded=" + downloaded + "/" + total + " reason=" + reason);
