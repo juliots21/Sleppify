@@ -743,24 +743,14 @@ public class MusicPlayerFragment extends Fragment {
         });
 
         if (etMusicQuery != null) {
-            etMusicQuery.setOnEditorActionListener((textView, actionId, event) -> {
-                performSearch(true);
-                return true;
+            etMusicQuery.setFocusable(false);
+            etMusicQuery.setFocusableInTouchMode(false);
+            etMusicQuery.setOnClickListener(v -> {
+                launchSearchActivity();
             });
-            etMusicQuery.addTextChangedListener(new TextWatcher() {
-                @Override
-                public void beforeTextChanged(CharSequence s, int start, int count, int after) {
-                }
-
-                @Override
-                public void onTextChanged(CharSequence s, int start, int before, int count) {
-                }
-
-                @Override
-                public void afterTextChanged(Editable s) {
-                    updateClearSearchBackPressedEnabled();
-                    handleSearchQueryTypingState();
-                }
+            etMusicQuery.setOnEditorActionListener((textView, actionId, event) -> {
+                launchSearchActivity();
+                return true;
             });
         }
 

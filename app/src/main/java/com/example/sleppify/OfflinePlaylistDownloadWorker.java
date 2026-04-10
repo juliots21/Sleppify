@@ -598,7 +598,7 @@ public final class OfflinePlaylistDownloadWorker extends Worker {
 
                 List<AudioStream> candidates = selectAudioStreamsByPriority(rawStreams, targetBitrate);
                 if (candidates.isEmpty()) {
-                    Log.w(TAG, "newpipe:no_audio_stream id=" + videoId + " url=" + sanitizeUrlForLog(sourceUrl));
+                    Log.w(TAG, "newpipe:no_audio_stream (This track might be restricted or region-locked) id=" + videoId + " url=" + sanitizeUrlForLog(sourceUrl));
                     continue;
                 }
 
@@ -1468,12 +1468,15 @@ public final class OfflinePlaylistDownloadWorker extends Worker {
                 if (isLikelyNetworkException(e)) {
                     networkIssueTracker.markIssue();
                 }
-                boolean shouldRetry = attempt < DOWNLOAD_MAX_RETRIES && isTransientDownloadException(e);
+                boolean isNoSpace = isNoSpaceLeftOnDeviceException(e);
+                boolean shouldRetry = !isNoSpace && attempt < DOWNLOAD_MAX_RETRIES && isTransientDownloadException(e);
+                
                 Log.e(TAG,
                         "http:download_exception url=" + sanitizeUrlForLog(urlValue)
                                 + " attempt=" + attempt
                                 + "/" + DOWNLOAD_MAX_RETRIES
                                 + " retry=" + shouldRetry
+                                + " nospace=" + isNoSpace
                                 + " partialBytes=" + (temp.isFile() ? temp.length() : 0L)
                                 + " message=" + e.getMessage(),
                         e);
@@ -1481,6 +1484,11 @@ public final class OfflinePlaylistDownloadWorker extends Worker {
                 if (shouldRetry) {
                     SystemClock.sleep(DOWNLOAD_RETRY_BACKOFF_MS * attempt);
                     continue;
+                }
+                
+                // Cleanup partial file on permanent failure
+                if (temp.exists() && !shouldRetry) {
+                    temp.delete();
                 }
                 return false;
             } finally {
@@ -1707,6 +1715,10 @@ public final class OfflinePlaylistDownloadWorker extends Worker {
     }
 
     private boolean isTransientDownloadException(@NonNull Exception exception) {
+        if (isNoSpaceLeftOnDeviceException(exception)) {
+            return false;
+        }
+
         Throwable cursor = exception;
         while (cursor != null) {
             if (cursor instanceof java.net.SocketTimeoutException
@@ -1717,6 +1729,21 @@ public final class OfflinePlaylistDownloadWorker extends Worker {
                     || cursor instanceof java.io.EOFException
                     || cursor instanceof java.io.InterruptedIOException) {
                 return true;
+            }
+            cursor = cursor.getCause();
+        }
+        return false;
+    }
+
+    private boolean isNoSpaceLeftOnDeviceException(@Nullable Throwable throwable) {
+        Throwable cursor = throwable;
+        while (cursor != null) {
+            String message = cursor.getMessage();
+            if (message != null) {
+                String lower = message.toLowerCase(Locale.US);
+                if (lower.contains("enospc") || lower.contains("no space left on device")) {
+                    return true;
+                }
             }
             cursor = cursor.getCause();
         }
