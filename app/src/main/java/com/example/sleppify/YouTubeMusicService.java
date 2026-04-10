@@ -38,8 +38,16 @@ public final class YouTubeMusicService {
     private static final int MIN_PUBLIC_MUSIC_DURATION_SECONDS = 70;
     private static final ExecutorService SHARED_EXECUTOR = Executors.newFixedThreadPool(3);
 
-    private final ExecutorService executor = SHARED_EXECUTOR;
+    private final ExecutorService executor;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+
+    public YouTubeMusicService() {
+        this(SHARED_EXECUTOR);
+    }
+
+    public YouTubeMusicService(@NonNull ExecutorService executor) {
+        this.executor = executor;
+    }
 
     private static final class ApiErrorDetails {
         final String reason;
@@ -54,6 +62,26 @@ public final class YouTubeMusicService {
     public interface SearchCallback {
         void onSuccess(@NonNull List<TrackResult> tracks);
         void onError(@NonNull String error);
+    }
+
+    public interface SearchPageCallback {
+        void onSuccess(@NonNull SearchPageResult pageResult);
+        void onError(@NonNull String error);
+    }
+
+    public static final class SearchPageResult {
+        @NonNull
+        public final List<TrackResult> tracks;
+        @NonNull
+        public final String nextPageToken;
+
+        public SearchPageResult(
+                @NonNull List<TrackResult> tracks,
+                @NonNull String nextPageToken
+        ) {
+            this.tracks = tracks;
+            this.nextPageToken = nextPageToken;
+        }
     }
 
     public interface PlaylistsCallback {
@@ -170,6 +198,25 @@ public final class YouTubeMusicService {
     }
 
     public void searchTracks(@NonNull String query, int maxResults, @NonNull SearchCallback callback) {
+        searchTracksPaged(query, maxResults, null, new SearchPageCallback() {
+            @Override
+            public void onSuccess(@NonNull SearchPageResult pageResult) {
+                callback.onSuccess(pageResult.tracks);
+            }
+
+            @Override
+            public void onError(@NonNull String error) {
+                callback.onError(error);
+            }
+        });
+    }
+
+    public void searchTracksPaged(
+            @NonNull String query,
+            int maxResults,
+            @Nullable String pageToken,
+            @NonNull SearchPageCallback callback
+    ) {
         String normalized = query.trim();
         if (normalized.isEmpty()) {
             callback.onError("Escribe algo para buscar.");
@@ -186,8 +233,13 @@ public final class YouTubeMusicService {
 
         executor.execute(() -> {
             try {
-                List<TrackResult> tracks = performSearchRequest(normalized, Math.max(1, maxResults), apiKey);
-                mainHandler.post(() -> callback.onSuccess(tracks));
+                SearchPageResult pageResult = performSearchRequest(
+                        normalized,
+                        Math.max(1, maxResults),
+                        apiKey,
+                        pageToken
+                );
+                mainHandler.post(() -> callback.onSuccess(pageResult));
             } catch (Exception e) {
                 String error = e.getMessage() == null ? "No se pudo completar la busqueda." : e.getMessage();
                 mainHandler.post(() -> callback.onError(error));
@@ -283,10 +335,11 @@ public final class YouTubeMusicService {
     }
 
     @NonNull
-    private List<TrackResult> performSearchRequest(
+    private SearchPageResult performSearchRequest(
             @NonNull String query,
             int maxResults,
-            @NonNull String apiKey
+            @NonNull String apiKey,
+            @Nullable String pageToken
     ) throws Exception {
         String endpoint = API_BASE_URL
                 + "/search?part=snippet"
@@ -296,6 +349,11 @@ public final class YouTubeMusicService {
                 + "&maxResults=" + Math.min(50, maxResults)
                 + "&q=" + safeUrlEncode(query)
                 + "&key=" + safeUrlEncode(apiKey);
+
+        String normalizedPageToken = pageToken == null ? "" : pageToken.trim();
+        if (!normalizedPageToken.isEmpty()) {
+            endpoint += "&pageToken=" + safeUrlEncode(normalizedPageToken);
+        }
 
         HttpURLConnection connection = openGetConnection(endpoint);
         try {
@@ -307,9 +365,10 @@ public final class YouTubeMusicService {
 
             JSONObject root = new JSONObject(body);
             JSONArray items = root.optJSONArray("items");
+            String nextPageToken = root.optString("nextPageToken", "").trim();
             List<TrackResult> result = new ArrayList<>();
             if (items == null) {
-                return result;
+                return new SearchPageResult(result, nextPageToken);
             }
 
             for (int i = 0; i < items.length(); i++) {
@@ -395,7 +454,7 @@ public final class YouTubeMusicService {
                 }
             }
 
-            return result;
+            return new SearchPageResult(result, nextPageToken);
         } finally {
             connection.disconnect();
         }
@@ -1197,32 +1256,23 @@ public final class YouTubeMusicService {
             return "";
         }
 
-        JSONObject high = thumbnails.optJSONObject("high");
-        if (high != null) {
-            String url = high.optString("url", "").trim();
+        String[] qualityOrder = new String[] {"maxres", "standard", "high", "medium", "default"};
+        for (String quality : qualityOrder) {
+            String url = readThumbnailUrl(thumbnails, quality);
             if (!url.isEmpty()) {
                 return url;
             }
         }
+        return "";
+    }
 
-        JSONObject medium = thumbnails.optJSONObject("medium");
-        if (medium != null) {
-            String url = medium.optString("url", "").trim();
-            if (!url.isEmpty()) {
-                return url;
-            }
+    @NonNull
+    private String readThumbnailUrl(@NonNull JSONObject thumbnails, @NonNull String quality) {
+        JSONObject object = thumbnails.optJSONObject(quality);
+        if (object == null) {
+            return "";
         }
-
-        JSONObject standard = thumbnails.optJSONObject("standard");
-        if (standard != null) {
-            String url = standard.optString("url", "").trim();
-            if (!url.isEmpty()) {
-                return url;
-            }
-        }
-
-        JSONObject defaults = thumbnails.optJSONObject("default");
-        return defaults == null ? "" : defaults.optString("url", "").trim();
+        return object.optString("url", "").trim();
     }
 
     @NonNull

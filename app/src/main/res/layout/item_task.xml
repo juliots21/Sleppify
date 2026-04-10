@@ -52,7 +52,8 @@
             app:cardBackgroundColor="#191B22"
             app:cardCornerRadius="20dp"
             app:cardElevation="0dp"
-            app:strokeWidth="0dp">
+            app:strokeColor="#33434653"
+            app:strokeWidth="1dp">
 
             <LinearLayout
                 android:layout_width="match_parent"

@@ -16,6 +16,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.InputType;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.LayoutInflater;
@@ -38,11 +39,7 @@ import com.google.android.material.button.MaterialButton;
 import com.google.android.material.slider.Slider;
 import com.google.android.material.switchmaterial.SwitchMaterial;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
-
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
@@ -68,20 +65,14 @@ public class EqualizerFragment extends Fragment {
     private static final String PRESET_U_SHAPED = "u_shaped";
     private static final String PRESET_V_SHAPE = "v_shape";
     private static final String PRESET_W_SHAPED = "w_shaped";
-    private static final String KEY_AI_EQ_NEXT_AT_PREFIX = "ai_eq_next_at_";
-    private static final String KEY_AI_EQ_PENDING_JSON_PREFIX = "ai_eq_pending_json_";
-    private static final String KEY_AI_EQ_LAST_PROCESS_SESSION_PREFIX = "ai_eq_last_process_session_";
-    private static final String KEY_AI_EQ_DISMISSED_SESSION_PREFIX = "ai_eq_dismissed_session_";
-    private static final long AI_EQ_SUGGESTION_INTERVAL_MS = 2L * 60L * 60L * 1000L;
-    private static final long AI_EQ_SUGGESTION_RETRY_MS = 15L * 60L * 1000L;
-    private static final long AI_EQ_LOADING_FRAME_MS = 420L;
     private static final long FORCE_SPEAKER_FALLBACK_WINDOW_MS = 4000L;
     private static final long OUTPUT_REFRESH_MIN_INTERVAL_MS = 900L;
-    private static final long PROCESS_SESSION_ID = AiSuggestionSession.PROCESS_SESSION_ID;
     private static final int EQ_BAND_COUNT = AudioEffectsService.EQ_BAND_COUNT;
     private static final float BASS_GAIN_MAX_DB = AudioEffectsService.BASS_DB_MAX;
     private static final float BASS_GAIN_MIN_DB = 0f;
     private static final float BASS_GAIN_TOGGLE_THRESHOLD_DB = BASS_GAIN_MAX_DB * 0.5f;
+    private static final float DEBUG_AUTOGAIN_EDITOR_MIN_DB = -24f;
+    private static final float DEBUG_AUTOGAIN_EDITOR_MAX_DB = 24f;
     private static final float BASS_DEFAULT_FREQUENCY_HZ = AudioEffectsService.BASS_FREQUENCY_DEFAULT_HZ;
     private static final int BASS_TYPE_DEFAULT = AudioEffectsService.BASS_TYPE_NATURAL;
     private static final int REVERB_LEVEL_DEFAULT = AudioEffectsService.REVERB_LEVEL_OFF;
@@ -120,14 +111,11 @@ public class EqualizerFragment extends Fragment {
     private SharedPreferences preferences;
     private TextView tvOutputRoute;
     private ImageView ivOutputIcon;
-    private View cardEqAiSuggestion;
-    private TextView tvEqAiSuggestionText;
-    private MaterialButton btnEqAiApply;
-    private MaterialButton btnEqAiDismiss;
     private TextView tvSelectedPreset;
     private View cardPresetSelector;
     private View cardGraphicEq;
     private View cardBassTuner;
+    private View cardAutoGainDebug;
     private EqCurveEditorView eqCurveView;
     private SwitchMaterial switchEqEnabled;
     @Nullable
@@ -140,47 +128,24 @@ public class EqualizerFragment extends Fragment {
     private View cardReverbSelector;
     private Slider sliderBassFrequency;
     private TextView tvBassFrequencyValue;
+    private LinearLayout layoutAutoGainEqRows;
+    private LinearLayout layoutAutoGainBassRows;
+    private MaterialButton btnSaveAutoGainDebug;
+    private MaterialButton btnResetAutoGainDebug;
+    @Nullable
+    private EditText[] autoGainEqInputs;
+    @Nullable
+    private EditText[] autoGainBassRangeInputs;
+    private boolean autoGainInlineEditorReady;
     private boolean restoringUi;
     private boolean hasLoadedUi;
     @Nullable
     private String boundProfileId;
-    @NonNull
-    private String currentOutputDescriptorForAi = "parlante integrado del telefono";
-    @Nullable
-    private GeminiIntelligenceService.EqSuggestion pendingEqAiSuggestion;
-    @Nullable
-    private EqAiUndoSnapshot eqAiUndoSnapshot;
-    @Nullable
-    private String eqAiSuggestionSignature;
-    private boolean eqAiSuggestionApplied;
-    private boolean eqAiSuggestionInFlight;
-    @Nullable
-    private String eqAiInFlightProfileId;
-    private boolean eqAiLoading;
-    private int eqAiLoadingFrame;
     private AudioManager audioManager;
     private boolean forceSpeakerOutputSelection;
     private long forceSpeakerFallbackUntilMs;
     private long lastOutputRefreshAtMs;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private final Runnable eqAiLoadingRunnable = new Runnable() {
-        @Override
-        public void run() {
-            if (!eqAiLoading || tvEqAiSuggestionText == null) {
-                return;
-            }
-
-            String[] frames = {
-                    "Generando sugerencia experta",
-                    "Generando sugerencia experta.",
-                    "Generando sugerencia experta..",
-                    "Generando sugerencia experta..."
-            };
-            tvEqAiSuggestionText.setText(frames[eqAiLoadingFrame % frames.length]);
-            eqAiLoadingFrame++;
-            mainHandler.postDelayed(this, AI_EQ_LOADING_FRAME_MS);
-        }
-    };
 
     private final AudioDeviceCallback outputDeviceCallback = new AudioDeviceCallback() {
         @Override
@@ -220,14 +185,11 @@ public class EqualizerFragment extends Fragment {
 
         tvOutputRoute = view.findViewById(R.id.tvOutputRoute);
         ivOutputIcon = view.findViewById(R.id.ivOutputIcon);
-        cardEqAiSuggestion = view.findViewById(R.id.cardEqAiSuggestion);
-        tvEqAiSuggestionText = view.findViewById(R.id.tvEqAiSuggestionText);
-        btnEqAiApply = view.findViewById(R.id.btnEqAiApply);
-        btnEqAiDismiss = view.findViewById(R.id.btnEqAiDismiss);
         tvSelectedPreset = view.findViewById(R.id.tvSelectedPreset);
         cardPresetSelector = view.findViewById(R.id.cardPresetSelector);
         cardGraphicEq = view.findViewById(R.id.cardGraphicEq);
         cardBassTuner = view.findViewById(R.id.cardBassTuner);
+        cardAutoGainDebug = view.findViewById(R.id.cardAutoGainDebug);
         eqCurveView = view.findViewById(R.id.eqCurveView);
         switchEqEnabled = view.findViewById(R.id.switchEqEnabled);
 
@@ -239,10 +201,16 @@ public class EqualizerFragment extends Fragment {
         cardReverbSelector = view.findViewById(R.id.cardReverbSelector);
         sliderBassFrequency = view.findViewById(R.id.sliderBassFrequency);
         tvBassFrequencyValue = view.findViewById(R.id.tvBassFrequencyValue);
+        layoutAutoGainEqRows = view.findViewById(R.id.layoutAutoGainEqRows);
+        layoutAutoGainBassRows = view.findViewById(R.id.layoutAutoGainBassRows);
+        btnSaveAutoGainDebug = view.findViewById(R.id.btnSaveAutoGainDebug);
+        btnResetAutoGainDebug = view.findViewById(R.id.btnResetAutoGainDebug);
 
         sliderBassFrequency.setValueFrom(AudioEffectsService.BASS_FREQUENCY_MIN_HZ);
         sliderBassFrequency.setValueTo(AudioEffectsService.BASS_FREQUENCY_MAX_HZ);
 
+        clearLegacyAutoGainDebugOverrides();
+        setupInlineAutoGainDebugEditor();
         setupListeners();
         refreshOutputDeviceAndProfile(false, true);
         refreshEqModuleState();
@@ -283,7 +251,6 @@ public class EqualizerFragment extends Fragment {
     public void onStop() {
         dismissActivePopupWindow();
         unregisterOutputDeviceCallback();
-        stopEqAiLoadingAnimation();
         super.onStop();
     }
 
@@ -343,6 +310,8 @@ public class EqualizerFragment extends Fragment {
         String selectedPreset = preferences.getString(KEY_SELECTED_PRESET, PRESET_DEFAULT);
         tvSelectedPreset.setText(presetLabelFromId(selectedPreset));
 
+        refreshInlineAutoGainEditorValues();
+
         restoringUi = false;
     }
 
@@ -394,6 +363,13 @@ public class EqualizerFragment extends Fragment {
             cardGraphicEq.setOnClickListener(v -> showGraphicEqEditorDialog());
         }
 
+        if (btnSaveAutoGainDebug != null) {
+            btnSaveAutoGainDebug.setOnClickListener(v -> saveInlineAutoGainDebugValues());
+        }
+        if (btnResetAutoGainDebug != null) {
+            btnResetAutoGainDebug.setOnClickListener(v -> resetInlineAutoGainDebugValues());
+        }
+
         cardPresetSelector.setOnClickListener(v -> showPresetPopup());
 
         if (switchEqEnabled != null) {
@@ -402,6 +378,7 @@ public class EqualizerFragment extends Fragment {
                     return;
                 }
                 preferences.edit().putBoolean(AudioEffectsService.KEY_ENABLED, isChecked).apply();
+                AudioDeviceProfileStore.persistActiveValuesToCurrentProfile(preferences);
                 if (isChecked) {
                     startOrUpdateService();
                 } else {
@@ -409,13 +386,6 @@ public class EqualizerFragment extends Fragment {
                 }
                 refreshEqModuleState();
             });
-        }
-
-        if (btnEqAiApply != null) {
-            btnEqAiApply.setOnClickListener(v -> applyAiSuggestion());
-        }
-        if (btnEqAiDismiss != null) {
-            btnEqAiDismiss.setOnClickListener(v -> undoAiSuggestion());
         }
     }
 
@@ -486,6 +456,39 @@ public class EqualizerFragment extends Fragment {
             cardBassTuner.setAlpha(eqEnabled ? 1f : 0.45f);
         }
 
+        if (cardAutoGainDebug != null) {
+            cardAutoGainDebug.setEnabled(eqEnabled);
+            cardAutoGainDebug.setClickable(eqEnabled);
+            cardAutoGainDebug.setFocusable(eqEnabled);
+            cardAutoGainDebug.setAlpha(eqEnabled ? 1f : 0.45f);
+        }
+
+        if (btnSaveAutoGainDebug != null) {
+            btnSaveAutoGainDebug.setEnabled(eqEnabled);
+        }
+
+        if (btnResetAutoGainDebug != null) {
+            btnResetAutoGainDebug.setEnabled(eqEnabled);
+        }
+
+        if (autoGainEqInputs != null) {
+            for (EditText input : autoGainEqInputs) {
+                if (input != null) {
+                    input.setEnabled(eqEnabled);
+                    input.setAlpha(eqEnabled ? 1f : 0.55f);
+                }
+            }
+        }
+
+        if (autoGainBassRangeInputs != null) {
+            for (EditText input : autoGainBassRangeInputs) {
+                if (input != null) {
+                    input.setEnabled(eqEnabled);
+                    input.setAlpha(eqEnabled ? 1f : 0.55f);
+                }
+            }
+        }
+
         if (eqCurveView != null) {
             eqCurveView.setEnabled(eqEnabled);
             eqCurveView.setEditingEnabled(false);
@@ -497,15 +500,6 @@ public class EqualizerFragment extends Fragment {
         }
         if (sliderBassFrequency != null) {
             sliderBassFrequency.setEnabled(eqEnabled);
-        }
-        boolean hasSuggestion = pendingEqAiSuggestion != null;
-        boolean canApplySuggestion = hasSuggestion && !eqAiLoading && !eqAiSuggestionApplied;
-        boolean canUndoSuggestion = hasSuggestion && !eqAiLoading && eqAiSuggestionApplied && eqAiUndoSnapshot != null;
-        if (btnEqAiApply != null) {
-            btnEqAiApply.setEnabled(eqEnabled && canApplySuggestion);
-        }
-        if (btnEqAiDismiss != null) {
-            btnEqAiDismiss.setEnabled(eqEnabled && canUndoSuggestion);
         }
     }
 
@@ -606,7 +600,6 @@ public class EqualizerFragment extends Fragment {
         boolean restoredFromProfile = AudioDeviceProfileStore.restoreActiveValuesForOutput(preferences, selected);
         boolean profileSwitched = AudioDeviceProfileStore.syncActiveProfileForOutput(preferences, selected);
         String currentProfile = AudioDeviceProfileStore.getActiveProfileId(preferences, selected);
-        currentOutputDescriptorForAi = buildOutputDescriptorForAi(selected);
         String previousBoundProfile = boundProfileId;
         boolean shouldReloadUi = restoredFromProfile || profileSwitched || !hasLoadedUi || !TextUtils.equals(previousBoundProfile, currentProfile);
         boundProfileId = currentProfile;
@@ -616,442 +609,10 @@ public class EqualizerFragment extends Fragment {
             loadPreferencesIntoUi();
             hasLoadedUi = true;
         }
-        refreshEqAiSuggestionState();
         refreshEqModuleState();
         if ((profileSwitched || restoredFromProfile) && applyOnProfileSwitch) {
             applyIfEnabled();
         }
-    }
-
-    private void refreshEqAiSuggestionState() {
-        if (!areSmartSuggestionsEnabled()) {
-            pendingEqAiSuggestion = null;
-            eqAiSuggestionInFlight = false;
-            eqAiInFlightProfileId = null;
-            stopEqAiLoadingAnimation();
-            renderEqAiSuggestion(null);
-            return;
-        }
-
-        if (TextUtils.isEmpty(boundProfileId)) {
-            pendingEqAiSuggestion = null;
-            stopEqAiLoadingAnimation();
-            renderEqAiSuggestion(null);
-            return;
-        }
-
-        String profileId = boundProfileId;
-        boolean isNewProcessSession = registerAndDetectNewProcessSession(profileId);
-        long now = System.currentTimeMillis();
-        if (isNewProcessSession) {
-            preferences.edit().remove(eqAiDismissedSessionKey(profileId)).apply();
-        }
-
-        if (isEqSuggestionDismissedInCurrentSession(profileId)) {
-            pendingEqAiSuggestion = null;
-            stopEqAiLoadingAnimation();
-            renderEqAiSuggestion(null);
-            return;
-        }
-
-        long nextAt = preferences.getLong(eqAiNextAtKey(profileId), 0L);
-
-        pendingEqAiSuggestion = readPendingAiSuggestion(profileId);
-        if (pendingEqAiSuggestion != null && now >= nextAt && nextAt > 0L) {
-            preferences.edit().remove(eqAiPendingKey(profileId)).apply();
-            pendingEqAiSuggestion = null;
-        }
-
-        if (pendingEqAiSuggestion != null) {
-            stopEqAiLoadingAnimation();
-            renderEqAiSuggestion(pendingEqAiSuggestion);
-            return;
-        }
-
-        if (eqAiSuggestionInFlight && TextUtils.equals(eqAiInFlightProfileId, profileId)) {
-            renderEqAiLoadingState();
-            return;
-        }
-
-        renderEqAiSuggestion(null);
-        boolean forceNow = isNewProcessSession || nextAt <= 0L || now >= nextAt;
-        maybeGenerateEqAiSuggestion(profileId, forceNow);
-    }
-
-    private void maybeGenerateEqAiSuggestion(@NonNull String profileId, boolean forceNow) {
-        if (eqAiSuggestionInFlight) {
-            return;
-        }
-
-        long now = System.currentTimeMillis();
-        long nextAt = preferences.getLong(eqAiNextAtKey(profileId), 0L);
-        if (!forceNow && now < nextAt) {
-            return;
-        }
-
-        float[] currentBands = new float[EQ_BAND_COUNT];
-        for (int i = 0; i < currentBands.length; i++) {
-            currentBands[i] = preferences.getFloat(AudioEffectsService.bandDbKey(i), 0f);
-        }
-
-        float bassDb = quantizeBassGainToggle(preferences.getFloat(AudioEffectsService.KEY_BASS_DB, 0f));
-        float bassFrequencyHz = normalizeBassFrequencySlider(
-            preferences.getFloat(AudioEffectsService.KEY_BASS_FREQUENCY_HZ, BASS_DEFAULT_FREQUENCY_HZ)
-        );
-        String currentOutput = TextUtils.isEmpty(currentOutputDescriptorForAi)
-                ? "parlante integrado del telefono"
-                : currentOutputDescriptorForAi;
-        String phoneModel = buildPhoneModelDescriptor();
-
-        eqAiSuggestionInFlight = true;
-        eqAiInFlightProfileId = profileId;
-        renderEqAiLoadingState();
-        new GeminiIntelligenceService().generateEqSuggestion(
-                currentOutput,
-            phoneModel,
-                currentBands,
-                bassDb,
-                bassFrequencyHz,
-                new GeminiIntelligenceService.EqSuggestionCallback() {
-                    @Override
-                    public void onSuccess(GeminiIntelligenceService.EqSuggestion suggestion) {
-                        eqAiSuggestionInFlight = false;
-                        eqAiInFlightProfileId = null;
-                        stopEqAiLoadingAnimation();
-                        savePendingAiSuggestion(profileId, suggestion);
-                        if (TextUtils.equals(boundProfileId, profileId)) {
-                            pendingEqAiSuggestion = suggestion;
-                            renderEqAiSuggestion(suggestion);
-                        }
-                    }
-
-                    @Override
-                    public void onError(String error) {
-                        eqAiSuggestionInFlight = false;
-                        eqAiInFlightProfileId = null;
-                        stopEqAiLoadingAnimation();
-                        preferences.edit()
-                                .putLong(eqAiNextAtKey(profileId), System.currentTimeMillis() + AI_EQ_SUGGESTION_RETRY_MS)
-                                .apply();
-                        if (TextUtils.equals(boundProfileId, profileId)) {
-                            renderEqAiSuggestion(null);
-                        }
-                    }
-                }
-        );
-    }
-
-    private void savePendingAiSuggestion(
-            @NonNull String profileId,
-            @NonNull GeminiIntelligenceService.EqSuggestion suggestion
-    ) {
-        try {
-            JSONObject json = new JSONObject();
-            json.put("message", suggestion.message);
-            JSONArray bands = new JSONArray();
-            for (float value : suggestion.bands) {
-                bands.put(value);
-            }
-            json.put("bands", bands);
-            json.put("bassDb", suggestion.bassDb);
-            json.put("bassFrequencyHz", suggestion.bassFrequencyHz);
-
-            preferences.edit()
-                    .putString(eqAiPendingKey(profileId), json.toString())
-                    .remove(eqAiDismissedSessionKey(profileId))
-                    .putLong(eqAiNextAtKey(profileId), System.currentTimeMillis() + AI_EQ_SUGGESTION_INTERVAL_MS)
-                    .apply();
-        } catch (Exception ignored) {
-            // Si el serializado falla, no bloqueamos el modulo de EQ.
-        }
-    }
-
-    @Nullable
-    private GeminiIntelligenceService.EqSuggestion readPendingAiSuggestion(@NonNull String profileId) {
-        String raw = preferences.getString(eqAiPendingKey(profileId), null);
-        if (TextUtils.isEmpty(raw)) {
-            return null;
-        }
-
-        try {
-            JSONObject json = new JSONObject(raw);
-            String message = json.optString("message", "").trim();
-            if (TextUtils.isEmpty(message)) {
-                return null;
-            }
-
-            JSONArray bandsArray = json.optJSONArray("bands");
-            if (bandsArray == null || bandsArray.length() < EQ_BAND_COUNT) {
-                return null;
-            }
-
-            float[] bands = new float[EQ_BAND_COUNT];
-            for (int i = 0; i < bands.length; i++) {
-                bands[i] = clamp(
-                        (float) bandsArray.optDouble(i, 0d),
-                        AudioEffectsService.EQ_GAIN_MIN_DB,
-                        AudioEffectsService.EQ_GAIN_MAX_DB
-                );
-            }
-
-                float bassDb = quantizeBassGainToggle((float) json.optDouble("bassDb", 0d));
-            float bassFrequencyHz = normalizeBassFrequencySlider(
-                    (float) json.optDouble("bassFrequencyHz", BASS_DEFAULT_FREQUENCY_HZ)
-            );
-            return new GeminiIntelligenceService.EqSuggestion(message, bands, bassDb, bassFrequencyHz);
-        } catch (Exception ignored) {
-            preferences.edit().remove(eqAiPendingKey(profileId)).apply();
-            return null;
-        }
-    }
-
-    private void applyAiSuggestion() {
-        if (pendingEqAiSuggestion == null || TextUtils.isEmpty(boundProfileId)) {
-            return;
-        }
-
-        if (eqAiSuggestionApplied) {
-            renderEqAiSuggestion(pendingEqAiSuggestion);
-            return;
-        }
-
-        GeminiIntelligenceService.EqSuggestion suggestion = pendingEqAiSuggestion;
-        String profileId = boundProfileId;
-        eqAiUndoSnapshot = captureEqAiUndoSnapshot();
-        float normalizedBassDb = quantizeBassGainToggle(suggestion.bassDb);
-        float normalizedBassFrequencyHz = normalizeBassFrequencySlider(suggestion.bassFrequencyHz);
-
-        restoringUi = true;
-        eqCurveView.setBandValues(suggestion.bands);
-        sliderBassGain.setValue(normalizedBassDb);
-        tvBassGainValue.setText(formatDb(normalizedBassDb));
-        sliderBassFrequency.setValue(normalizedBassFrequencyHz);
-        tvBassFrequencyValue.setText(formatHz(normalizedBassFrequencyHz));
-        String selectedPresetId = resolveMutableCustomPresetId();
-        tvSelectedPreset.setText(presetLabelFromId(selectedPresetId));
-        restoringUi = false;
-
-        SharedPreferences.Editor editor = preferences.edit();
-        for (int i = 0; i < suggestion.bands.length; i++) {
-            editor.putFloat(AudioEffectsService.bandDbKey(i), suggestion.bands[i]);
-        }
-        editor.putFloat(AudioEffectsService.KEY_BASS_DB, normalizedBassDb);
-        editor.putFloat(AudioEffectsService.KEY_BASS_FREQUENCY_HZ, normalizedBassFrequencyHz);
-        editor.putString(KEY_SELECTED_PRESET, selectedPresetId);
-        editor.remove(eqAiDismissedSessionKey(profileId));
-        editor.putLong(eqAiNextAtKey(profileId), System.currentTimeMillis() + AI_EQ_SUGGESTION_INTERVAL_MS);
-        editor.apply();
-
-        if (isUserPresetId(selectedPresetId)) {
-            String userProfileId = profileIdFromUserPresetId(selectedPresetId);
-            if (!TextUtils.isEmpty(userProfileId)) {
-                saveUserPresetBandsForProfile(userProfileId, suggestion.bands);
-            }
-        }
-
-        eqAiSuggestionApplied = true;
-        stopEqAiLoadingAnimation();
-        renderEqAiSuggestion(suggestion);
-        applyIfEnabled();
-    }
-
-    private void undoAiSuggestion() {
-        if (eqAiUndoSnapshot == null) {
-            if (pendingEqAiSuggestion != null) {
-                renderEqAiSuggestion(pendingEqAiSuggestion);
-            }
-            return;
-        }
-
-        EqAiUndoSnapshot snapshot = eqAiUndoSnapshot;
-
-        restoringUi = true;
-        if (eqCurveView != null) {
-            eqCurveView.setBandValues(snapshot.bands);
-        }
-        if (sliderBassGain != null) {
-            sliderBassGain.setValue(snapshot.bassDb);
-            tvBassGainValue.setText(formatDb(snapshot.bassDb));
-        }
-        if (sliderBassFrequency != null) {
-            sliderBassFrequency.setValue(snapshot.bassFrequencyHz);
-            tvBassFrequencyValue.setText(formatHz(snapshot.bassFrequencyHz));
-        }
-        if (tvSelectedPreset != null) {
-            tvSelectedPreset.setText(presetLabelFromId(snapshot.presetId));
-        }
-        restoringUi = false;
-
-        SharedPreferences.Editor editor = preferences.edit();
-        for (int i = 0; i < snapshot.bands.length; i++) {
-            editor.putFloat(AudioEffectsService.bandDbKey(i), snapshot.bands[i]);
-        }
-        editor.putFloat(AudioEffectsService.KEY_BASS_DB, snapshot.bassDb);
-        editor.putFloat(AudioEffectsService.KEY_BASS_FREQUENCY_HZ, snapshot.bassFrequencyHz);
-        editor.putString(KEY_SELECTED_PRESET, snapshot.presetId);
-        editor.apply();
-
-        eqAiSuggestionApplied = false;
-        stopEqAiLoadingAnimation();
-        if (pendingEqAiSuggestion != null) {
-            renderEqAiSuggestion(pendingEqAiSuggestion);
-        }
-        applyIfEnabled();
-    }
-
-    private void renderEqAiSuggestion(@Nullable GeminiIntelligenceService.EqSuggestion suggestion) {
-        if (cardEqAiSuggestion == null || tvEqAiSuggestionText == null) {
-            return;
-        }
-
-        if (suggestion == null) {
-            resetEqAiSuggestionActionState();
-            if (eqAiLoading) {
-                cardEqAiSuggestion.setVisibility(View.VISIBLE);
-                refreshEqModuleState();
-                return;
-            }
-            cardEqAiSuggestion.setVisibility(View.GONE);
-            refreshEqModuleState();
-            return;
-        }
-
-        syncEqAiSuggestionActionState(suggestion);
-
-        if (btnEqAiApply != null) {
-            btnEqAiApply.setEnabled(!eqAiSuggestionApplied);
-            btnEqAiApply.setVisibility(View.VISIBLE);
-            btnEqAiApply.setText(eqAiSuggestionApplied ? "Aplicado" : "Aplicar cambios");
-        }
-        if (btnEqAiDismiss != null) {
-            btnEqAiDismiss.setEnabled(eqAiSuggestionApplied && eqAiUndoSnapshot != null);
-            btnEqAiDismiss.setVisibility(View.VISIBLE);
-            btnEqAiDismiss.setText("Deshacer");
-        }
-        tvEqAiSuggestionText.setText(suggestion.message);
-        cardEqAiSuggestion.setVisibility(View.VISIBLE);
-        refreshEqModuleState();
-    }
-
-    @NonNull
-    private EqAiUndoSnapshot captureEqAiUndoSnapshot() {
-        float[] bands = new float[EQ_BAND_COUNT];
-        for (int i = 0; i < bands.length; i++) {
-            bands[i] = preferences.getFloat(AudioEffectsService.bandDbKey(i), 0f);
-        }
-
-        float bassDb = quantizeBassGainToggle(preferences.getFloat(AudioEffectsService.KEY_BASS_DB, 0f));
-        float bassFrequencyHz = normalizeBassFrequencySlider(
-            preferences.getFloat(AudioEffectsService.KEY_BASS_FREQUENCY_HZ, BASS_DEFAULT_FREQUENCY_HZ)
-        );
-        String presetId = preferences.getString(KEY_SELECTED_PRESET, PRESET_DEFAULT);
-        if (TextUtils.isEmpty(presetId)) {
-            presetId = PRESET_DEFAULT;
-        }
-
-        return new EqAiUndoSnapshot(bands, bassDb, bassFrequencyHz, presetId);
-    }
-
-    private void syncEqAiSuggestionActionState(@NonNull GeminiIntelligenceService.EqSuggestion suggestion) {
-        String signature = buildEqAiSuggestionSignature(suggestion);
-        if (TextUtils.equals(signature, eqAiSuggestionSignature)) {
-            return;
-        }
-
-        eqAiSuggestionSignature = signature;
-        eqAiSuggestionApplied = false;
-        eqAiUndoSnapshot = null;
-    }
-
-    private void resetEqAiSuggestionActionState() {
-        eqAiSuggestionSignature = null;
-        eqAiSuggestionApplied = false;
-        eqAiUndoSnapshot = null;
-    }
-
-    @NonNull
-    private String buildEqAiSuggestionSignature(@NonNull GeminiIntelligenceService.EqSuggestion suggestion) {
-        return suggestion.message + "|" + Arrays.toString(suggestion.bands)
-                + "|" + suggestion.bassDb + "|" + suggestion.bassFrequencyHz;
-    }
-
-    private boolean areSmartSuggestionsEnabled() {
-        SharedPreferences settingsPrefs = requireContext().getSharedPreferences(
-                CloudSyncManager.PREFS_SETTINGS,
-                Context.MODE_PRIVATE
-        );
-        return settingsPrefs.getBoolean(
-                CloudSyncManager.KEY_SMART_SUGGESTIONS_ENABLED,
-                settingsPrefs.getBoolean(CloudSyncManager.KEY_AI_SHIFT_ENABLED, true)
-        );
-    }
-
-    private void renderEqAiLoadingState() {
-        if (cardEqAiSuggestion == null || tvEqAiSuggestionText == null) {
-            return;
-        }
-
-        cardEqAiSuggestion.setVisibility(View.VISIBLE);
-        if (btnEqAiApply != null) {
-            btnEqAiApply.setEnabled(false);
-            btnEqAiApply.setVisibility(View.INVISIBLE);
-        }
-        if (btnEqAiDismiss != null) {
-            btnEqAiDismiss.setEnabled(false);
-            btnEqAiDismiss.setVisibility(View.INVISIBLE);
-        }
-
-        if (!eqAiLoading) {
-            eqAiLoading = true;
-            eqAiLoadingFrame = 0;
-            mainHandler.removeCallbacks(eqAiLoadingRunnable);
-            mainHandler.post(eqAiLoadingRunnable);
-        }
-        refreshEqModuleState();
-    }
-
-    private void stopEqAiLoadingAnimation() {
-        if (!eqAiLoading) {
-            return;
-        }
-        eqAiLoading = false;
-        mainHandler.removeCallbacks(eqAiLoadingRunnable);
-        eqAiLoadingFrame = 0;
-    }
-
-    private boolean registerAndDetectNewProcessSession(@NonNull String profileId) {
-        String key = eqAiProcessSessionKey(profileId);
-        long lastSessionId = preferences.getLong(key, Long.MIN_VALUE);
-        if (lastSessionId == PROCESS_SESSION_ID) {
-            return false;
-        }
-        preferences.edit().putLong(key, PROCESS_SESSION_ID).apply();
-        return true;
-    }
-
-    private boolean isEqSuggestionDismissedInCurrentSession(@NonNull String profileId) {
-        long dismissedOnSession = preferences.getLong(eqAiDismissedSessionKey(profileId), Long.MIN_VALUE);
-        return dismissedOnSession == PROCESS_SESSION_ID;
-    }
-
-    @NonNull
-    private String eqAiPendingKey(@NonNull String profileId) {
-        return KEY_AI_EQ_PENDING_JSON_PREFIX + profileId;
-    }
-
-    @NonNull
-    private String eqAiNextAtKey(@NonNull String profileId) {
-        return KEY_AI_EQ_NEXT_AT_PREFIX + profileId;
-    }
-
-    @NonNull
-    private String eqAiProcessSessionKey(@NonNull String profileId) {
-        return KEY_AI_EQ_LAST_PROCESS_SESSION_PREFIX + profileId;
-    }
-
-    @NonNull
-    private String eqAiDismissedSessionKey(@NonNull String profileId) {
-        return KEY_AI_EQ_DISMISSED_SESSION_PREFIX + profileId;
     }
 
     private void setOutputUi(
@@ -1062,77 +623,6 @@ public class EqualizerFragment extends Fragment {
         tvOutputRoute.setText(route);
         ivOutputIcon.setImageResource(iconRes);
         ivOutputIcon.setContentDescription(contentDescription);
-    }
-
-    @NonNull
-    private String buildOutputDescriptorForAi(@Nullable AudioDeviceInfo output) {
-        if (output == null) {
-            return "parlante integrado del telefono";
-        }
-
-        int type = output.getType();
-        String typeLabel;
-        if (isBluetoothType(type)) {
-            typeLabel = "audifonos bluetooth";
-        } else if (isWiredType(type)) {
-            typeLabel = "audifonos cableados";
-        } else if (type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE) {
-            typeLabel = "auricular interno";
-        } else if (type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER || type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER_SAFE) {
-            typeLabel = "parlante integrado";
-        } else {
-            typeLabel = "salida de audio";
-        }
-
-        String model = deviceName(output, "desconocido");
-        String address = "";
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            try {
-                String raw = output.getAddress();
-                if (raw != null) {
-                    address = raw.trim();
-                }
-            } catch (Throwable ignored) {
-                // Algunos OEM no exponen direccion de forma consistente.
-            }
-        }
-
-        if (!TextUtils.isEmpty(address) && !"00:00:00:00:00:00".equals(address)) {
-            return typeLabel + " modelo " + model + " (" + address + ")";
-        }
-        return typeLabel + " modelo " + model;
-    }
-
-    @NonNull
-    private String buildPhoneModelDescriptor() {
-        String manufacturer = Build.MANUFACTURER == null ? "" : Build.MANUFACTURER.trim();
-        String model = Build.MODEL == null ? "" : Build.MODEL.trim();
-        String device = Build.DEVICE == null ? "" : Build.DEVICE.trim();
-
-        StringBuilder builder = new StringBuilder();
-        if (!TextUtils.isEmpty(manufacturer)) {
-            builder.append(manufacturer);
-        }
-        if (!TextUtils.isEmpty(model)) {
-            if (builder.length() > 0) {
-                builder.append(" ");
-            }
-            builder.append(model);
-        }
-        if (!TextUtils.isEmpty(device)) {
-            if (builder.length() > 0) {
-                builder.append(" (");
-                builder.append(device);
-                builder.append(")");
-            } else {
-                builder.append(device);
-            }
-        }
-
-        if (builder.length() == 0) {
-            return "modelo de telefono desconocido";
-        }
-        return builder.toString();
     }
 
     private void showPresetPopup() {
@@ -1290,6 +780,177 @@ public class EqualizerFragment extends Fragment {
 
         int xOffset = dp(10);
         popupWindow.showAsDropDown(cardReverbSelector, xOffset, dp(8));
+    }
+
+    private void setupInlineAutoGainDebugEditor() {
+        if (layoutAutoGainEqRows == null || layoutAutoGainBassRows == null || autoGainInlineEditorReady) {
+            return;
+        }
+
+        layoutAutoGainEqRows.removeAllViews();
+        EditText[] eqInputs = new EditText[EQ_BAND_COUNT];
+        for (int i = 0; i < EQ_BAND_COUNT; i++) {
+            float frequencyHz = i < GRAPHIC_EQ_DIALOG_FREQUENCIES_HZ.length
+                    ? GRAPHIC_EQ_DIALOG_FREQUENCIES_HZ[i]
+                    : AudioEffectsService.WAVELET_9_BAND_FREQUENCIES_HZ[i];
+            String label = formatGraphicEqDialogFrequency(frequencyHz) + " Hz";
+            eqInputs[i] = addAutoGainEditorRow(
+                    layoutAutoGainEqRows,
+                    label,
+                    AudioEffectsService.defaultEqBandAutoGainDb(i)
+            );
+        }
+
+        layoutAutoGainBassRows.removeAllViews();
+        int rangeCount = AudioEffectsService.bassAutoGainRangeCount();
+        EditText[] bassRangeInputs = new EditText[rangeCount];
+        for (int i = 0; i < rangeCount; i++) {
+            String label = String.format(
+                    Locale.US,
+                    "%d-%d Hz",
+                    Math.round(AudioEffectsService.bassAutoGainRangeMinHz(i)),
+                    Math.round(AudioEffectsService.bassAutoGainRangeMaxHz(i))
+            );
+            bassRangeInputs[i] = addAutoGainEditorRow(
+                    layoutAutoGainBassRows,
+                    label,
+                    AudioEffectsService.defaultBassAutoGainRangeDb(i)
+            );
+        }
+
+        autoGainEqInputs = eqInputs;
+        autoGainBassRangeInputs = bassRangeInputs;
+        autoGainInlineEditorReady = true;
+        refreshInlineAutoGainEditorValues();
+    }
+
+    private void refreshInlineAutoGainEditorValues() {
+        if (!autoGainInlineEditorReady || preferences == null) {
+            return;
+        }
+
+        if (autoGainEqInputs != null) {
+            for (int i = 0; i < autoGainEqInputs.length; i++) {
+                EditText input = autoGainEqInputs[i];
+                if (input == null) {
+                    continue;
+                }
+                float value = AudioEffectsService.defaultEqBandAutoGainDb(i);
+                input.setText(formatAutoGainEditorDb(value));
+            }
+        }
+
+        if (autoGainBassRangeInputs != null) {
+            for (int i = 0; i < autoGainBassRangeInputs.length; i++) {
+                EditText input = autoGainBassRangeInputs[i];
+                if (input == null) {
+                    continue;
+                }
+                float value = AudioEffectsService.defaultBassAutoGainRangeDb(i);
+                input.setText(formatAutoGainEditorDb(value));
+            }
+        }
+    }
+
+    private void saveInlineAutoGainDebugValues() {
+        if (!isAdded() || preferences == null || !isEqEnabled()) {
+            return;
+        }
+
+        clearLegacyAutoGainDebugOverrides();
+        refreshInlineAutoGainEditorValues();
+        applyIfEnabled();
+    }
+
+    private void resetInlineAutoGainDebugValues() {
+        if (!isAdded() || preferences == null) {
+            return;
+        }
+
+        clearLegacyAutoGainDebugOverrides();
+        refreshInlineAutoGainEditorValues();
+        applyIfEnabled();
+    }
+
+    private void clearLegacyAutoGainDebugOverrides() {
+        if (preferences == null) {
+            return;
+        }
+
+        SharedPreferences.Editor editor = preferences.edit();
+        for (int i = 0; i < EQ_BAND_COUNT; i++) {
+            editor.remove(AudioEffectsService.debugEqBandAutoGainKey(i));
+        }
+
+        int bassRangeCount = AudioEffectsService.bassAutoGainRangeCount();
+        for (int i = 0; i < bassRangeCount; i++) {
+            editor.remove(AudioEffectsService.debugBassRangeAutoGainKey(i));
+        }
+        editor.apply();
+    }
+
+    @NonNull
+    private EditText addAutoGainEditorRow(
+            @NonNull LinearLayout parent,
+            @NonNull String label,
+            float value
+    ) {
+        Context context = requireContext();
+
+        LinearLayout row = new LinearLayout(context);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(6), 0, dp(6));
+
+        TextView labelView = new TextView(context);
+        labelView.setText(label);
+        labelView.setTextColor(ContextCompat.getColor(context, R.color.text_secondary));
+        labelView.setTextSize(12f);
+        row.addView(labelView, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        EditText input = new EditText(context);
+        input.setSingleLine(true);
+        input.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL | InputType.TYPE_NUMBER_FLAG_SIGNED);
+        input.setText(formatAutoGainEditorDb(value));
+        input.setTextColor(ContextCompat.getColor(context, R.color.text_primary));
+        input.setHintTextColor(ContextCompat.getColor(context, R.color.text_secondary));
+        input.setGravity(Gravity.END);
+        row.addView(input, new LinearLayout.LayoutParams(dp(88), ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView unitView = new TextView(context);
+        unitView.setText(" dB");
+        unitView.setTextColor(ContextCompat.getColor(context, R.color.text_secondary));
+        unitView.setTextSize(12f);
+        row.addView(unitView);
+
+        parent.addView(row, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+        return input;
+    }
+
+    private float parseAutoGainEditorValue(@Nullable EditText input, float fallbackValue) {
+        if (input == null || input.getText() == null) {
+            return clamp(fallbackValue, DEBUG_AUTOGAIN_EDITOR_MIN_DB, DEBUG_AUTOGAIN_EDITOR_MAX_DB);
+        }
+
+        String raw = input.getText().toString().trim();
+        if (TextUtils.isEmpty(raw)) {
+            return clamp(fallbackValue, DEBUG_AUTOGAIN_EDITOR_MIN_DB, DEBUG_AUTOGAIN_EDITOR_MAX_DB);
+        }
+
+        try {
+            float parsed = Float.parseFloat(raw.replace(',', '.'));
+            return clamp(parsed, DEBUG_AUTOGAIN_EDITOR_MIN_DB, DEBUG_AUTOGAIN_EDITOR_MAX_DB);
+        } catch (Exception ignored) {
+            return clamp(fallbackValue, DEBUG_AUTOGAIN_EDITOR_MIN_DB, DEBUG_AUTOGAIN_EDITOR_MAX_DB);
+        }
+    }
+
+    @NonNull
+    private String formatAutoGainEditorDb(float value) {
+        return String.format(Locale.US, "%.2f", value);
     }
 
     @NonNull
@@ -2274,23 +1935,33 @@ public class EqualizerFragment extends Fragment {
     }
 
     private void startOrUpdateService() {
+        if (isAdded() && getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).requestAudioEffectsApplyFromUi();
+            return;
+        }
+
         Context context = requireContext().getApplicationContext();
-        Intent serviceIntent = new Intent(context, AudioEffectsService.class);
-        serviceIntent.setAction(AudioEffectsService.ACTION_APPLY);
+        Intent intent = new Intent(context, AudioEffectsService.class);
+        intent.setAction(AudioEffectsService.ACTION_APPLY);
         try {
-            ContextCompat.startForegroundService(context, serviceIntent);
+            context.startService(intent);
         } catch (Throwable ignored) {
             // Fallback para OEMs que restringen foreground service de forma transitoria.
-            context.startService(serviceIntent);
+            context.startService(intent);
         }
     }
 
     private void stopEqService() {
+        if (isAdded() && getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).requestAudioEffectsStopFromUi();
+            return;
+        }
+
         Context context = requireContext().getApplicationContext();
-        Intent serviceIntent = new Intent(context, AudioEffectsService.class);
-        serviceIntent.setAction(AudioEffectsService.ACTION_STOP);
+        Intent intent = new Intent(context, AudioEffectsService.class);
+        intent.setAction(AudioEffectsService.ACTION_STOP);
         try {
-            context.startService(serviceIntent);
+            context.startService(intent);
         } catch (Throwable ignored) {
             // Evita crash por restricciones transitorias de OEM.
         }
@@ -2445,20 +2116,6 @@ public class EqualizerFragment extends Fragment {
             this.id = id;
             this.name = name;
             this.bands = bands;
-        }
-    }
-
-    private static class EqAiUndoSnapshot {
-        final float[] bands;
-        final float bassDb;
-        final float bassFrequencyHz;
-        final String presetId;
-
-        EqAiUndoSnapshot(float[] bands, float bassDb, float bassFrequencyHz, @NonNull String presetId) {
-            this.bands = bands;
-            this.bassDb = bassDb;
-            this.bassFrequencyHz = bassFrequencyHz;
-            this.presetId = presetId;
         }
     }
 

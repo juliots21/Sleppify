@@ -4,6 +4,7 @@ import android.Manifest;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -77,6 +78,10 @@ public class ScannerFragment extends Fragment {
     @Nullable
     private View actionImportImages;
     @Nullable
+    private View scannerRoot;
+    @Nullable
+    private View scanArea;
+    @Nullable
     private MaterialButton btnFlashlight;
     @Nullable
     private Camera camera;
@@ -86,6 +91,8 @@ public class ScannerFragment extends Fragment {
     private ExecutorService cameraExecutor;
     @Nullable
     private ScaleGestureDetector zoomGestureDetector;
+    @Nullable
+    private SharedPreferences settingsPrefs;
     private boolean torchEnabled;
 
     @NonNull
@@ -154,6 +161,8 @@ public class ScannerFragment extends Fragment {
         previewScanner = view.findViewById(R.id.previewScanner);
         freezeOverlay = view.findViewById(R.id.ivFreezeOverlay);
         actionImportImages = view.findViewById(R.id.actionImportImages);
+        scannerRoot = view.findViewById(R.id.scannerRoot);
+        scanArea = view.findViewById(R.id.scanArea);
 
         if (previewScanner != null) {
             zoomGestureDetector = new ScaleGestureDetector(requireContext(), new ScaleGestureDetector.SimpleOnScaleGestureListener() {
@@ -166,11 +175,13 @@ public class ScannerFragment extends Fragment {
         }
 
         btnFlashlight = view.findViewById(R.id.btnFlashlight);
+        settingsPrefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE);
         if (btnFlashlight != null) {
             btnFlashlight.setOnClickListener(v -> toggleTorch());
             btnFlashlight.setEnabled(false);
             updateTorchButtonVisualState();
         }
+        applyScannerBackdropMode();
         if (actionImportImages != null) {
             actionImportImages.setOnClickListener(v -> requestImageImportPermissionAndPick());
         }
@@ -183,6 +194,8 @@ public class ScannerFragment extends Fragment {
     @Override
     public void onResume() {
         super.onResume();
+        applyScannerBackdropMode();
+        updateTorchButtonVisualState();
         ensureCameraPermissionAndStart();
     }
 
@@ -221,9 +234,22 @@ public class ScannerFragment extends Fragment {
         freezeOverlay = null;
         smartToastPopup = null;
         actionImportImages = null;
+        scannerRoot = null;
+        scanArea = null;
         btnFlashlight = null;
+        settingsPrefs = null;
         zoomGestureDetector = null;
         super.onDestroyView();
+    }
+
+    private void applyScannerBackdropMode() {
+        boolean amoledModeEnabled = isAmoledModeEnabled();
+        if (scannerRoot != null) {
+            scannerRoot.setBackgroundColor(amoledModeEnabled ? 0xFF000000 : 0xFF05060A);
+        }
+        if (scanArea != null) {
+            scanArea.setBackgroundColor(amoledModeEnabled ? 0xFF000000 : 0x120E171F);
+        }
     }
 
     private boolean handlePreviewTouch(@Nullable MotionEvent event) {
@@ -429,12 +455,19 @@ public class ScannerFragment extends Fragment {
             return;
         }
 
+        boolean amoledModeEnabled = isAmoledModeEnabled();
+        int inactiveBackgroundColor = amoledModeEnabled ? 0xFF000000 : 0xFF565B64;
+        int inactiveStrokeColor = amoledModeEnabled ? 0xFF2A2F39 : 0x00000000;
+        int inactiveStrokeWidth = amoledModeEnabled ? dpToPx(1) : 0;
+
         if (!btnFlashlight.isEnabled()) {
             btnFlashlight.setText("Linterna no disponible");
             btnFlashlight.setTextColor(0xFF8A909D);
             btnFlashlight.setIconResource(R.drawable.ic_flashlight_off);
             btnFlashlight.setIconTint(ColorStateList.valueOf(0xFF8A909D));
-            btnFlashlight.setBackgroundTintList(ColorStateList.valueOf(0xFF565B64));
+            btnFlashlight.setBackgroundTintList(ColorStateList.valueOf(inactiveBackgroundColor));
+            btnFlashlight.setStrokeWidth(inactiveStrokeWidth);
+            btnFlashlight.setStrokeColor(ColorStateList.valueOf(inactiveStrokeColor));
             return;
         }
 
@@ -444,6 +477,8 @@ public class ScannerFragment extends Fragment {
             btnFlashlight.setIconResource(R.drawable.ic_flashlight_on);
             btnFlashlight.setIconTint(ColorStateList.valueOf(0xFFF4F8FF));
             btnFlashlight.setBackgroundTintList(ColorStateList.valueOf(0xFF20A99B));
+            btnFlashlight.setStrokeWidth(0);
+            btnFlashlight.setStrokeColor(ColorStateList.valueOf(0x00000000));
             return;
         }
 
@@ -451,7 +486,14 @@ public class ScannerFragment extends Fragment {
         btnFlashlight.setTextColor(0xFF8A909D);
         btnFlashlight.setIconResource(R.drawable.ic_flashlight_off);
         btnFlashlight.setIconTint(ColorStateList.valueOf(0xFF8A909D));
-        btnFlashlight.setBackgroundTintList(ColorStateList.valueOf(0xFF565B64));
+        btnFlashlight.setBackgroundTintList(ColorStateList.valueOf(inactiveBackgroundColor));
+        btnFlashlight.setStrokeWidth(inactiveStrokeWidth);
+        btnFlashlight.setStrokeColor(ColorStateList.valueOf(inactiveStrokeColor));
+    }
+
+    private boolean isAmoledModeEnabled() {
+        return settingsPrefs != null
+                && settingsPrefs.getBoolean(CloudSyncManager.KEY_AMOLED_MODE_ENABLED, false);
     }
 
     private void analyzeImage(@NonNull ImageProxy imageProxy) {

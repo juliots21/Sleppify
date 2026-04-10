@@ -56,14 +56,6 @@ public class AppAccessibilityService extends AccessibilityService {
     private static final long NORMAL_FORCE_STOP_CONFIRM_MIN_DELAY_MS = 1_000L;
     private static final long NORMAL_FORCE_STOP_CONFIRM_VERIFY_DELAY_MS = 1_000L;
     private static final long NORMAL_FORCE_STOP_PER_PACKAGE_TIMEOUT_MS = 20_000L;
-
-    private static final long TURBO_FORCE_STOP_OPEN_DELAY_MS = 800L;
-    private static final long TURBO_FORCE_STOP_RETRY_DELAY_MS = 400L;
-    private static final long TURBO_FORCE_STOP_NEXT_DELAY_MS = 800L;
-    private static final long TURBO_FORCE_STOP_AFTER_CLICK_DELAY_MS = 400L;
-    private static final long TURBO_FORCE_STOP_CONFIRM_MIN_DELAY_MS = 800L;
-    private static final long TURBO_FORCE_STOP_CONFIRM_VERIFY_DELAY_MS = 800L;
-    private static final long TURBO_FORCE_STOP_PER_PACKAGE_TIMEOUT_MS = 16_000L;
     private static final long FORCE_STOP_TRANSITION_HOME_DELAY_MS = 140L;
     private static final long FORCE_STOP_TRANSITION_BACK_DELAY_MS = 220L;
     private static final long TAP_FALLBACK_DURATION_MS = 90L;
@@ -199,17 +191,13 @@ public class AppAccessibilityService extends AccessibilityService {
     }
 
     public static boolean requestForceStopPackages(@NonNull List<String> packageNames) {
-        return requestForceStopPackages(packageNames, false);
-    }
-
-    public static boolean requestForceStopPackages(@NonNull List<String> packageNames, boolean turboMode) {
         AppAccessibilityService service = instance;
-        boolean started = service != null && service.startForceStopFlow(packageNames, turboMode);
+        boolean started = service != null && service.startForceStopFlow(packageNames);
         if (!started) {
             Log.w(
                     STOP_APPS_LOG_TAG,
                     "requestForceStopPackages rejected: service unavailable or busy, requested="
-                            + packageNames.size() + ", turboMode=" + turboMode
+                            + packageNames.size()
             );
         }
         return started;
@@ -328,13 +316,13 @@ public class AppAccessibilityService extends AccessibilityService {
         mainHandler.postDelayed(clearRecentsRunnable, CLEAR_RETRY_DELAY_MS);
     }
 
-    private synchronized boolean startForceStopFlow(@NonNull List<String> packageNames, boolean turboMode) {
+    private synchronized boolean startForceStopFlow(@NonNull List<String> packageNames) {
         if (forceStopInProgress) {
             Log.w(STOP_APPS_LOG_TAG, "Force-stop request rejected because another flow is already running.");
             return false;
         }
 
-        configureForceStopSpeed(turboMode);
+        configureForceStopSpeed();
 
         Set<String> uniquePackages = new LinkedHashSet<>();
         Set<String> whitelistedPackages = getWhitelistedPackages();
@@ -361,8 +349,7 @@ public class AppAccessibilityService extends AccessibilityService {
         Log.i(
                 STOP_APPS_LOG_TAG,
                 "Force-stop flow accepted. requested=" + packageNames.size()
-                        + ", validTargets=" + uniquePackages.size()
-                        + ", turboMode=" + turboMode
+                + ", validTargets=" + uniquePackages.size()
         );
 
         clearRecentsInProgress = false;
@@ -630,18 +617,7 @@ public class AppAccessibilityService extends AccessibilityService {
         mainHandler.postDelayed(reopenCurrentPackageRunnable, forceStopRetryDelayMs);
     }
 
-    private void configureForceStopSpeed(boolean turboMode) {
-        if (turboMode) {
-            forceStopOpenDelayMs = TURBO_FORCE_STOP_OPEN_DELAY_MS;
-            forceStopRetryDelayMs = TURBO_FORCE_STOP_RETRY_DELAY_MS;
-            forceStopNextDelayMs = TURBO_FORCE_STOP_NEXT_DELAY_MS;
-            forceStopAfterClickDelayMs = TURBO_FORCE_STOP_AFTER_CLICK_DELAY_MS;
-            forceStopConfirmMinDelayMs = TURBO_FORCE_STOP_CONFIRM_MIN_DELAY_MS;
-            forceStopConfirmVerifyDelayMs = TURBO_FORCE_STOP_CONFIRM_VERIFY_DELAY_MS;
-            forceStopPerPackageTimeoutMs = TURBO_FORCE_STOP_PER_PACKAGE_TIMEOUT_MS;
-            return;
-        }
-
+    private void configureForceStopSpeed() {
         forceStopOpenDelayMs = NORMAL_FORCE_STOP_OPEN_DELAY_MS;
         forceStopRetryDelayMs = NORMAL_FORCE_STOP_RETRY_DELAY_MS;
         forceStopNextDelayMs = NORMAL_FORCE_STOP_NEXT_DELAY_MS;

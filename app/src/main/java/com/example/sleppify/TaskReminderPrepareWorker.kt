@@ -1,0 +1,139 @@
+package com.example.sleppify
+
+import android.content.Context
+import android.text.TextUtils
+import androidx.work.Data
+import androidx.work.Worker
+import androidx.work.WorkerParameters
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
+
+class TaskReminderPrepareWorker(context: Context, workerParams: WorkerParameters) : Worker(context, workerParams) {
+
+    override fun doWork(): Result {
+        val context = applicationContext
+        val settingsPrefs = context.getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE)
+        val smartSuggestionsEnabled = settingsPrefs.getBoolean(
+            CloudSyncManager.KEY_SMART_SUGGESTIONS_ENABLED,
+            settingsPrefs.getBoolean(CloudSyncManager.KEY_AI_SHIFT_ENABLED, true)
+        )
+        if (!smartSuggestionsEnabled) {
+            return Result.success()
+        }
+
+        val input: Data = inputData
+        val reminderId = input.getString(TaskReminderConstants.INPUT_REMINDER_ID)
+        val taskTitle = input.getString(TaskReminderConstants.INPUT_TASK_TITLE)
+        val taskDesc = input.getString(TaskReminderConstants.INPUT_TASK_DESC)
+        val taskTime = input.getString(TaskReminderConstants.INPUT_TASK_TIME)
+        val dateKey = input.getString(TaskReminderConstants.INPUT_DATE_KEY)
+        val notifyAtMs = input.getLong(TaskReminderConstants.INPUT_NOTIFY_AT_MS, 0L)
+
+        if (TextUtils.isEmpty(reminderId) || TextUtils.isEmpty(taskTitle)) {
+            return Result.success()
+        }
+
+        val profileName = resolveProfileName(context)
+        val snapshot = buildTaskSnapshot(taskTitle!!, taskDesc, taskTime, dateKey)
+
+        val messageRef = AtomicReference<String?>(null)
+        val latch = CountDownLatch(1)
+
+        GeminiIntelligenceService().generateTodayAgendaSummary(
+            profileName,
+            snapshot,
+            object : GeminiIntelligenceService.TodayAgendaSummaryCallback {
+                override fun onSuccess(message: String) {
+                    messageRef.set(message)
+                    latch.countDown()
+                }
+
+                override fun onError(error: String) {
+                    latch.countDown()
+                }
+            }
+        )
+
+        val completed = try {
+            latch.await(20, TimeUnit.SECONDS)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            return Result.retry()
+        }
+
+        var summary = messageRef.get()
+        if (!completed || summary.isNullOrBlank()) {
+            val nowMs = System.currentTimeMillis()
+            if (notifyAtMs > nowMs + 15_000L) {
+                return Result.retry()
+            }
+            summary = buildFallbackSummary(taskTitle, taskDesc, taskTime)
+        }
+
+        val cachePrefs = context.getSharedPreferences(TaskReminderConstants.PREFS_CACHE, Context.MODE_PRIVATE)
+        cachePrefs.edit()
+            .putString(TaskReminderConstants.KEY_SUMMARY_PREFIX + reminderId, summary)
+            .putLong(TaskReminderConstants.KEY_SUMMARY_TS_PREFIX + reminderId, System.currentTimeMillis())
+            .apply()
+
+        return Result.success()
+    }
+
+    private fun resolveProfileName(context: Context): String {
+        return try {
+            val authManager = AuthManager.getInstance(context)
+            if (authManager != null && authManager.isSignedIn()) {
+                val displayName = authManager.getDisplayName()
+                if (!displayName.isNullOrBlank()) {
+                    return displayName
+                }
+            }
+            "usuario"
+        } catch (_: Throwable) {
+            "usuario"
+        }
+    }
+
+    private fun buildTaskSnapshot(
+        taskTitle: String,
+        taskDesc: String?,
+        taskTime: String?,
+        dateKey: String?
+    ): String {
+        val safeDesc = taskDesc?.trim().orEmpty()
+        val safeTime = taskTime?.trim().orEmpty()
+        val safeDate = dateKey?.trim().orEmpty()
+
+        return buildString {
+            append("total_tareas_hoy=1; ")
+            append("lista=[1) ")
+            append(taskTitle)
+            if (safeDesc.isNotEmpty()) {
+                append(" - ")
+                append(safeDesc)
+            }
+            if (safeTime.isNotEmpty()) {
+                append(" - hora ")
+                append(safeTime)
+            }
+            if (safeDate.isNotEmpty()) {
+                append(" - fecha ")
+                append(safeDate)
+            }
+            append("]")
+        }
+    }
+
+    private fun buildFallbackSummary(taskTitle: String, taskDesc: String?, taskTime: String?): String {
+        val safeDesc = taskDesc?.trim().orEmpty()
+        val safeTime = taskTime?.trim().orEmpty()
+
+        return when {
+            safeDesc.isNotEmpty() && safeTime.isNotEmpty() -> "Recordatorio breve: $taskTitle a las $safeTime. $safeDesc"
+            safeTime.isNotEmpty() -> "Recordatorio breve: $taskTitle a las $safeTime."
+            safeDesc.isNotEmpty() -> "Recordatorio breve: $taskTitle. $safeDesc"
+            else -> "Recordatorio breve: toca avanzar en \"$taskTitle\"."
+        }
+    }
+}

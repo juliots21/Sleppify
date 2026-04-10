@@ -1,0 +1,303 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/surface_dark"
+    android:orientation="vertical">
+
+    <!-- Search Bar -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="8dp"
+        android:paddingEnd="16dp">
+
+        <ImageButton
+            android:id="@+id/btnSearchBack"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:padding="8dp"
+            android:src="@drawable/ic_arrow_back"
+            app:tint="@color/text_primary"
+            android:contentDescription="Volver" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_music_chip_inactive"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="12dp"
+            android:paddingEnd="8dp">
+
+            <ImageView
+                android:layout_width="16dp"
+                android:layout_height="16dp"
+                android:src="@android:drawable/ic_menu_search"
+                app:tint="@color/text_secondary" />
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etSearchQuery"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@android:color/transparent"
+                android:hint="Buscar canciones, artistas..."
+                android:imeOptions="actionSearch"
+                android:inputType="text"
+                android:paddingStart="8dp"
+                android:paddingEnd="4dp"
+                android:textColor="@color/text_primary"
+                android:textColorHint="@color/text_secondary"
+                android:textSize="14sp" />
+
+            <ImageView
+                android:id="@+id/ivSearchClear"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:background="@drawable/bg_library_inline_clear"
+                android:clickable="true"
+                android:focusable="true"
+                android:padding="6dp"
+                android:src="@android:drawable/ic_menu_close_clear_cancel"
+                android:visibility="gone"
+                app:tint="@color/text_secondary"
+                android:contentDescription="Limpiar" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#16FFFFFF" />
+
+    <!-- Filter chips -->
+    <HorizontalScrollView
+        android:id="@+id/hsvSearchFilters"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingHorizontal="16dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="6dp"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/chipAll"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_music_chip_active"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="8dp"
+                android:text="Todo"
+                android:textColor="#13254A"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/chipSongs"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/bg_music_chip_inactive"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="8dp"
+                android:text="Canciones"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/chipVideos"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/bg_music_chip_inactive"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="8dp"
+                android:text="Videos"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/chipPlaylists"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/bg_music_chip_inactive"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="8dp"
+                android:text="Playlists"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+    </HorizontalScrollView>
+
+    <!-- Status / loading text -->
+    <LinearLayout
+        android:id="@+id/llSearchState"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="20dp"
+        android:paddingVertical="6dp">
+
+        <ProgressBar
+            android:id="@+id/progressSearch"
+            android:layout_width="16dp"
+            android:layout_height="16dp"
+            android:layout_marginEnd="8dp"
+            android:indeterminateTint="@android:color/white"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/tvSearchState"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Escribe y presiona buscar."
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <!-- Search suggestions (recent) -->
+    <com.google.android.material.chip.ChipGroup
+        android:id="@+id/cgSearchSuggestions"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingHorizontal="16dp"
+        android:paddingBottom="8dp"
+        app:chipSpacingHorizontal="8dp"
+        app:chipSpacingVertical="4dp"
+        app:singleLine="false" />
+
+    <!-- Featured result -->
+    <LinearLayout
+        android:id="@+id/llFeaturedResult"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingHorizontal="20dp"
+        android:paddingTop="4dp"
+        android:paddingBottom="6dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <com.google.android.material.imageview.ShapeableImageView
+                android:id="@+id/ivFeaturedThumb"
+                android:layout_width="84dp"
+                android:layout_height="84dp"
+                android:background="@color/surface_high"
+                android:scaleType="centerCrop"
+                android:src="@drawable/ic_music"
+                app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Small" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tvFeaturedTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:fontFamily="@font/manrope_variable"
+                    android:maxLines="2"
+                    android:textAllCaps="true"
+                    android:textColor="@color/text_primary"
+                    android:textSize="20sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvFeaturedSubtitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:ellipsize="end"
+                    android:fontFamily="@font/inter_variable"
+                    android:maxLines="1"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="14sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnFeaturedPlay"
+                android:layout_width="0dp"
+                android:layout_height="46dp"
+                android:layout_weight="1"
+                android:fontFamily="@font/inter_variable"
+                android:text="Reproducir"
+                android:textAllCaps="false"
+                android:textColor="#111319"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                app:backgroundTint="@color/white"
+                app:cornerRadius="23dp"
+                app:icon="@drawable/ic_player_play"
+                app:iconGravity="textStart"
+                app:iconPadding="6dp"
+                app:iconTint="#111319" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnFeaturedShare"
+                android:layout_width="0dp"
+                android:layout_height="46dp"
+                android:layout_marginStart="10dp"
+                android:layout_weight="1"
+                android:fontFamily="@font/inter_variable"
+                android:text="Compartir"
+                android:textAllCaps="false"
+                android:textColor="@color/text_primary"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                app:backgroundTint="@android:color/transparent"
+                app:cornerRadius="23dp"
+                app:icon="@android:drawable/ic_menu_share"
+                app:iconGravity="textStart"
+                app:iconPadding="6dp"
+                app:iconTint="@color/text_primary"
+                app:rippleColor="#2FFFFFFF"
+                app:strokeColor="@color/surface_high"
+                app:strokeWidth="2dp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Results list -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rvSearchResults"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:paddingBottom="16dp" />
+
+</LinearLayout>

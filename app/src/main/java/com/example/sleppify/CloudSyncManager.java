@@ -42,15 +42,25 @@ public final class CloudSyncManager {
 
     public static final String PREFS_SETTINGS = "sleppify_settings";
     public static final String PREFS_AGENDA = "sleppify_agenda";
+    public static final String PREFS_STREAMING_CACHE = "streaming_cache";
     public static final String KEY_AI_SHIFT_ENABLED = "ai_shift_enabled";
     public static final String KEY_SMART_SUGGESTIONS_ENABLED = "smart_suggestions_enabled";
     public static final String KEY_DEFAULT_DURATION_MINUTES = "default_duration_minutes";
     public static final String KEY_NOTIFICATION_LEAD_MINUTES = "notification_lead_minutes";
     public static final String KEY_DAILY_SUMMARY_INTERVAL_HOURS = "daily_summary_interval_hours";
-    public static final String KEY_APPS_TURBO_MODE = "apps_stop_turbo_mode";
     public static final String KEY_APPS_SHOW_SYSTEM_INFO = "apps_show_system_info";
     public static final String KEY_APPS_WHITELIST_PACKAGES = "apps_whitelist_packages";
     public static final String KEY_PLAYER_VIDEO_MODE_ENABLED = "player_video_mode_enabled";
+    public static final String KEY_PLAYER_SHUFFLE_ENABLED = "player_shuffle_enabled";
+    public static final String KEY_PLAYER_REPEAT_MODE = "player_repeat_mode";
+    public static final String KEY_AMOLED_MODE_ENABLED = "amoled_mode_enabled";
+    public static final String KEY_OFFLINE_CROSSFADE_SECONDS = "offline_crossfade_seconds";
+    public static final String KEY_OFFLINE_DOWNLOAD_QUALITY = "offline_download_quality";
+    public static final String KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA = "offline_download_allow_mobile_data";
+    public static final String DOWNLOAD_QUALITY_LOW = "low";
+    public static final String DOWNLOAD_QUALITY_MEDIUM = "medium";
+    public static final String DOWNLOAD_QUALITY_HIGH = "high";
+    public static final String DOWNLOAD_QUALITY_VERY_HIGH = "very_high";
     public static final String KEY_AGENDA_JSON = "agenda_json";
 
     private static final String USERS_COLLECTION = "users";
@@ -58,11 +68,13 @@ public final class CloudSyncManager {
     private static final String DOC_EQ = "eq";
     private static final String DOC_SETTINGS = "settings";
     private static final String DOC_AGENDA = "agenda";
+    private static final String DOC_STREAMING = "streaming";
 
     private static final String FIELD_PREFS = "prefs";
     private static final String FIELD_UPDATED_AT = "updatedAt";
     private static final String FIELD_AGENDA_JSON = "agendaJson";
     private static final String OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME = "offline_playlist_queue";
+    private static final String OFFLINE_DOWNLOAD_MANUAL_TRACK_QUEUE_UNIQUE_NAME = "offline_manual_track_queue";
     private static final String LEGACY_SELECTED_PRESET = "selected_preset";
     private static final String LEGACY_ACTIVE_PROFILE_ID = "active_profile_id";
     private static final String LEGACY_DEVICE_PROFILE_PREFIX = "device_profile_";
@@ -71,6 +83,8 @@ public final class CloudSyncManager {
     private static final String LEGACY_AI_EQ_NEXT_AT_PREFIX = "ai_eq_next_at_";
     private static final String LEGACY_AI_EQ_LAST_PROCESS_SESSION_PREFIX = "ai_eq_last_process_session_";
     private static final String LEGACY_AI_EQ_DISMISSED_SESSION_PREFIX = "ai_eq_dismissed_session_";
+    private static final String LEGACY_AI_EQ_PENDING_JSON_PREFIX = "ai_eq_pending_json_";
+    private static final String DEBUG_EQ_PREFIX = "debug_";
     private static final String LEGACY_SCHEDULE_AI_NEXT_AT = "schedule_ai_next_at";
     private static final String LEGACY_SCHEDULE_AI_LAST_PROCESS_SESSION = "schedule_ai_last_process_session";
     private static final String LEGACY_APPS_AI_NEXT_AT = "apps_ai_next_at";
@@ -80,6 +94,16 @@ public final class CloudSyncManager {
     private static final String LEGACY_SCHEDULE_AI_OPEN_COUNT = "schedule_ai_open_count";
     private static final String LEGACY_APPS_AI_ACCEPT_COUNT = "apps_ai_accept_count";
     private static final String LEGACY_APPS_AI_DISMISS_COUNT = "apps_ai_dismiss_count";
+    private static final String LEGACY_APPS_TURBO_MODE = "apps_stop_turbo_mode";
+
+    private static final String FAVORITES_TRACKS_UPDATED_AT_KEY =
+            "playlist_tracks_updated_at_" + FavoritesPlaylistStore.PLAYLIST_ID;
+    private static final String FAVORITES_TRACKS_DATA_KEY =
+            "playlist_tracks_data_" + FavoritesPlaylistStore.PLAYLIST_ID;
+    private static final String FAVORITES_TRACKS_FULL_CACHE_KEY =
+            "playlist_tracks_cache_full_" + FavoritesPlaylistStore.PLAYLIST_ID;
+    private static final String FAVORITES_OFFLINE_COMPLETE_KEY =
+            "playlist_offline_complete_" + FavoritesPlaylistStore.PLAYLIST_ID;
 
     private static final long DEBOUNCE_MS = 650L;
     private static final long SYNC_STUCK_TIMEOUT_MS = 16000L;
@@ -96,6 +120,7 @@ public final class CloudSyncManager {
     private final SharedPreferences eqPrefs;
     private final SharedPreferences settingsPrefs;
     private final SharedPreferences agendaPrefs;
+    private final SharedPreferences streamingCachePrefs;
     private final Handler handler = new Handler(Looper.getMainLooper());
 
     @Nullable
@@ -105,6 +130,7 @@ public final class CloudSyncManager {
     private boolean suppressEqSync;
     private boolean suppressSettingsSync;
     private boolean suppressAgendaSync;
+    private boolean suppressStreamingSync;
     private boolean initialHydrationInProgress;
 
     private final Object syncStateLock = new Object();
@@ -119,17 +145,22 @@ public final class CloudSyncManager {
     private SharedPreferences.OnSharedPreferenceChangeListener settingsListener;
     @Nullable
     private SharedPreferences.OnSharedPreferenceChangeListener agendaListener;
+    @Nullable
+    private SharedPreferences.OnSharedPreferenceChangeListener streamingListener;
 
     private final Runnable eqSyncRunnable = this::uploadEqPreferences;
     private final Runnable settingsSyncRunnable = this::uploadSettingsPreferences;
     private final Runnable agendaSyncRunnable = this::uploadAgendaJson;
+    private final Runnable streamingSyncRunnable = this::uploadStreamingFavoritesPreferences;
     private final Runnable eqUploadRetryRunnable = this::uploadEqPreferences;
     private final Runnable settingsUploadRetryRunnable = this::uploadSettingsPreferences;
     private final Runnable agendaUploadRetryRunnable = this::uploadAgendaJson;
+    private final Runnable streamingUploadRetryRunnable = this::uploadStreamingFavoritesPreferences;
 
     private int eqUploadRetryAttempt;
     private int settingsUploadRetryAttempt;
     private int agendaUploadRetryAttempt;
+    private int streamingUploadRetryAttempt;
 
     private CloudSyncManager(@NonNull Context context) {
         appContext = context.getApplicationContext();
@@ -137,6 +168,7 @@ public final class CloudSyncManager {
         eqPrefs = appContext.getSharedPreferences(AudioEffectsService.PREFS_NAME, Context.MODE_PRIVATE);
         settingsPrefs = appContext.getSharedPreferences(PREFS_SETTINGS, Context.MODE_PRIVATE);
         agendaPrefs = appContext.getSharedPreferences(PREFS_AGENDA, Context.MODE_PRIVATE);
+        streamingCachePrefs = appContext.getSharedPreferences(PREFS_STREAMING_CACHE, Context.MODE_PRIVATE);
         ensureEqDefaults();
         ensureSettingsDefaults();
         ensureAgendaDefaults();
@@ -218,12 +250,6 @@ public final class CloudSyncManager {
             }
             editor.putInt(KEY_DAILY_SUMMARY_INTERVAL_HOURS, 2);
         }
-        if (!settingsPrefs.contains(KEY_APPS_TURBO_MODE)) {
-            if (editor == null) {
-                editor = settingsPrefs.edit();
-            }
-            editor.putBoolean(KEY_APPS_TURBO_MODE, false);
-        }
         if (!settingsPrefs.contains(KEY_APPS_SHOW_SYSTEM_INFO)) {
             if (editor == null) {
                 editor = settingsPrefs.edit();
@@ -242,9 +268,47 @@ public final class CloudSyncManager {
             }
             editor.putBoolean(KEY_PLAYER_VIDEO_MODE_ENABLED, false);
         }
+        if (!settingsPrefs.contains(KEY_PLAYER_SHUFFLE_ENABLED)) {
+            if (editor == null) {
+                editor = settingsPrefs.edit();
+            }
+            editor.putBoolean(KEY_PLAYER_SHUFFLE_ENABLED, false);
+        }
+        if (!settingsPrefs.contains(KEY_PLAYER_REPEAT_MODE)) {
+            if (editor == null) {
+                editor = settingsPrefs.edit();
+            }
+            editor.putInt(KEY_PLAYER_REPEAT_MODE, 1);
+        }
+        if (!settingsPrefs.contains(KEY_AMOLED_MODE_ENABLED)) {
+            if (editor == null) {
+                editor = settingsPrefs.edit();
+            }
+            editor.putBoolean(KEY_AMOLED_MODE_ENABLED, false);
+        }
+        if (!settingsPrefs.contains(KEY_OFFLINE_CROSSFADE_SECONDS)) {
+            if (editor == null) {
+                editor = settingsPrefs.edit();
+            }
+            editor.putInt(KEY_OFFLINE_CROSSFADE_SECONDS, 0);
+        }
+        if (!settingsPrefs.contains(KEY_OFFLINE_DOWNLOAD_QUALITY)) {
+            if (editor == null) {
+                editor = settingsPrefs.edit();
+            }
+            editor.putString(KEY_OFFLINE_DOWNLOAD_QUALITY, DOWNLOAD_QUALITY_MEDIUM);
+        }
+        if (!settingsPrefs.contains(KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA)) {
+            if (editor == null) {
+                editor = settingsPrefs.edit();
+            }
+            editor.putBoolean(KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false);
+        }
         if (editor != null) {
             editor.apply();
         }
+
+        pruneDeprecatedSettingsKeys();
     }
 
     private void ensureAgendaDefaults() {
@@ -282,9 +346,21 @@ public final class CloudSyncManager {
             handler.postDelayed(agendaSyncRunnable, DEBOUNCE_MS);
         };
 
+        streamingListener = (sharedPreferences, key) -> {
+            if (suppressStreamingSync || initialHydrationInProgress || TextUtils.isEmpty(activeUserId)) {
+                return;
+            }
+            if (!isStreamingFavoritesKey(key)) {
+                return;
+            }
+            handler.removeCallbacks(streamingSyncRunnable);
+            handler.postDelayed(streamingSyncRunnable, DEBOUNCE_MS);
+        };
+
         eqPrefs.registerOnSharedPreferenceChangeListener(eqListener);
         settingsPrefs.registerOnSharedPreferenceChangeListener(settingsListener);
         agendaPrefs.registerOnSharedPreferenceChangeListener(agendaListener);
+        streamingCachePrefs.registerOnSharedPreferenceChangeListener(streamingListener);
         listenersRegistered = true;
     }
 
@@ -306,6 +382,7 @@ public final class CloudSyncManager {
         handler.removeCallbacks(eqSyncRunnable);
         handler.removeCallbacks(settingsSyncRunnable);
         handler.removeCallbacks(agendaSyncRunnable);
+        handler.removeCallbacks(streamingSyncRunnable);
         clearUploadRetryCallbacks();
         resetUploadRetryAttempts();
         initialHydrationInProgress = true;
@@ -335,6 +412,7 @@ public final class CloudSyncManager {
         handler.removeCallbacks(eqSyncRunnable);
         handler.removeCallbacks(settingsSyncRunnable);
         handler.removeCallbacks(agendaSyncRunnable);
+        handler.removeCallbacks(streamingSyncRunnable);
         clearUploadRetryCallbacks();
         resetUploadRetryAttempts();
         initialHydrationInProgress = true;
@@ -362,7 +440,7 @@ public final class CloudSyncManager {
             return;
         }
 
-        PendingSync pending = new PendingSync(3, (success, message) -> {
+        PendingSync pending = new PendingSync(4, (success, message) -> {
             if (!TextUtils.equals(activeUserId, userId)) {
                 return;
             }
@@ -387,6 +465,7 @@ public final class CloudSyncManager {
         syncEqFromCloudThenLocal(pending);
         syncSettingsFromCloudThenLocal(pending);
         syncAgendaFromCloudThenLocal(pending);
+        syncStreamingFavoritesFromCloudThenLocal(pending);
     }
 
     public void onUserSignedOut() {
@@ -395,6 +474,7 @@ public final class CloudSyncManager {
         handler.removeCallbacks(eqSyncRunnable);
         handler.removeCallbacks(settingsSyncRunnable);
         handler.removeCallbacks(agendaSyncRunnable);
+        handler.removeCallbacks(streamingSyncRunnable);
         clearUploadRetryCallbacks();
         resetUploadRetryAttempts();
         pauseUserScopedBackgroundWork();
@@ -406,6 +486,8 @@ public final class CloudSyncManager {
             WorkManager manager = WorkManager.getInstance(appContext);
             manager.cancelUniqueWork(OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME);
             manager.cancelAllWorkByTag(OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME);
+            manager.cancelUniqueWork(OFFLINE_DOWNLOAD_MANUAL_TRACK_QUEUE_UNIQUE_NAME);
+            manager.cancelAllWorkByTag(OFFLINE_DOWNLOAD_MANUAL_TRACK_QUEUE_UNIQUE_NAME);
         } catch (Throwable ignored) {
         }
     }
@@ -428,6 +510,7 @@ public final class CloudSyncManager {
                     fallbackBatch.delete(eqDoc(userId));
                     fallbackBatch.delete(settingsDoc(userId));
                     fallbackBatch.delete(agendaDoc(userId));
+                    fallbackBatch.delete(streamingDoc(userId));
                     fallbackBatch.delete(userScope(userId));
                     fallbackBatch.commit()
                             .addOnSuccessListener(unused -> deleteUserDocBestEffort(userId, callback))
@@ -455,6 +538,7 @@ public final class CloudSyncManager {
             batch.delete(eqDoc(userId));
             batch.delete(settingsDoc(userId));
             batch.delete(agendaDoc(userId));
+            batch.delete(streamingDoc(userId));
             batch.delete(userScope(userId));
         }
 
@@ -490,15 +574,18 @@ public final class CloudSyncManager {
         suppressEqSync = true;
         suppressSettingsSync = true;
         suppressAgendaSync = true;
+        suppressStreamingSync = true;
 
         try {
             eqPrefs.edit().clear().apply();
             settingsPrefs.edit().clear().apply();
             agendaPrefs.edit().clear().apply();
+            streamingCachePrefs.edit().clear().apply();
         } finally {
             suppressEqSync = false;
             suppressSettingsSync = false;
             suppressAgendaSync = false;
+            suppressStreamingSync = false;
         }
 
         ensureEqDefaults();
@@ -765,6 +852,31 @@ public final class CloudSyncManager {
                 });
     }
 
+    private void syncStreamingFavoritesFromCloudThenLocal(@NonNull PendingSync pending) {
+        String uid = activeUserId;
+        if (TextUtils.isEmpty(uid)) {
+            pending.finish(true, null);
+            return;
+        }
+
+        beginNetworkSync();
+
+        streamingDoc(uid).get(Source.SERVER)
+                .addOnSuccessListener(snapshot -> {
+                    handleStreamingSyncSnapshot(snapshot, true, null, pending);
+                })
+                .addOnFailureListener(serverError -> {
+                    streamingDoc(uid).get(Source.CACHE)
+                            .addOnSuccessListener(snapshot ->
+                                    handleStreamingSyncSnapshot(snapshot, false, serverError, pending)
+                            )
+                            .addOnFailureListener(cacheError -> {
+                                endNetworkSync();
+                                pending.finish(false, toUserFacingSyncError(serverError));
+                            });
+                });
+    }
+
     private void handleEqSyncSnapshot(
             @NonNull DocumentSnapshot snapshot,
             boolean fromServer,
@@ -785,6 +897,9 @@ public final class CloudSyncManager {
 
         if (applyEncodedPrefsFromSnapshot(eqPrefs, snapshot)) {
             ensureEqDefaults();
+            if (fromServer && !TextUtils.isEmpty(activeUserId)) {
+                uploadEqPreferences();
+            }
             endNetworkSync();
             pending.finish(true, null);
             return;
@@ -818,7 +933,11 @@ public final class CloudSyncManager {
 
         if (applyEncodedPrefsFromSnapshot(settingsPrefs, snapshot)) {
             ensureSettingsDefaults();
+            pruneDeprecatedSettingsKeys();
             endNetworkSync();
+            if (fromServer && !TextUtils.isEmpty(activeUserId)) {
+                uploadSettingsPreferences();
+            }
             pending.finish(true, null);
             return;
         }
@@ -874,6 +993,38 @@ public final class CloudSyncManager {
 
         endNetworkSync();
         pending.finish(false, toUserFacingSyncError(serverError));
+    }
+
+    private void handleStreamingSyncSnapshot(
+            @NonNull DocumentSnapshot snapshot,
+            boolean fromServer,
+            @Nullable Throwable serverError,
+            @NonNull PendingSync pending
+    ) {
+        if (!snapshot.exists()) {
+            if (fromServer) {
+                uploadStreamingFavoritesPreferences();
+                endNetworkSync();
+                pending.finish(true, null);
+            } else {
+                endNetworkSync();
+                pending.finish(false, toUserFacingSyncError(serverError));
+            }
+            return;
+        }
+
+        if (applyStreamingFavoritesFromSnapshot(snapshot)) {
+            endNetworkSync();
+            pending.finish(true, null);
+            return;
+        }
+
+        endNetworkSync();
+        if (fromServer) {
+            pending.finish(false, "No se pudo leer favoritos de streaming en la nube.");
+        } else {
+            pending.finish(false, toUserFacingSyncError(serverError));
+        }
     }
 
     @NonNull
@@ -937,9 +1088,11 @@ public final class CloudSyncManager {
         handler.removeCallbacks(eqSyncRunnable);
         handler.removeCallbacks(settingsSyncRunnable);
         handler.removeCallbacks(agendaSyncRunnable);
+        handler.removeCallbacks(streamingSyncRunnable);
         uploadEqPreferences();
         uploadSettingsPreferences();
         uploadAgendaJson();
+        uploadStreamingFavoritesPreferences();
     }
 
     private void uploadEqPreferences() {
@@ -949,7 +1102,7 @@ public final class CloudSyncManager {
         }
 
         Map<String, Object> payload = new HashMap<>();
-        payload.put(FIELD_PREFS, encodePreferences(eqPrefs));
+        payload.put(FIELD_PREFS, encodeEqPreferences());
         payload.put(FIELD_UPDATED_AT, FieldValue.serverTimestamp());
         beginNetworkSync();
         eqDoc(uid).set(payload)
@@ -972,7 +1125,7 @@ public final class CloudSyncManager {
         }
 
         Map<String, Object> payload = new HashMap<>();
-        payload.put(FIELD_PREFS, encodePreferences(settingsPrefs));
+        payload.put(FIELD_PREFS, encodeSettingsPreferences());
         payload.put(FIELD_UPDATED_AT, FieldValue.serverTimestamp());
         beginNetworkSync();
         settingsDoc(uid).set(payload)
@@ -986,6 +1139,29 @@ public final class CloudSyncManager {
                 Log.w(TAG, "Fallo subiendo preferencias de ajustes", e);
                 scheduleSettingsUploadRetryIfNeeded(e);
             });
+    }
+
+    private void uploadStreamingFavoritesPreferences() {
+        String uid = activeUserId;
+        if (TextUtils.isEmpty(uid)) {
+            return;
+        }
+
+        Map<String, Object> payload = new HashMap<>();
+        payload.put(FIELD_PREFS, encodeStreamingFavoritesPreferences());
+        payload.put(FIELD_UPDATED_AT, FieldValue.serverTimestamp());
+        beginNetworkSync();
+        streamingDoc(uid).set(payload)
+                .addOnSuccessListener(unused -> {
+                    streamingUploadRetryAttempt = 0;
+                    handler.removeCallbacks(streamingUploadRetryRunnable);
+                    endNetworkSync();
+                })
+                .addOnFailureListener(e -> {
+                    endNetworkSync();
+                    Log.w(TAG, "Fallo subiendo favoritos de streaming", e);
+                    scheduleStreamingUploadRetryIfNeeded(e);
+                });
     }
 
     private void uploadAgendaJson() {
@@ -1017,12 +1193,14 @@ public final class CloudSyncManager {
         handler.removeCallbacks(eqUploadRetryRunnable);
         handler.removeCallbacks(settingsUploadRetryRunnable);
         handler.removeCallbacks(agendaUploadRetryRunnable);
+        handler.removeCallbacks(streamingUploadRetryRunnable);
     }
 
     private void resetUploadRetryAttempts() {
         eqUploadRetryAttempt = 0;
         settingsUploadRetryAttempt = 0;
         agendaUploadRetryAttempt = 0;
+        streamingUploadRetryAttempt = 0;
     }
 
     private void scheduleEqUploadRetryIfNeeded(@Nullable Throwable throwable) {
@@ -1053,6 +1231,16 @@ public final class CloudSyncManager {
         long delayMs = computeUploadRetryDelayMs(agendaUploadRetryAttempt);
         handler.removeCallbacks(agendaUploadRetryRunnable);
         handler.postDelayed(agendaUploadRetryRunnable, delayMs);
+    }
+
+    private void scheduleStreamingUploadRetryIfNeeded(@Nullable Throwable throwable) {
+        if (!shouldRetryUpload(throwable) || TextUtils.isEmpty(activeUserId)) {
+            return;
+        }
+        streamingUploadRetryAttempt = Math.min(streamingUploadRetryAttempt + 1, UPLOAD_RETRY_MAX_ATTEMPTS);
+        long delayMs = computeUploadRetryDelayMs(streamingUploadRetryAttempt);
+        handler.removeCallbacks(streamingUploadRetryRunnable);
+        handler.postDelayed(streamingUploadRetryRunnable, delayMs);
     }
 
     private long computeUploadRetryDelayMs(int attempt) {
@@ -1120,6 +1308,34 @@ public final class CloudSyncManager {
             } else if (agendaBucket) {
                 suppressAgendaSync = false;
             }
+        }
+    }
+
+    private boolean applyStreamingFavoritesFromSnapshot(@NonNull DocumentSnapshot snapshot) {
+        Map<String, Object> encodedPrefs = extractPrefsMap(snapshot);
+        if (encodedPrefs == null) {
+            return false;
+        }
+
+        suppressStreamingSync = true;
+        try {
+            SharedPreferences.Editor editor = streamingCachePrefs.edit();
+            editor.remove(FAVORITES_TRACKS_UPDATED_AT_KEY);
+            editor.remove(FAVORITES_TRACKS_DATA_KEY);
+            editor.remove(FAVORITES_TRACKS_FULL_CACHE_KEY);
+            editor.remove(FAVORITES_OFFLINE_COMPLETE_KEY);
+
+            for (Map.Entry<String, Object> entry : encodedPrefs.entrySet()) {
+                String key = entry.getKey();
+                if (!isStreamingFavoritesKey(key)) {
+                    continue;
+                }
+                decodePreferenceEntry(key, entry.getValue(), editor);
+            }
+            editor.apply();
+            return true;
+        } finally {
+            suppressStreamingSync = false;
         }
     }
 
@@ -1241,6 +1457,138 @@ public final class CloudSyncManager {
         }
 
         return encoded;
+    }
+
+    @NonNull
+    private Map<String, Object> encodeEqPreferences() {
+        Map<String, Object> encoded = encodePreferences(eqPrefs);
+        Map<String, Object> filtered = new HashMap<>();
+        for (Map.Entry<String, Object> entry : encoded.entrySet()) {
+            if (!isDeprecatedEqSyncKey(entry.getKey())) {
+                filtered.put(entry.getKey(), entry.getValue());
+            }
+        }
+        return filtered;
+    }
+
+    @NonNull
+    private Map<String, Object> encodeSettingsPreferences() {
+        Map<String, Object> encoded = encodePreferences(settingsPrefs);
+        Map<String, Object> filtered = new HashMap<>();
+        for (Map.Entry<String, Object> entry : encoded.entrySet()) {
+            if (!isDeprecatedSettingsKey(entry.getKey())) {
+                filtered.put(entry.getKey(), entry.getValue());
+            }
+        }
+        return filtered;
+    }
+
+    @NonNull
+    private Map<String, Object> encodeStreamingFavoritesPreferences() {
+        Map<String, ?> all = streamingCachePrefs.getAll();
+        Map<String, Object> encoded = new HashMap<>();
+
+        for (Map.Entry<String, ?> entry : all.entrySet()) {
+            String key = entry.getKey();
+            if (!isStreamingFavoritesKey(key)) {
+                continue;
+            }
+
+            Object value = entry.getValue();
+            if (value == null) {
+                continue;
+            }
+
+            Map<String, Object> wrapper = new HashMap<>();
+            if (value instanceof Boolean) {
+                wrapper.put("type", "bool");
+                wrapper.put("value", value);
+            } else if (value instanceof Integer) {
+                wrapper.put("type", "int");
+                wrapper.put("value", ((Integer) value).longValue());
+            } else if (value instanceof Long) {
+                wrapper.put("type", "long");
+                wrapper.put("value", value);
+            } else if (value instanceof Float) {
+                wrapper.put("type", "float");
+                wrapper.put("value", ((Float) value).doubleValue());
+            } else if (value instanceof String) {
+                wrapper.put("type", "string");
+                wrapper.put("value", value);
+            } else if (value instanceof java.util.Set) {
+                @SuppressWarnings("unchecked")
+                java.util.Set<String> set = (java.util.Set<String>) value;
+                wrapper.put("type", "string_set");
+                wrapper.put("value", new ArrayList<>(set));
+            } else {
+                continue;
+            }
+            encoded.put(key, wrapper);
+        }
+
+        return encoded;
+    }
+
+    private void pruneDeprecatedSettingsKeys() {
+        Map<String, ?> all = settingsPrefs.getAll();
+        if (all.isEmpty()) {
+            return;
+        }
+
+        SharedPreferences.Editor editor = null;
+        for (String key : all.keySet()) {
+            if (!isDeprecatedSettingsKey(key)) {
+                continue;
+            }
+            if (editor == null) {
+                editor = settingsPrefs.edit();
+            }
+            editor.remove(key);
+        }
+
+        if (editor == null) {
+            return;
+        }
+
+        boolean previousSuppress = suppressSettingsSync;
+        suppressSettingsSync = true;
+        try {
+            editor.apply();
+        } finally {
+            suppressSettingsSync = previousSuppress;
+        }
+    }
+
+    private boolean isDeprecatedSettingsKey(@Nullable String key) {
+        if (TextUtils.isEmpty(key)) {
+            return false;
+        }
+        if (LEGACY_APPS_TURBO_MODE.equals(key)) {
+            return true;
+        }
+        return key.startsWith("schedule_ai_") || key.startsWith("apps_ai_");
+    }
+
+    private boolean isStreamingFavoritesKey(@Nullable String key) {
+        if (TextUtils.isEmpty(key)) {
+            return false;
+        }
+        return FAVORITES_TRACKS_UPDATED_AT_KEY.equals(key)
+                || FAVORITES_TRACKS_DATA_KEY.equals(key)
+                || FAVORITES_TRACKS_FULL_CACHE_KEY.equals(key)
+                || FAVORITES_OFFLINE_COMPLETE_KEY.equals(key);
+    }
+
+    private boolean isDeprecatedEqSyncKey(@Nullable String key) {
+        if (TextUtils.isEmpty(key)) {
+            return false;
+        }
+
+        return key.startsWith(DEBUG_EQ_PREFIX)
+                || key.startsWith(LEGACY_AI_EQ_NEXT_AT_PREFIX)
+                || key.startsWith(LEGACY_AI_EQ_LAST_PROCESS_SESSION_PREFIX)
+                || key.startsWith(LEGACY_AI_EQ_DISMISSED_SESSION_PREFIX)
+                || key.startsWith(LEGACY_AI_EQ_PENDING_JSON_PREFIX);
     }
 
     private int decodePreferences(
@@ -1425,6 +1773,7 @@ public final class CloudSyncManager {
                 || KEY_DEFAULT_DURATION_MINUTES.equals(key)
                 || KEY_NOTIFICATION_LEAD_MINUTES.equals(key)
                 || KEY_DAILY_SUMMARY_INTERVAL_HOURS.equals(key)
+                || KEY_OFFLINE_CROSSFADE_SECONDS.equals(key)
                 || LEGACY_SCHEDULE_AI_ACCEPT_COUNT.equals(key)
                 || LEGACY_SCHEDULE_AI_DISMISS_COUNT.equals(key)
                 || LEGACY_SCHEDULE_AI_OPEN_COUNT.equals(key)
@@ -1477,6 +1826,14 @@ public final class CloudSyncManager {
                 .document(uid)
                 .collection(APP_SCOPE_COLLECTION)
                 .document(DOC_AGENDA);
+    }
+
+    @NonNull
+    private DocumentReference streamingDoc(@NonNull String uid) {
+        return firestore.collection(USERS_COLLECTION)
+                .document(uid)
+                .collection(APP_SCOPE_COLLECTION)
+                .document(DOC_STREAMING);
     }
 
     private static final class PendingSync {

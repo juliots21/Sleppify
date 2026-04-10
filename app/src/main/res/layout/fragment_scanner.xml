@@ -1,17 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/scannerRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#05060A"
     android:paddingBottom="12dp">
+
+    <androidx.constraintlayout.widget.Guideline
+        android:id="@+id/guideScannerControlsStart"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        app:layout_constraintGuide_percent="0.91" />
 
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/scanArea"
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:background="#120E171F"
-        app:layout_constraintBottom_toTopOf="@id/btnFlashlight"
+        app:layout_constraintBottom_toTopOf="@id/guideScannerControlsStart"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent">
@@ -73,7 +81,6 @@
         android:id="@+id/btnFlashlight"
         android:layout_width="wrap_content"
         android:layout_height="48dp"
-        android:layout_marginBottom="18dp"
         android:enabled="false"
         android:text="Encender la linterna"
         android:textAllCaps="false"
@@ -86,6 +93,7 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/scanArea" />
+        app:layout_constraintTop_toTopOf="@id/guideScannerControlsStart"
+        app:layout_constraintVertical_bias="0.5" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

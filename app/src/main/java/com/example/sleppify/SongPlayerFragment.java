@@ -32,7 +32,6 @@ import android.view.ViewGroup;
 import android.view.ViewParent;
 import android.widget.ImageButton;
 import android.widget.ImageView;
-import android.widget.ProgressBar;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.FrameLayout;
@@ -117,6 +116,8 @@ public class SongPlayerFragment extends Fragment {
     private static final String TAG_MODULE_MUSIC = "module_music";
     private static final String MEDIA_NOTIFICATION_CHANNEL_ID = "sleppify_media_playback";
     private static final int MEDIA_NOTIFICATION_ID = 11031;
+    private static final int MEDIA_NOTIFICATION_ARTWORK_MAX_SIZE_PX = 1024;
+    private static final int MEDIA_SESSION_ARTWORK_MAX_SIZE_PX = 1400;
     private static final int REPEAT_MODE_OFF = 0;
     private static final int REPEAT_MODE_ALL = 1;
     private static final int REPEAT_MODE_ONE = 2;
@@ -131,6 +132,8 @@ public class SongPlayerFragment extends Fragment {
     private static final int CONNECT_TIMEOUT_MS = 14000;
     private static final int READ_TIMEOUT_MS = 22000;
     private static final long SOURCE_PREPARE_TIMEOUT_MS = 30000L;
+    private static final long YOUTUBE_INIT_TIMEOUT_MS = 8000L;
+    private static final long SOCIAL_STATS_FETCH_DEFER_MS = 1800L;
     private static final long PLAYBACK_BOOTSTRAP_GRACE_MS = 1800L;
     private static final int MAX_PLAYBACK_SOURCE_RETRY = 1;
     private static final long PLAYBACK_SOURCE_RETRY_DELAY_MS = 350L;
@@ -138,9 +141,18 @@ public class SongPlayerFragment extends Fragment {
     private static final String AUDIUS_API_BASE_URL = "https://discoveryprovider.audius.co/v1";
     private static final String AUDIUS_APP_NAME = "sleppify";
     private static final int AUDIUS_SEARCH_LIMIT = 6;
+    private static final int OFFLINE_CROSSFADE_MAX_SECONDS = 12;
+    private static final int OFFLINE_CROSSFADE_DEFAULT_SECONDS = 0;
+    private static final int OFFLINE_CROSSFADE_FIRST_STEP_MS = 500;
+    private static final int OFFLINE_CROSSFADE_STEP_MS = 40;
     private static final int PLAYER_HERO_DEFAULT_HEIGHT_DP = 370;
     private static final int PLAYER_HERO_MIN_HEIGHT_DP = 260;
     private static final int PLAYER_HERO_MAX_HEIGHT_DP = 560;
+    private static final long PLAYER_BACKDROP_FADE_IN_DURATION_MS = 500L;
+    private static final long PLAYER_BACKDROP_DEFER_LOAD_MS = 110L;
+    private static final int NEXT_UP_FIRST_BATCH_SIZE = 14;
+    private static final int NEXT_UP_BATCH_SIZE = 24;
+    private static final long NEXT_UP_BATCH_DELAY_MS = 32L;
 
     private final List<PlayerTrack> tracks = new ArrayList<>();
     private final List<PlayerTrack> nextUpTracks = new ArrayList<>();
@@ -155,6 +167,7 @@ public class SongPlayerFragment extends Fragment {
     private TextView tvActionLikeCount;
     private TextView tvActionDislikeCount;
     private TextView tvActionCommentCount;
+    private TextView tvActionFavoriteLabel;
     private TextView tvCurrentTime;
     private TextView tvTotalTime;
     private SeekBar sbPlaybackProgress;
@@ -168,6 +181,8 @@ public class SongPlayerFragment extends Fragment {
     private View actionLike;
     private View actionDislike;
     private View actionComments;
+    private View actionFavorite;
+    private ImageView ivActionFavoriteIcon;
 
     private NextUpAdapter nextUpAdapter;
     @Nullable
@@ -181,6 +196,8 @@ public class SongPlayerFragment extends Fragment {
     private boolean youtubePlayerInitStarted;
     @Nullable
     private MediaPlayer localMediaPlayer;
+    @Nullable
+    private MediaPlayer localCrossfadeIncomingPlayer;
     @Nullable
     private MediaSessionCompat mediaSession;
     @Nullable
@@ -203,7 +220,7 @@ public class SongPlayerFragment extends Fragment {
     private ActivityResultLauncher<String> notificationPermissionLauncher;
     private boolean notificationPermissionRequested;
     private boolean shuffleEnabled = false;
-    private int repeatMode = REPEAT_MODE_OFF;
+    private int repeatMode = REPEAT_MODE_ALL;
     private boolean collapsingToMiniMode;
     private long lastHandledEndedAtMs = 0L;
     @NonNull
@@ -216,6 +233,7 @@ public class SongPlayerFragment extends Fragment {
     private String returnTargetTag = TAG_PLAYLIST_DETAIL;
     private boolean usingOfflineSource = false;
     private boolean usingYoutubeFallbackSource = false;
+    private boolean youtubePlaybackActive = false;
     private final Handler localProgressHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService streamResolverExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService socialStatsExecutor = Executors.newSingleThreadExecutor();
@@ -224,7 +242,14 @@ public class SongPlayerFragment extends Fragment {
     private Future<?> pendingStreamResolverFuture;
     @Nullable
     private Runnable sourcePrepareTimeoutRunnable;
+    @Nullable
+    private Runnable youtubeInitTimeoutRunnable;
     private boolean localSourcePreparing = false;
+    private boolean localCrossfadeInProgress = false;
+    private int localCrossfadeTargetIndex = -1;
+    private long localCrossfadeStartedAtMs = 0L;
+    @Nullable
+    private Runnable localCrossfadeTicker;
     private long lastPlaybackStartRequestAtMs = 0L;
     private long activePlaybackRequestToken = 0L;
     @Nullable
@@ -247,13 +272,33 @@ public class SongPlayerFragment extends Fragment {
     private final Set<String> audiusFallbackAttemptedVideoIds = new HashSet<>();
     @NonNull
     private String pendingSocialStatsVideoId = "";
+    @Nullable
+    private Runnable pendingSocialStatsFetchRunnable;
     @NonNull
     private String embedRetryVideoId = "";
     private int embedRetryCount = 0;
     @Nullable
     private CustomTarget<Bitmap> playerCoverTarget;
+    @Nullable
+    private CustomTarget<Drawable> playerBackdropTarget;
+    @Nullable
+    private Runnable deferredBackdropLoadRunnable;
+    @Nullable
+    private Runnable nextUpRevealRunnable;
+    private int nextUpRevealCursor = 0;
     @NonNull
     private String activeCoverVideoId = "";
+    @NonNull
+    private String activeBackdropVideoId = "";
+    private boolean playerArtworkBootstrapPending = true;
+    @Nullable
+    private Bitmap mediaNotificationLargeIcon;
+    @NonNull
+    private String mediaNotificationLargeIconVideoId = "";
+    @Nullable
+    private Bitmap mediaSessionArtwork;
+    @NonNull
+    private String mediaSessionArtworkVideoId = "";
     private final Runnable localProgressTicker = new Runnable() {
         @Override
         public void run() {
@@ -264,6 +309,8 @@ public class SongPlayerFragment extends Fragment {
             try {
                 int positionMs = Math.max(0, localMediaPlayer.getCurrentPosition());
                 int durationMs = Math.max(1, localMediaPlayer.getDuration());
+
+                maybeStartOfflineCrossfade(positionMs, durationMs);
 
                 currentSeconds = positionMs / 1000;
                 totalSeconds = Math.max(1, durationMs / 1000);
@@ -283,7 +330,7 @@ public class SongPlayerFragment extends Fragment {
             } catch (Exception ignored) {
             }
 
-            localProgressHandler.postDelayed(this, 400L);
+            localProgressHandler.postDelayed(this, 200L);
         }
     };
 
@@ -350,6 +397,7 @@ public class SongPlayerFragment extends Fragment {
         ivPlayerCover = view.findViewById(R.id.ivPlayerCover);
         ivPlayerBackdrop = view.findViewById(R.id.ivPlayerBackdrop);
         flPlayerHero = view.findViewById(R.id.flPlayerHero);
+        playerArtworkBootstrapPending = true;
         youtubePlayerView = view.findViewById(R.id.youtubePlayerView);
         if (youtubePlayerView != null) {
             youtubePlayerView.setVisibility(View.VISIBLE);
@@ -361,9 +409,12 @@ public class SongPlayerFragment extends Fragment {
         actionLike = view.findViewById(R.id.actionLike);
         actionDislike = view.findViewById(R.id.actionDislike);
         actionComments = view.findViewById(R.id.actionComments);
+        actionFavorite = view.findViewById(R.id.actionFavorite);
         tvActionLikeCount = view.findViewById(R.id.tvActionLikeCount);
         tvActionDislikeCount = view.findViewById(R.id.tvActionDislikeCount);
         tvActionCommentCount = view.findViewById(R.id.tvActionCommentCount);
+        tvActionFavoriteLabel = view.findViewById(R.id.tvActionFavoriteLabel);
+        ivActionFavoriteIcon = view.findViewById(R.id.ivActionFavoriteIcon);
         tvCurrentTime = view.findViewById(R.id.tvCurrentTime);
         tvTotalTime = view.findViewById(R.id.tvTotalTime);
         sbPlaybackProgress = view.findViewById(R.id.sbPlaybackProgress);
@@ -374,9 +425,11 @@ public class SongPlayerFragment extends Fragment {
         vPlayerRepeatIndicator = view.findViewById(R.id.vPlayerRepeatIndicator);
         btnPlayPause = view.findViewById(R.id.btnPlayPause);
         rvNextUp = view.findViewById(R.id.rvNextUp);
+        rvNextUp.setVisibility(View.GONE);
 
         playerStatePrefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
         settingsPrefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Activity.MODE_PRIVATE);
+        loadPlaybackModesFromSettings();
         refreshVideoModePreference();
         setupCoverTapUnlockGesture();
         setupSocialActions();
@@ -386,6 +439,8 @@ public class SongPlayerFragment extends Fragment {
         setupMediaSession();
 
         rvNextUp.setLayoutManager(new LinearLayoutManager(requireContext()));
+        rvNextUp.setHasFixedSize(true);
+        rvNextUp.setItemAnimator(null);
         nextUpAdapter = new NextUpAdapter(nextUpTracks, position -> {
             int selectedPosition = position;
             if (selectedPosition >= 0 && selectedPosition < tracks.size()) {
@@ -513,7 +568,11 @@ public class SongPlayerFragment extends Fragment {
 
         currentIndex = Math.max(0, Math.min(currentIndex, tracks.size() - 1));
         bindCurrentTrack(true);
-        playCurrentTrack();
+        localProgressHandler.postDelayed(() -> {
+            if (!isAdded()) return;
+            prewarmYouTubePlayerIfNeeded();
+            playCurrentTrack();
+        }, 320L);
 
         view.findViewById(R.id.btnPrev).setOnClickListener(v -> moveTrack(-1));
         view.findViewById(R.id.btnNext).setOnClickListener(v -> moveTrack(1));
@@ -713,7 +772,7 @@ public class SongPlayerFragment extends Fragment {
             }
         }
         if (usingYoutubeFallbackSource) {
-            return playerReady && youTubePlayer != null;
+            return youtubePlaybackActive;
         }
         return false;
     }
@@ -724,14 +783,20 @@ public class SongPlayerFragment extends Fragment {
         persistPlaybackSnapshot(true);
         cancelAutoplayRecovery();
         cancelPlaybackErrorRetry();
+        cancelDeferredBackdropLoad();
+        cancelNextUpReveal();
+        cancelYouTubeInitTimeout();
+        cancelPendingSocialStatsFetch();
         cancelPendingStreamResolver();
         clearPlayerCoverRequest();
+        clearPlayerBackdropRequest();
         resetPlayerHeroContainerHeight();
         stopLocalProgressTicker();
         releaseLocalMediaPlayer();
         setHostTopBarOverlayMode(false);
         releaseMediaSession();
         clearMediaNotification();
+        clearMediaNotificationArtwork();
         if (backPressedCallback != null) {
             backPressedCallback.remove();
             backPressedCallback = null;
@@ -746,6 +811,7 @@ public class SongPlayerFragment extends Fragment {
         flPlayerHero = null;
         youtubePlayerInitStarted = false;
         usingYoutubeFallbackSource = false;
+        youtubePlaybackActive = false;
         playerReady = false;
         super.onDestroyView();
     }
@@ -820,6 +886,29 @@ public class SongPlayerFragment extends Fragment {
         });
     }
 
+    private void prewarmYouTubePlayerIfNeeded() {
+        if (!isAdded() || youtubePlayerView == null || tracks.isEmpty()) {
+            return;
+        }
+        if (!isNetworkAvailable()) {
+            return;
+        }
+        if (youtubePlayerInitStarted || playerReady || youTubePlayer != null) {
+            return;
+        }
+        if (currentIndex < 0 || currentIndex >= tracks.size()) {
+            return;
+        }
+
+        PlayerTrack track = tracks.get(currentIndex);
+        if (track == null || TextUtils.isEmpty(track.videoId)) {
+            return;
+        }
+
+        Log.d(TAG, "prewarmYouTubePlayerIfNeeded: bootstrap anticipado videoId=" + track.videoId);
+        setupYouTubePlayer();
+    }
+
     private void setupYouTubePlayer() {
         if (youtubePlayerView == null) {
             return;
@@ -828,6 +917,7 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
         youtubePlayerInitStarted = true;
+        cancelYouTubeInitTimeout();
         getLifecycle().addObserver(youtubePlayerView);
 
         youtubePlayerView.enableBackgroundPlayback(true);
@@ -841,6 +931,7 @@ public class SongPlayerFragment extends Fragment {
         youtubePlayerView.initialize(new AbstractYouTubePlayerListener() {
             @Override
             public void onReady(@NonNull YouTubePlayer initializedPlayer) {
+                cancelYouTubeInitTimeout();
                 playerReady = true;
                 youTubePlayer = initializedPlayer;
                 if (!usingYoutubeFallbackSource) {
@@ -858,10 +949,12 @@ public class SongPlayerFragment extends Fragment {
                     return;
                 }
                 if (state == PlayerConstants.PlayerState.ENDED) {
+                    youtubePlaybackActive = false;
                     handleTrackEnded();
                     return;
                 }
                 if (state == PlayerConstants.PlayerState.PLAYING) {
+                    youtubePlaybackActive = true;
                     cancelAutoplayRecovery();
                     resetPlaybackErrorState();
                     resetEmbedErrorAutoskipWindow();
@@ -872,7 +965,6 @@ public class SongPlayerFragment extends Fragment {
                             && currentIndex < tracks.size()) {
                         currentVideoId = tracks.get(currentIndex).videoId;
                     }
-                    clearTrackRestrictionIfAny(currentVideoId);
                     isPlaying = true;
                     pauseRequestedByUser = false;
                     updatePlayPauseIcon();
@@ -882,6 +974,7 @@ public class SongPlayerFragment extends Fragment {
                     return;
                 }
                 if (state == PlayerConstants.PlayerState.PAUSED) {
+                    youtubePlaybackActive = false;
                     if (!pauseRequestedByUser
                             && !usingOfflineSource
                             && totalSeconds > 1
@@ -909,7 +1002,7 @@ public class SongPlayerFragment extends Fragment {
 
             @Override
             public void onCurrentSecond(@NonNull YouTubePlayer initializedPlayer, float second) {
-                if (!isAdded() || userSeeking || usingOfflineSource || !usingYoutubeFallbackSource) {
+                if (!isAdded() || userSeeking || usingOfflineSource || !usingYoutubeFallbackSource || !youtubePlaybackActive) {
                     return;
                 }
 
@@ -954,6 +1047,8 @@ public class SongPlayerFragment extends Fragment {
                     sbPlaybackProgress.setProgress(Math.max(0, Math.min(1000, progress)));
                 }
 
+                persistResolvedDurationForCurrentFavorite();
+
                 updateMediaSessionMetadata();
                 updateMediaSessionState();
                 updateMediaNotification();
@@ -970,6 +1065,31 @@ public class SongPlayerFragment extends Fragment {
                 handlePlaybackError(error);
             }
         }, true, options);
+        scheduleYouTubeInitTimeout();
+    }
+
+    private void scheduleYouTubeInitTimeout() {
+        cancelYouTubeInitTimeout();
+        youtubeInitTimeoutRunnable = () -> {
+            youtubeInitTimeoutRunnable = null;
+            if (!isAdded() || playerReady || youTubePlayer != null) {
+                return;
+            }
+
+            Log.w(TAG, "setupYouTubePlayer: init timeout, retrying engine bootstrap");
+            youtubePlayerInitStarted = false;
+            if (usingYoutubeFallbackSource) {
+                recoverYouTubePlayerEngine(true);
+            }
+        };
+        localProgressHandler.postDelayed(youtubeInitTimeoutRunnable, YOUTUBE_INIT_TIMEOUT_MS);
+    }
+
+    private void cancelYouTubeInitTimeout() {
+        if (youtubeInitTimeoutRunnable != null) {
+            localProgressHandler.removeCallbacks(youtubeInitTimeoutRunnable);
+            youtubeInitTimeoutRunnable = null;
+        }
     }
 
     private void setupMediaSession() {
@@ -1078,6 +1198,10 @@ public class SongPlayerFragment extends Fragment {
         }
 
         if (!fromCompletion) {
+            cancelOfflineCrossfade();
+        }
+
+        if (!fromCompletion) {
             resetEmbedErrorAutoskipWindow();
             persistPositionForLoadedTrack();
         }
@@ -1133,18 +1257,7 @@ public class SongPlayerFragment extends Fragment {
         if (!isAdded() || TextUtils.isEmpty(videoId) || hasOfflineLocal) {
             return false;
         }
-        if (!OfflineRestrictionStore.isRestricted(requireContext(), videoId)) {
-            return false;
-        }
-        // Con red permitimos reintento para limpiar falsos positivos.
-        return !isNetworkAvailable();
-    }
-
-    private void clearTrackRestrictionIfAny(@Nullable String videoId) {
-        if (!isAdded() || TextUtils.isEmpty(videoId)) {
-            return;
-        }
-        OfflineRestrictionStore.unmarkRestricted(requireContext(), videoId);
+        return OfflineRestrictionStore.isRestricted(requireContext(), videoId);
     }
 
     private boolean skipRestrictedTrackInQueue() {
@@ -1161,7 +1274,11 @@ public class SongPlayerFragment extends Fragment {
                 continue;
             }
 
-            boolean hasOfflineLocal = OfflineAudioStore.hasOfflineAudio(requireContext(), candidate.videoId);
+            boolean hasOfflineLocal = OfflineAudioStore.hasValidatedOfflineAudio(
+                    requireContext(),
+                    candidate.videoId,
+                    candidate.duration
+            );
             if (shouldSkipRestrictedTrack(candidate.videoId, hasOfflineLocal)) {
                 continue;
             }
@@ -1393,6 +1510,8 @@ public class SongPlayerFragment extends Fragment {
             return false;
         }
 
+        cancelYouTubeInitTimeout();
+
         ViewParent parent = youtubePlayerView.getParent();
         if (!(parent instanceof ViewGroup)) {
             Log.w(TAG, "No se pudo reconstruir YouTubePlayerView: parent invalido");
@@ -1495,6 +1614,7 @@ public class SongPlayerFragment extends Fragment {
         isPlaying = false;
         pauseRequestedByUser = false;
         usingYoutubeFallbackSource = false;
+        youtubePlaybackActive = false;
         updatePlayerSurfaceForSource();
         Log.e(TAG, "Playback stopped after errors. videoId=" + loadedVideoId + " message=" + message);
         updatePlayPauseIcon();
@@ -1566,6 +1686,7 @@ public class SongPlayerFragment extends Fragment {
     private void togglePlayback() {
         if (usingOfflineSource && localMediaPlayer != null) {
             if (isPlaying) {
+                cancelOfflineCrossfade();
                 pauseRequestedByUser = true;
                 try {
                     localMediaPlayer.pause();
@@ -1597,6 +1718,7 @@ public class SongPlayerFragment extends Fragment {
             if (isPlaying) {
                 pauseRequestedByUser = true;
                 isPlaying = false;
+                youtubePlaybackActive = false;
                 try {
                     youTubePlayer.pause();
                 } catch (Exception ignored) {
@@ -1643,15 +1765,7 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void toggleShuffleMode() {
-        shuffleEnabled = !shuffleEnabled;
-        if (shuffleEnabled) {
-            randomizeQueueFromCurrentTrack();
-        } else {
-            restoreOriginalQueueOrder();
-        }
-        refreshNextUp();
-        persistPlaybackSnapshot(false);
-        updatePlaybackModeButtons();
+        setShuffleEnabled(!shuffleEnabled);
     }
 
     private void cycleRepeatMode() {
@@ -1662,7 +1776,80 @@ public class SongPlayerFragment extends Fragment {
         } else {
             repeatMode = REPEAT_MODE_OFF;
         }
+        persistPlaybackModePreferences();
         updatePlaybackModeButtons();
+        syncMiniStateWithPlaylist();
+    }
+
+    private void setShuffleEnabled(boolean enabled) {
+        if (shuffleEnabled == enabled) {
+            updatePlaybackModeButtons();
+            return;
+        }
+
+        shuffleEnabled = enabled;
+        if (shuffleEnabled) {
+            randomizeQueueFromCurrentTrack();
+        } else {
+            restoreOriginalQueueOrder();
+        }
+
+        refreshNextUp();
+        persistPlaybackModePreferences();
+        persistPlaybackSnapshot(false);
+        updatePlaybackModeButtons();
+        syncMiniStateWithPlaylist();
+    }
+
+    private int normalizeRepeatMode(int mode) {
+        if (mode == REPEAT_MODE_ALL || mode == REPEAT_MODE_ONE || mode == REPEAT_MODE_OFF) {
+            return mode;
+        }
+        return REPEAT_MODE_ALL;
+    }
+
+    private void loadPlaybackModesFromSettings() {
+        boolean persistNormalized = false;
+
+        if (settingsPrefs != null) {
+            boolean hasShuffle = settingsPrefs.contains(CloudSyncManager.KEY_PLAYER_SHUFFLE_ENABLED);
+            boolean hasRepeat = settingsPrefs.contains(CloudSyncManager.KEY_PLAYER_REPEAT_MODE);
+
+            shuffleEnabled = settingsPrefs.getBoolean(CloudSyncManager.KEY_PLAYER_SHUFFLE_ENABLED, false);
+            int storedRepeatMode = settingsPrefs.getInt(CloudSyncManager.KEY_PLAYER_REPEAT_MODE, REPEAT_MODE_ALL);
+            repeatMode = normalizeRepeatMode(storedRepeatMode);
+
+            persistNormalized = !hasShuffle || !hasRepeat || storedRepeatMode != repeatMode;
+        } else {
+            shuffleEnabled = false;
+            repeatMode = REPEAT_MODE_ALL;
+        }
+
+        if (persistNormalized) {
+            persistPlaybackModePreferences();
+        }
+    }
+
+    private void persistPlaybackModePreferences() {
+        if (settingsPrefs == null) {
+            return;
+        }
+
+        int safeRepeatMode = normalizeRepeatMode(repeatMode);
+        if (repeatMode != safeRepeatMode) {
+            repeatMode = safeRepeatMode;
+        }
+
+        boolean storedShuffle = settingsPrefs.getBoolean(CloudSyncManager.KEY_PLAYER_SHUFFLE_ENABLED, false);
+        int storedRepeat = normalizeRepeatMode(settingsPrefs.getInt(CloudSyncManager.KEY_PLAYER_REPEAT_MODE, REPEAT_MODE_ALL));
+        if (storedShuffle == shuffleEnabled && storedRepeat == safeRepeatMode) {
+            return;
+        }
+
+        settingsPrefs.edit()
+                .putBoolean(CloudSyncManager.KEY_PLAYER_SHUFFLE_ENABLED, shuffleEnabled)
+                .putInt(CloudSyncManager.KEY_PLAYER_REPEAT_MODE, safeRepeatMode)
+                .apply();
     }
 
     private void updatePlaybackModeButtons() {
@@ -1699,6 +1886,8 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
+        cancelOfflineCrossfade();
+
         lastPlaybackStartRequestAtMs = SystemClock.elapsedRealtime();
 
         usingYoutubeFallbackSource = false;
@@ -1730,7 +1919,8 @@ public class SongPlayerFragment extends Fragment {
         loadedVideoId = track.videoId;
         long requestToken = ++activePlaybackRequestToken;
 
-        boolean hasOfflineLocal = isAdded() && OfflineAudioStore.hasOfflineAudio(requireContext(), track.videoId);
+        boolean hasOfflineLocal = isAdded()
+                && OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), track.videoId, track.duration);
         if (shouldSkipRestrictedTrack(track.videoId, hasOfflineLocal)) {
             Log.d(TAG, "playCurrentTrack: restricted track skipped in queue. videoId=" + track.videoId);
             if (skipRestrictedTrackInQueue()) {
@@ -1746,7 +1936,7 @@ public class SongPlayerFragment extends Fragment {
             }
         }
 
-        List<String> directSources = buildDirectSourceCandidates(track.videoId);
+        List<String> directSources = buildDirectSourceCandidates(track);
         Log.d(TAG, "playCurrentTrack: videoId=" + track.videoId
             + " requestToken=" + requestToken
             + " directSources=" + directSources.size());
@@ -1785,7 +1975,8 @@ public class SongPlayerFragment extends Fragment {
                 return;
             }
 
-            if (!isNetworkAvailable() && !OfflineAudioStore.hasOfflineAudio(requireContext(), track.videoId)) {
+            if (!isNetworkAvailable()
+                    && !OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), track.videoId, track.duration)) {
                 markPlaybackUnavailable("Sin internet y sin descarga offline para esta canción.");
             } else {
                 markPlaybackUnavailable("No se encontro una fuente de audio para esta canción.");
@@ -1889,12 +2080,10 @@ public class SongPlayerFragment extends Fragment {
 
             if (isPlaying) {
                 try {
+                    mp.setVolume(1f, 1f);
                     mp.start();
                     Log.d(TAG, "onPrepared: playback started videoId=" + track.videoId
                             + " durationSec=" + totalSeconds);
-                    if (networkSource) {
-                        clearTrackRestrictionIfAny(track.videoId);
-                    }
                     startLocalProgressTicker();
                 } catch (Exception startError) {
                     Log.e(TAG, "onPrepared: start failed for videoId=" + track.videoId, startError);
@@ -1914,6 +2103,9 @@ public class SongPlayerFragment extends Fragment {
 
         player.setOnCompletionListener(mp -> {
             if (requestToken != activePlaybackRequestToken) {
+                return;
+            }
+            if (localCrossfadeInProgress && localCrossfadeIncomingPlayer != null) {
                 return;
             }
             Log.d(TAG, "onCompletion: videoId=" + track.videoId + " token=" + requestToken);
@@ -2009,11 +2201,12 @@ public class SongPlayerFragment extends Fragment {
     }
 
     @NonNull
-    private List<String> buildDirectSourceCandidates(@NonNull String videoId) {
+    private List<String> buildDirectSourceCandidates(@NonNull PlayerTrack track) {
         LinkedHashSet<String> orderedSources = new LinkedHashSet<>();
 
-        if (isAdded() && OfflineAudioStore.hasOfflineAudio(requireContext(), videoId)) {
-            File file = OfflineAudioStore.getExistingOfflineAudioFile(requireContext(), videoId);
+        if (isAdded()
+                && OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), track.videoId, track.duration)) {
+            File file = OfflineAudioStore.getExistingOfflineAudioFile(requireContext(), track.videoId);
             if (file.isFile() && file.length() > 0L) {
                 orderedSources.add(file.getAbsolutePath());
             }
@@ -2087,6 +2280,7 @@ public class SongPlayerFragment extends Fragment {
         releaseLocalMediaPlayer();
         usingOfflineSource = false;
         usingYoutubeFallbackSource = true;
+        youtubePlaybackActive = false;
         updatePlayerSurfaceForSource();
         updatePlayPauseIcon();
         updateMediaSessionState();
@@ -2303,6 +2497,7 @@ public class SongPlayerFragment extends Fragment {
         updatePlayerSurfaceForSource();
 
         float startAt = Math.max(0f, currentSeconds);
+        youtubePlaybackActive = false;
         try {
             if (isPlaying) {
                 // Cuando el usuario navega rapido fuera del modulo, evitamos quedar en "cue"
@@ -2317,6 +2512,9 @@ public class SongPlayerFragment extends Fragment {
                 youTubePlayer.cueVideo(track.videoId, startAt);
             }
             Log.d(TAG, "playWithYouTubePlayer: videoId=" + track.videoId + " startAt=" + startAt);
+            if (isPlaying) {
+                scheduleAutoplayRecoveryForCurrentTrack();
+            }
         } catch (Exception e) {
             Log.e(TAG, "playWithYouTubePlayer: failed to start fallback videoId=" + track.videoId, e);
         }
@@ -2379,6 +2577,7 @@ public class SongPlayerFragment extends Fragment {
 
         pauseYouTubePlaybackEngine("markPlaybackUnavailable");
         usingYoutubeFallbackSource = false;
+        youtubePlaybackActive = false;
         Log.e(TAG, "markPlaybackUnavailable: " + message
             + " loadedVideoId=" + loadedVideoId
             + " activeToken=" + activePlaybackRequestToken);
@@ -2515,6 +2714,281 @@ public class SongPlayerFragment extends Fragment {
                 || capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN);
     }
 
+    private void maybeStartOfflineCrossfade(int positionMs, int durationMs) {
+        int crossfadeDurationMs = getOfflineCrossfadeDurationMs();
+        if (!isAdded()
+                || !usingOfflineSource
+                || localMediaPlayer == null
+                || localSourcePreparing
+                || localCrossfadeInProgress
+                || userSeeking
+                || !isPlaying
+                || durationMs <= 0
+                || crossfadeDurationMs <= 0) {
+            return;
+        }
+
+        int remainingMs = Math.max(0, durationMs - Math.max(0, positionMs));
+        if (remainingMs > crossfadeDurationMs) {
+            return;
+        }
+
+        startOfflineCrossfadeTransition(crossfadeDurationMs);
+    }
+
+    private int getOfflineCrossfadeDurationMs() {
+        int seconds = OFFLINE_CROSSFADE_DEFAULT_SECONDS;
+        if (settingsPrefs != null) {
+            seconds = settingsPrefs.getInt(
+                    CloudSyncManager.KEY_OFFLINE_CROSSFADE_SECONDS,
+                    OFFLINE_CROSSFADE_DEFAULT_SECONDS
+            );
+        }
+        seconds = Math.max(0, Math.min(OFFLINE_CROSSFADE_MAX_SECONDS, seconds));
+        if (seconds <= 0) {
+            return 0;
+        }
+        if (seconds == 1) {
+            return OFFLINE_CROSSFADE_FIRST_STEP_MS;
+        }
+        return seconds * 1000;
+    }
+
+    private void startOfflineCrossfadeTransition(int crossfadeDurationMs) {
+        if (!isAdded() || localMediaPlayer == null || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) {
+            return;
+        }
+
+        MediaPlayer outgoing = localMediaPlayer;
+        int nextIndex = resolveNextIndexForCompletionCrossfade();
+        if (nextIndex < 0 || nextIndex >= tracks.size()) {
+            startOfflineFadeOutOnly(outgoing, crossfadeDurationMs);
+            return;
+        }
+
+        PlayerTrack nextTrack = tracks.get(nextIndex);
+        if (nextTrack == null
+            || TextUtils.isEmpty(nextTrack.videoId)
+            || !OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), nextTrack.videoId, nextTrack.duration)) {
+            startOfflineFadeOutOnly(outgoing, crossfadeDurationMs);
+            return;
+        }
+
+        File nextFile = OfflineAudioStore.getExistingOfflineAudioFile(requireContext(), nextTrack.videoId);
+        if (nextFile == null || !nextFile.isFile() || nextFile.length() <= 0L) {
+            startOfflineFadeOutOnly(outgoing, crossfadeDurationMs);
+            return;
+        }
+
+        MediaPlayer incoming = new MediaPlayer();
+        try {
+            incoming.setAudioAttributes(new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build());
+            incoming.setDataSource(nextFile.getAbsolutePath());
+            incoming.prepare();
+            incoming.setVolume(0f, 0f);
+            incoming.start();
+        } catch (Exception e) {
+            releaseSingleMediaPlayer(incoming);
+            startOfflineFadeOutOnly(outgoing, crossfadeDurationMs);
+            return;
+        }
+
+        localCrossfadeIncomingPlayer = incoming;
+        localCrossfadeInProgress = true;
+        localCrossfadeTargetIndex = nextIndex;
+        localCrossfadeStartedAtMs = SystemClock.elapsedRealtime();
+        outgoing.setOnCompletionListener(null);
+
+        localCrossfadeTicker = new Runnable() {
+            @Override
+            public void run() {
+                if (!localCrossfadeInProgress || localMediaPlayer != outgoing) {
+                    return;
+                }
+
+                float progress = Math.min(
+                        1f,
+                        Math.max(0f, (SystemClock.elapsedRealtime() - localCrossfadeStartedAtMs)
+                        / (float) crossfadeDurationMs)
+                );
+                float outVolume = Math.max(0f, 1f - progress);
+                float inVolume = Math.max(0f, progress);
+
+                try {
+                    outgoing.setVolume(outVolume, outVolume);
+                } catch (Exception ignored) {
+                }
+                if (localCrossfadeIncomingPlayer != null) {
+                    try {
+                        localCrossfadeIncomingPlayer.setVolume(inVolume, inVolume);
+                    } catch (Exception ignored) {
+                    }
+                }
+
+                if (progress >= 1f) {
+                    finalizeOfflineCrossfade(outgoing);
+                    return;
+                }
+
+                localProgressHandler.postDelayed(this, OFFLINE_CROSSFADE_STEP_MS);
+            }
+        };
+
+        localProgressHandler.post(localCrossfadeTicker);
+    }
+
+    private void startOfflineFadeOutOnly(@NonNull MediaPlayer outgoing, int fadeDurationMs) {
+        if (localCrossfadeInProgress || localMediaPlayer != outgoing) {
+            return;
+        }
+
+        int safeFadeDurationMs = Math.max(1, fadeDurationMs);
+
+        localCrossfadeIncomingPlayer = null;
+        localCrossfadeInProgress = true;
+        localCrossfadeTargetIndex = -1;
+        localCrossfadeStartedAtMs = SystemClock.elapsedRealtime();
+
+        localCrossfadeTicker = new Runnable() {
+            @Override
+            public void run() {
+                if (!localCrossfadeInProgress || localMediaPlayer != outgoing) {
+                    return;
+                }
+
+                float progress = Math.min(
+                        1f,
+                        Math.max(0f, (SystemClock.elapsedRealtime() - localCrossfadeStartedAtMs)
+                        / (float) safeFadeDurationMs)
+                );
+                float outVolume = Math.max(0f, 1f - progress);
+
+                try {
+                    outgoing.setVolume(outVolume, outVolume);
+                } catch (Exception ignored) {
+                }
+
+                if (progress >= 1f) {
+                    localCrossfadeInProgress = false;
+                    localCrossfadeStartedAtMs = 0L;
+                    localCrossfadeTargetIndex = -1;
+                    localCrossfadeTicker = null;
+                    return;
+                }
+
+                localProgressHandler.postDelayed(this, OFFLINE_CROSSFADE_STEP_MS);
+            }
+        };
+
+        localProgressHandler.post(localCrossfadeTicker);
+    }
+
+    private int resolveNextIndexForCompletionCrossfade() {
+        if (tracks.isEmpty()) {
+            return -1;
+        }
+
+        if (repeatMode == REPEAT_MODE_ONE) {
+            return -1;
+        }
+
+        if (currentIndex < tracks.size() - 1) {
+            return currentIndex + 1;
+        }
+
+        if (repeatMode == REPEAT_MODE_ALL) {
+            return 0;
+        }
+
+        return -1;
+    }
+
+    private void finalizeOfflineCrossfade(@NonNull MediaPlayer outgoing) {
+        MediaPlayer incoming = localCrossfadeIncomingPlayer;
+        int nextIndex = localCrossfadeTargetIndex;
+
+        localCrossfadeInProgress = false;
+        localCrossfadeStartedAtMs = 0L;
+        localCrossfadeTargetIndex = -1;
+        if (localCrossfadeTicker != null) {
+            localProgressHandler.removeCallbacks(localCrossfadeTicker);
+            localCrossfadeTicker = null;
+        }
+        localCrossfadeIncomingPlayer = null;
+
+        releaseSingleMediaPlayer(outgoing);
+
+        if (incoming == null || nextIndex < 0 || nextIndex >= tracks.size()) {
+            return;
+        }
+
+        localMediaPlayer = incoming;
+        usingOfflineSource = true;
+        currentIndex = nextIndex;
+        pauseRequestedByUser = false;
+        isPlaying = true;
+        currentSeconds = 0;
+        lastPersistedSecond = -1;
+
+        PlayerTrack track = tracks.get(currentIndex);
+        loadedVideoId = track.videoId;
+        if (TextUtils.isEmpty(loadedVideoId)) {
+            loadedVideoId = "";
+        }
+
+        incoming.setOnCompletionListener(mp -> {
+            if (localMediaPlayer != mp) {
+                return;
+            }
+            stopLocalProgressTicker();
+            handleTrackEnded();
+        });
+        incoming.setOnErrorListener((mp, what, extra) -> {
+            if (localMediaPlayer == mp) {
+                stopLocalProgressTicker();
+                releaseLocalMediaPlayer();
+                usingOfflineSource = false;
+            } else {
+                releaseSingleMediaPlayer(mp);
+            }
+            playCurrentTrack();
+            return true;
+        });
+
+        try {
+            totalSeconds = Math.max(1, incoming.getDuration() / 1000);
+        } catch (Exception ignored) {
+        }
+
+        bindCurrentTrack(false);
+        startLocalProgressTicker();
+    }
+
+    private void cancelOfflineCrossfade() {
+        localCrossfadeInProgress = false;
+        localCrossfadeStartedAtMs = 0L;
+        localCrossfadeTargetIndex = -1;
+        if (localCrossfadeTicker != null) {
+            localProgressHandler.removeCallbacks(localCrossfadeTicker);
+            localCrossfadeTicker = null;
+        }
+
+        if (localCrossfadeIncomingPlayer != null) {
+            releaseSingleMediaPlayer(localCrossfadeIncomingPlayer);
+            localCrossfadeIncomingPlayer = null;
+        }
+
+        if (localMediaPlayer != null) {
+            try {
+                localMediaPlayer.setVolume(1f, 1f);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
     private void startLocalProgressTicker() {
         localProgressHandler.removeCallbacks(localProgressTicker);
         localProgressHandler.post(localProgressTicker);
@@ -2525,6 +2999,7 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void releaseLocalMediaPlayer() {
+        cancelOfflineCrossfade();
         cancelSourcePrepareTimeout();
         localSourcePreparing = false;
         if (localMediaPlayer == null) {
@@ -2550,6 +3025,130 @@ public class SongPlayerFragment extends Fragment {
             Glide.with(this).clear(playerCoverTarget);
         }
         playerCoverTarget = null;
+    }
+
+    private void clearPlayerBackdropRequest() {
+        if (playerBackdropTarget == null) {
+            return;
+        }
+        if (isAdded()) {
+            Glide.with(this).clear(playerBackdropTarget);
+        }
+        playerBackdropTarget = null;
+    }
+
+    private void showPlayerArtworkLoadingState() {
+        if (ivPlayerCover != null) {
+            ivPlayerCover.setImageDrawable(null);
+        }
+        if (ivPlayerBackdrop != null) {
+            ivPlayerBackdrop.animate().cancel();
+            ivPlayerBackdrop.setImageDrawable(null);
+            ivPlayerBackdrop.setAlpha(0f);
+        }
+    }
+
+    private void completePlayerArtworkBootstrap() {
+        if (!playerArtworkBootstrapPending) {
+            return;
+        }
+        playerArtworkBootstrapPending = false;
+        refreshNextUp();
+    }
+
+    private void cancelDeferredBackdropLoad() {
+        if (deferredBackdropLoadRunnable != null) {
+            localProgressHandler.removeCallbacks(deferredBackdropLoadRunnable);
+            deferredBackdropLoadRunnable = null;
+        }
+    }
+
+    private void scheduleBackdropLoad(
+            @NonNull PlayerTrack requestedTrack,
+            boolean bootstrapArtwork
+    ) {
+        cancelDeferredBackdropLoad();
+
+        String requestVideoId = requestedTrack.videoId == null ? "" : requestedTrack.videoId;
+        deferredBackdropLoadRunnable = () -> {
+            deferredBackdropLoadRunnable = null;
+            if (!isAdded() || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) {
+                return;
+            }
+
+            PlayerTrack current = tracks.get(currentIndex);
+            String currentVideoId = current.videoId == null ? "" : current.videoId;
+            if (!TextUtils.equals(currentVideoId, requestVideoId)) {
+                return;
+            }
+
+            loadPlayerBackdrop(current, bootstrapArtwork);
+        };
+
+        long delay = bootstrapArtwork ? PLAYER_BACKDROP_DEFER_LOAD_MS : 0L;
+        if (delay <= 0L) {
+            localProgressHandler.post(deferredBackdropLoadRunnable);
+        } else {
+            localProgressHandler.postDelayed(deferredBackdropLoadRunnable, delay);
+        }
+    }
+
+    private void revealBackdropWithFade() {
+        if (ivPlayerBackdrop == null) {
+            return;
+        }
+
+        ivPlayerBackdrop.animate().cancel();
+        applyPlayerBackdropBlur();
+        float targetAlpha = ivPlayerBackdrop.getAlpha();
+        if (targetAlpha <= 0f) {
+            targetAlpha = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? 0.68f : 0.35f;
+        }
+        ivPlayerBackdrop.setAlpha(0f);
+        ivPlayerBackdrop.animate()
+                .alpha(targetAlpha)
+                .setDuration(PLAYER_BACKDROP_FADE_IN_DURATION_MS)
+                .start();
+    }
+
+    private void clearMediaNotificationArtwork() {
+        mediaNotificationLargeIcon = null;
+        mediaNotificationLargeIconVideoId = "";
+        mediaSessionArtwork = null;
+        mediaSessionArtworkVideoId = "";
+    }
+
+    private void cacheMediaNotificationArtwork(@NonNull String videoId, @NonNull Bitmap source) {
+        if (source.isRecycled()) {
+            return;
+        }
+
+        Bitmap notificationBitmap = scaleArtworkBitmap(source, MEDIA_NOTIFICATION_ARTWORK_MAX_SIZE_PX);
+        Bitmap sessionBitmap = scaleArtworkBitmap(source, MEDIA_SESSION_ARTWORK_MAX_SIZE_PX);
+
+        mediaNotificationLargeIcon = notificationBitmap;
+        mediaNotificationLargeIconVideoId = videoId;
+        mediaSessionArtwork = sessionBitmap;
+        mediaSessionArtworkVideoId = videoId;
+    }
+
+    @NonNull
+    private Bitmap scaleArtworkBitmap(@NonNull Bitmap source, int maxEdgePx) {
+        int width = Math.max(1, source.getWidth());
+        int height = Math.max(1, source.getHeight());
+        int largestEdge = Math.max(width, height);
+        if (largestEdge <= Math.max(1, maxEdgePx)) {
+            return source;
+        }
+
+        float scale = maxEdgePx / (float) largestEdge;
+        int targetWidth = Math.max(1, Math.round(width * scale));
+        int targetHeight = Math.max(1, Math.round(height * scale));
+        try {
+            return Bitmap.createScaledBitmap(source, targetWidth, targetHeight, true);
+        } catch (Throwable ignored) {
+            return source;
+        }
     }
 
     private void resetPlayerHeroContainerHeight() {
@@ -2599,17 +3198,25 @@ public class SongPlayerFragment extends Fragment {
         return Math.round(dp * requireContext().getResources().getDisplayMetrics().density);
     }
 
-    private void loadPlayerCover(@NonNull PlayerTrack track) {
-        String imageUrl = track.imageUrl == null ? "" : track.imageUrl.trim();
-        if (TextUtils.isEmpty(imageUrl)) {
+    private void loadPlayerCover(@NonNull PlayerTrack track, boolean bootstrapArtwork) {
+        String requestVideoId = track.videoId == null ? "" : track.videoId.trim();
+        String fallbackImageUrl = track.imageUrl == null ? "" : track.imageUrl.trim();
+        String preferredImageUrl = resolvePreferredCoverUrl(requestVideoId, fallbackImageUrl);
+        if (TextUtils.isEmpty(preferredImageUrl)) {
             clearPlayerCoverRequest();
+            clearMediaNotificationArtwork();
             activeCoverVideoId = "";
             resetPlayerHeroContainerHeight();
-            ivPlayerCover.setImageResource(R.drawable.ic_music);
+            ivPlayerCover.setImageDrawable(null);
+            updateMediaSessionMetadata();
+            updateMediaNotification();
             return;
         }
 
-        String requestVideoId = track.videoId == null ? "" : track.videoId;
+        if (!TextUtils.equals(requestVideoId, mediaNotificationLargeIconVideoId)) {
+            clearMediaNotificationArtwork();
+        }
+
         activeCoverVideoId = requestVideoId;
         clearPlayerCoverRequest();
 
@@ -2619,8 +3226,16 @@ public class SongPlayerFragment extends Fragment {
                 if (!isAdded() || !TextUtils.equals(activeCoverVideoId, requestVideoId)) {
                     return;
                 }
+                boolean wasEmpty = ivPlayerCover.getDrawable() == null;
                 ivPlayerCover.setImageBitmap(resource);
+                if (wasEmpty && bootstrapArtwork) {
+                    ivPlayerCover.setAlpha(0f);
+                    ivPlayerCover.animate().alpha(1f).setDuration(PLAYER_BACKDROP_FADE_IN_DURATION_MS).start();
+                }
                 adjustPlayerHeroForCover(resource);
+                cacheMediaNotificationArtwork(requestVideoId, resource);
+                updateMediaSessionMetadata();
+                updateMediaNotification();
             }
 
             @Override
@@ -2628,11 +3243,7 @@ public class SongPlayerFragment extends Fragment {
                 if (!isAdded()) {
                     return;
                 }
-                if (placeholder != null) {
-                    ivPlayerCover.setImageDrawable(placeholder);
-                } else {
-                    ivPlayerCover.setImageResource(R.drawable.ic_music);
-                }
+                ivPlayerCover.setImageDrawable(null);
             }
 
             @Override
@@ -2641,20 +3252,113 @@ public class SongPlayerFragment extends Fragment {
                     return;
                 }
                 resetPlayerHeroContainerHeight();
-                if (errorDrawable != null) {
-                    ivPlayerCover.setImageDrawable(errorDrawable);
-                } else {
-                    ivPlayerCover.setImageResource(R.drawable.ic_music);
+                if (TextUtils.equals(mediaNotificationLargeIconVideoId, requestVideoId)) {
+                    clearMediaNotificationArtwork();
                 }
+                ivPlayerCover.setImageDrawable(null);
+                updateMediaSessionMetadata();
+                updateMediaNotification();
             }
         };
 
         Glide.with(this)
                 .asBitmap()
-                .load(imageUrl)
-                .placeholder(R.drawable.ic_music)
-                .error(R.drawable.ic_music)
+                .load(preferredImageUrl)
+                .error(
+                        TextUtils.isEmpty(fallbackImageUrl)
+                                || TextUtils.equals(preferredImageUrl, fallbackImageUrl)
+                                ? null
+                                : Glide.with(this)
+                                        .asBitmap()
+                                        .load(fallbackImageUrl)
+                )
                 .into(playerCoverTarget);
+    }
+
+    private void loadPlayerBackdrop(@NonNull PlayerTrack track, boolean bootstrapArtwork) {
+        if (ivPlayerBackdrop == null) {
+            completePlayerArtworkBootstrap();
+            return;
+        }
+
+        String requestVideoId = track.videoId == null ? "" : track.videoId.trim();
+        String fallbackImageUrl = track.imageUrl == null ? "" : track.imageUrl.trim();
+        String preferredImageUrl = resolvePreferredCoverUrl(requestVideoId, fallbackImageUrl);
+
+        activeBackdropVideoId = requestVideoId;
+        clearPlayerBackdropRequest();
+
+        if (TextUtils.isEmpty(preferredImageUrl)) {
+            ivPlayerBackdrop.setImageDrawable(null);
+            ivPlayerBackdrop.setAlpha(0f);
+            completePlayerArtworkBootstrap();
+            return;
+        }
+
+        playerBackdropTarget = new CustomTarget<Drawable>() {
+            @Override
+            public void onResourceReady(@NonNull Drawable resource, @Nullable Transition<? super Drawable> transition) {
+                if (!isAdded() || !TextUtils.equals(activeBackdropVideoId, requestVideoId)) {
+                    return;
+                }
+
+                ivPlayerBackdrop.setImageDrawable(resource);
+                if (bootstrapArtwork) {
+                    revealBackdropWithFade();
+                    completePlayerArtworkBootstrap();
+                } else {
+                    applyPlayerBackdropBlur();
+                }
+            }
+
+            @Override
+            public void onLoadCleared(@Nullable Drawable placeholder) {
+                if (!isAdded()) {
+                    return;
+                }
+
+                if (bootstrapArtwork) {
+                    ivPlayerBackdrop.setImageDrawable(null);
+                    ivPlayerBackdrop.setAlpha(0f);
+                } else {
+                    ivPlayerBackdrop.setImageDrawable(null);
+                    ivPlayerBackdrop.setAlpha(0f);
+                }
+            }
+
+            @Override
+            public void onLoadFailed(@Nullable Drawable errorDrawable) {
+                if (!isAdded() || !TextUtils.equals(activeBackdropVideoId, requestVideoId)) {
+                    return;
+                }
+
+                if (bootstrapArtwork) {
+                    ivPlayerBackdrop.setImageDrawable(null);
+                    ivPlayerBackdrop.setAlpha(0f);
+                } else {
+                    ivPlayerBackdrop.setImageDrawable(null);
+                    ivPlayerBackdrop.setAlpha(0f);
+                }
+                completePlayerArtworkBootstrap();
+            }
+        };
+
+        Glide.with(this)
+                .asDrawable()
+                .load(preferredImageUrl)
+                .centerCrop()
+                .into(playerBackdropTarget);
+    }
+
+    @NonNull
+    private String resolvePreferredCoverUrl(
+            @NonNull String videoId,
+            @NonNull String fallbackImageUrl
+    ) {
+        if (!TextUtils.isEmpty(videoId)) {
+            return "https://i.ytimg.com/vi/" + Uri.encode(videoId) + "/hqdefault.jpg";
+        }
+        return fallbackImageUrl;
     }
 
     @Override
@@ -2677,6 +3381,7 @@ public class SongPlayerFragment extends Fragment {
         tvPlayerTitle.setText(track.title);
         tvPlayerArtist.setText(track.artist);
         refreshSocialActionsForCurrentTrack(track);
+        refreshFavoriteActionForCurrentTrack();
 
         totalSeconds = Math.max(1, parseDurationSeconds(track.duration));
         if (resetProgress) {
@@ -2692,27 +3397,31 @@ public class SongPlayerFragment extends Fragment {
         sbPlaybackProgress.setProgress(Math.max(0, Math.min(1000, progress)));
         updatePlayPauseIcon();
 
-        loadPlayerCover(track);
-
-        if (!TextUtils.isEmpty(track.imageUrl)) {
-            if (ivPlayerBackdrop != null) {
-                Glide.with(this)
-                        .load(track.imageUrl)
-                    .centerCrop()
-                        .placeholder(R.drawable.ic_music)
-                        .error(R.drawable.ic_music)
-                        .into(ivPlayerBackdrop);
-                applyPlayerBackdropBlur();
-            }
-        } else if (ivPlayerBackdrop != null) {
-            ivPlayerBackdrop.setImageResource(R.drawable.ic_music);
-            applyPlayerBackdropBlur();
+        boolean bootstrapArtwork = playerArtworkBootstrapPending;
+        if (bootstrapArtwork) {
+            showPlayerArtworkLoadingState();
+            localProgressHandler.postDelayed(() -> {
+                if (!isAdded()) return;
+                loadPlayerCover(track, bootstrapArtwork);
+                scheduleBackdropLoad(track, bootstrapArtwork);
+            }, 280L);
+        } else {
+            loadPlayerCover(track, bootstrapArtwork);
+            scheduleBackdropLoad(track, bootstrapArtwork);
         }
 
         updateMediaSessionMetadata();
         updateMediaSessionState();
         updateMediaNotification();
-        refreshNextUp();
+        if (bootstrapArtwork) {
+            cancelNextUpReveal();
+            nextUpTracks.clear();
+            if (nextUpAdapter != null) {
+                nextUpAdapter.notifyDataSetChanged();
+            }
+        } else {
+            refreshNextUp();
+        }
         syncMiniStateWithPlaylist();
         persistPlaybackSnapshot(false);
     }
@@ -2735,10 +3444,129 @@ public class SongPlayerFragment extends Fragment {
                 // Visual only for now.
             });
         }
+        if (actionFavorite != null) {
+            actionFavorite.setOnClickListener(v -> toggleCurrentTrackFavorite());
+        }
+        refreshFavoriteActionForCurrentTrack();
+    }
+
+    private void toggleCurrentTrackFavorite() {
+        if (!isAdded() || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) {
+            return;
+        }
+
+        PlayerTrack current = tracks.get(currentIndex);
+        if (TextUtils.isEmpty(current.videoId)) {
+            return;
+        }
+
+        boolean isFavorite = FavoritesPlaylistStore.isFavorite(requireContext(), current.videoId);
+        if (isFavorite) {
+            FavoritesPlaylistStore.removeFavorite(requireContext(), current.videoId);
+        } else {
+            FavoritesPlaylistStore.upsertFavorite(
+                    requireContext(),
+                    current.videoId,
+                    current.title,
+                    current.artist,
+                    resolveDurationLabelForFavorite(current),
+                    current.imageUrl
+            );
+        }
+
+        refreshFavoriteActionForCurrentTrack();
+        notifyFavoritesPlaylistIfVisible();
+    }
+
+    private void notifyFavoritesPlaylistIfVisible() {
+        if (!isAdded()) {
+            return;
+        }
+
+        Fragment playlist = getParentFragmentManager().findFragmentByTag("playlist_detail");
+        if (playlist instanceof PlaylistDetailFragment) {
+            ((PlaylistDetailFragment) playlist).externalRefreshFavoritesIfActive();
+        }
+    }
+
+    @NonNull
+    private String resolveDurationLabelForFavorite(@NonNull PlayerTrack track) {
+        String baseDuration = track.duration == null ? "" : track.duration.trim();
+        if (parseDurationSeconds(baseDuration) > 0) {
+            return baseDuration;
+        }
+
+        if (totalSeconds > 1) {
+            return formatSeconds(totalSeconds);
+        }
+
+        if (tvTotalTime != null && tvTotalTime.getText() != null) {
+            String fromUi = tvTotalTime.getText().toString().trim();
+            if (parseDurationSeconds(fromUi) > 0) {
+                return fromUi;
+            }
+        }
+
+        return "--:--";
+    }
+
+    private void persistResolvedDurationForCurrentFavorite() {
+        if (!isAdded() || totalSeconds <= 1 || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) {
+            return;
+        }
+
+        PlayerTrack current = tracks.get(currentIndex);
+        if (TextUtils.isEmpty(current.videoId)
+                || !FavoritesPlaylistStore.isFavorite(requireContext(), current.videoId)
+                || parseDurationSeconds(current.duration) > 0) {
+            return;
+        }
+
+        FavoritesPlaylistStore.upsertFavorite(
+                requireContext(),
+                current.videoId,
+                current.title,
+                current.artist,
+                formatSeconds(totalSeconds),
+                current.imageUrl
+        );
+    }
+
+    private void refreshFavoriteActionForCurrentTrack() {
+        if (!isAdded()) {
+            return;
+        }
+
+        boolean isFavorite = false;
+        if (!tracks.isEmpty() && currentIndex >= 0 && currentIndex < tracks.size()) {
+            String currentVideoId = tracks.get(currentIndex).videoId;
+            if (!TextUtils.isEmpty(currentVideoId)) {
+                isFavorite = FavoritesPlaylistStore.isFavorite(requireContext(), currentVideoId);
+            }
+        }
+
+        if (tvActionFavoriteLabel != null) {
+            tvActionFavoriteLabel.setText(isFavorite
+                    ? "Guardado"
+                    : "Guardar en favoritos");
+        }
+
+        if (ivActionFavoriteIcon != null) {
+            int tint = ContextCompat.getColor(
+                    requireContext(),
+                    isFavorite ? R.color.stitch_blue : R.color.text_primary
+            );
+            ivActionFavoriteIcon.setColorFilter(tint);
+        }
+
+        if (actionFavorite != null) {
+            actionFavorite.setAlpha(isFavorite ? 1f : 0.92f);
+        }
     }
 
     private void refreshSocialActionsForCurrentTrack(@Nullable PlayerTrack track) {
         if (track == null || TextUtils.isEmpty(track.videoId)) {
+            cancelPendingSocialStatsFetch();
             pendingSocialStatsVideoId = "";
             applySocialStatsToUi(SocialStats.unavailable());
             return;
@@ -2762,6 +3590,7 @@ public class SongPlayerFragment extends Fragment {
                 ? ""
                 : BuildConfig.YOUTUBE_DATA_API_KEY.trim();
         if (apiKey.isEmpty()) {
+            cancelPendingSocialStatsFetch();
             if (cached == null) {
                 applySocialStatsToUi(SocialStats.unavailable());
             }
@@ -2770,23 +3599,55 @@ public class SongPlayerFragment extends Fragment {
 
         String requestVideoId = track.videoId;
         SocialStats cachedSnapshot = cached;
-        socialStatsExecutor.execute(() -> {
-            SocialStats stats = fetchSocialStats(requestVideoId, apiKey);
-            localProgressHandler.post(() -> {
-                if (!isAdded() || !TextUtils.equals(pendingSocialStatsVideoId, requestVideoId)) {
-                    return;
-                }
+        boolean deferFetch = cached == null && isPlaying && !usingOfflineSource && !playerReady;
+        scheduleSocialStatsFetch(requestVideoId, apiKey, cachedSnapshot, deferFetch);
+    }
 
-                if (stats.unavailable && cachedSnapshot != null) {
-                    applySocialStatsToUi(cachedSnapshot);
-                    return;
-                }
+    private void scheduleSocialStatsFetch(
+            @NonNull String requestVideoId,
+            @NonNull String apiKey,
+            @Nullable SocialStats cachedSnapshot,
+            boolean deferFetch
+    ) {
+        cancelPendingSocialStatsFetch();
 
-                socialStatsCache.put(requestVideoId, stats);
-                persistSocialStatsToCache(requestVideoId, stats);
-                applySocialStatsToUi(stats);
+        pendingSocialStatsFetchRunnable = () -> {
+            pendingSocialStatsFetchRunnable = null;
+            if (!isAdded() || !TextUtils.equals(pendingSocialStatsVideoId, requestVideoId)) {
+                return;
+            }
+
+            socialStatsExecutor.execute(() -> {
+                SocialStats stats = fetchSocialStats(requestVideoId, apiKey);
+                localProgressHandler.post(() -> {
+                    if (!isAdded() || !TextUtils.equals(pendingSocialStatsVideoId, requestVideoId)) {
+                        return;
+                    }
+
+                    if (stats.unavailable && cachedSnapshot != null) {
+                        applySocialStatsToUi(cachedSnapshot);
+                        return;
+                    }
+
+                    socialStatsCache.put(requestVideoId, stats);
+                    persistSocialStatsToCache(requestVideoId, stats);
+                    applySocialStatsToUi(stats);
+                });
             });
-        });
+        };
+
+        if (deferFetch) {
+            localProgressHandler.postDelayed(pendingSocialStatsFetchRunnable, SOCIAL_STATS_FETCH_DEFER_MS);
+        } else {
+            localProgressHandler.post(pendingSocialStatsFetchRunnable);
+        }
+    }
+
+    private void cancelPendingSocialStatsFetch() {
+        if (pendingSocialStatsFetchRunnable != null) {
+            localProgressHandler.removeCallbacks(pendingSocialStatsFetchRunnable);
+            pendingSocialStatsFetchRunnable = null;
+        }
     }
 
     @Nullable
@@ -2983,6 +3844,7 @@ public class SongPlayerFragment extends Fragment {
         cancelAutoplayRecovery();
         cancelPendingStreamResolver();
         pauseYouTubePlaybackEngine("session_exit");
+        youtubePlaybackActive = false;
         persistPositionForLoadedTrack();
         stopLocalProgressTicker();
         releaseLocalMediaPlayer();
@@ -3020,6 +3882,18 @@ public class SongPlayerFragment extends Fragment {
         return isEffectivePlaying();
     }
 
+    public boolean externalIsShuffleEnabled() {
+        return shuffleEnabled;
+    }
+
+    public int externalGetRepeatMode() {
+        return repeatMode;
+    }
+
+    public void externalSetShuffleEnabled(boolean enabled) {
+        setShuffleEnabled(enabled);
+    }
+
     public int externalGetCurrentSeconds() {
         return Math.max(0, currentSeconds);
     }
@@ -3035,6 +3909,15 @@ public class SongPlayerFragment extends Fragment {
         }
         String value = tracks.get(currentIndex).videoId;
         return value == null ? "" : value;
+    }
+
+    @NonNull
+    public List<String> externalGetQueueVideoIds() {
+        List<String> queueVideoIds = new ArrayList<>(tracks.size());
+        for (PlayerTrack track : tracks) {
+            queueVideoIds.add(track.videoId == null ? "" : track.videoId);
+        }
+        return queueVideoIds;
     }
 
     public boolean externalMatchesQueue(@Nullable List<String> videoIds) {
@@ -3485,12 +4368,29 @@ public class SongPlayerFragment extends Fragment {
         }
 
         PlayerTrack track = tracks.get(currentIndex);
-        MediaMetadataCompat metadata = new MediaMetadataCompat.Builder()
+        MediaMetadataCompat.Builder metadataBuilder = new MediaMetadataCompat.Builder()
                 .putString(MediaMetadataCompat.METADATA_KEY_TITLE, track.title)
                 .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, track.artist)
-                .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, Math.max(1, totalSeconds) * 1000L)
-                .build();
-        mediaSession.setMetadata(metadata);
+                .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, Math.max(1, totalSeconds) * 1000L);
+
+        if (!TextUtils.isEmpty(track.videoId)
+                && TextUtils.equals(track.videoId, mediaSessionArtworkVideoId)
+                && mediaSessionArtwork != null
+                && !mediaSessionArtwork.isRecycled()) {
+            metadataBuilder
+                    .putBitmap(MediaMetadataCompat.METADATA_KEY_ART, mediaSessionArtwork)
+                    .putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, mediaSessionArtwork)
+                    .putBitmap(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON, mediaSessionArtwork);
+        }
+
+        if (!TextUtils.isEmpty(track.imageUrl)) {
+            metadataBuilder.putString(MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI, track.imageUrl);
+        }
+        if (!TextUtils.isEmpty(track.videoId)) {
+            metadataBuilder.putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, track.videoId);
+        }
+
+        mediaSession.setMetadata(metadataBuilder.build());
     }
 
     private void updateMediaSessionState() {
@@ -3542,10 +4442,12 @@ public class SongPlayerFragment extends Fragment {
         PendingIntent contentIntent = PendingIntent.getActivity(requireContext(), 8701, openAppIntent, pendingFlags);
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(requireContext(), MEDIA_NOTIFICATION_CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_music)
+            .setSmallIcon(R.drawable.ic_notification_cat)
                 .setContentTitle(track.title)
                 .setContentText(track.artist)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+                .setColorized(true)
                 .setContentIntent(contentIntent)
                 .setOnlyAlertOnce(true)
                 .setOngoing(isPlaying)
@@ -3560,6 +4462,15 @@ public class SongPlayerFragment extends Fragment {
                 .setStyle(new androidx.media.app.NotificationCompat.MediaStyle()
                         .setMediaSession(mediaSession.getSessionToken())
                         .setShowActionsInCompactView(0, 1, 2));
+
+            if (!TextUtils.isEmpty(track.videoId)
+                && TextUtils.equals(track.videoId, mediaNotificationLargeIconVideoId)
+                && mediaNotificationLargeIcon != null
+                && !mediaNotificationLargeIcon.isRecycled()) {
+                builder.setLargeIcon(mediaNotificationLargeIcon);
+            } else {
+                builder.setLargeIcon((Bitmap) null);
+            }
 
         NotificationManagerCompat.from(requireContext()).notify(MEDIA_NOTIFICATION_ID, builder.build());
     }
@@ -3775,21 +4686,59 @@ public class SongPlayerFragment extends Fragment {
         );
     }
 
+    private void cancelNextUpReveal() {
+        if (nextUpRevealRunnable != null) {
+            localProgressHandler.removeCallbacks(nextUpRevealRunnable);
+            nextUpRevealRunnable = null;
+        }
+        nextUpRevealCursor = 0;
+    }
+
+    private void appendNextUpBatch(int totalCount, int batchSize) {
+        if (nextUpAdapter == null || tracks.size() <= 1 || batchSize <= 0) {
+            return;
+        }
+
+        int start = nextUpRevealCursor;
+        int end = Math.min(totalCount, start + batchSize);
+        if (end <= start) {
+            return;
+        }
+
+        for (int offset = start + 1; offset <= end; offset++) {
+            int idx = (currentIndex + offset) % tracks.size();
+            nextUpTracks.add(tracks.get(idx));
+        }
+
+        nextUpAdapter.notifyItemRangeInserted(start, end - start);
+        nextUpRevealCursor = end;
+    }
+
     private void refreshNextUp() {
+        cancelNextUpReveal();
         nextUpTracks.clear();
         if (nextUpAdapter == null) {
             return;
         }
+
         if (tracks.size() <= 1) {
+            rvNextUp.setVisibility(View.GONE);
             nextUpAdapter.notifyDataSetChanged();
             return;
         }
 
-        for (int i = 1; i <= (tracks.size() - 1); i++) {
-            int idx = (currentIndex + i) % tracks.size();
-            nextUpTracks.add(tracks.get(idx));
+        rvNextUp.setNestedScrollingEnabled(false);
+        if (rvNextUp.getVisibility() != View.VISIBLE) {
+            rvNextUp.setAlpha(0f);
+            rvNextUp.setVisibility(View.VISIBLE);
+            rvNextUp.animate().alpha(1f).setDuration(PLAYER_BACKDROP_FADE_IN_DURATION_MS).start();
         }
+
         nextUpAdapter.notifyDataSetChanged();
+
+        int maxQueue = 10;
+        int total = Math.min(tracks.size() - 1, maxQueue);
+        appendNextUpBatch(total, maxQueue);
     }
 
     private int parseDurationSeconds(@NonNull String duration) {
@@ -3864,12 +4813,12 @@ public class SongPlayerFragment extends Fragment {
 
         @NonNull
         static SocialStats loading() {
-            return new SocialStats("0", "0", "0", true);
+            return new SocialStats("0", "", "0", true);
         }
 
         @NonNull
         static SocialStats unavailable() {
-            return new SocialStats("0", "0", "0", true);
+            return new SocialStats("0", "", "0", true);
         }
     }
 
@@ -3928,12 +4877,38 @@ public class SongPlayerFragment extends Fragment {
             holder.tvNextUpArtist.setText(item.artist);
 
             if (!TextUtils.isEmpty(item.imageUrl)) {
+            ViewGroup.LayoutParams params = holder.ivNextUpArt.getLayoutParams();
+            int rawWidth = holder.ivNextUpArt.getWidth() > 0
+                ? holder.ivNextUpArt.getWidth()
+                : (params == null ? 0 : params.width);
+            int rawHeight = holder.ivNextUpArt.getHeight() > 0
+                ? holder.ivNextUpArt.getHeight()
+                : (params == null ? 0 : params.height);
+
+            if (rawWidth > 0 && rawHeight > 0) {
+                int targetWidth = Math.max(64, ((Math.max(1, rawWidth) + 63) / 64) * 64);
+                int targetHeight = Math.max(64, ((Math.max(1, rawHeight) + 63) / 64) * 64);
                 Glide.with(holder.itemView)
-                        .load(item.imageUrl)
-                        .centerCrop()
-                        .placeholder(R.drawable.ic_music)
-                        .error(R.drawable.ic_music)
-                        .into(holder.ivNextUpArt);
+                    .load(item.imageUrl)
+                    .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL)
+                    .skipMemoryCache(false)
+                    .dontAnimate()
+                    .centerCrop()
+                    .override(targetWidth, targetHeight)
+                    .placeholder(R.drawable.ic_music)
+                    .error(R.drawable.ic_music)
+                    .into(holder.ivNextUpArt);
+            } else {
+                Glide.with(holder.itemView)
+                    .load(item.imageUrl)
+                    .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL)
+                    .skipMemoryCache(false)
+                    .dontAnimate()
+                    .centerCrop()
+                    .placeholder(R.drawable.ic_music)
+                    .error(R.drawable.ic_music)
+                    .into(holder.ivNextUpArt);
+            }
             } else {
                 holder.ivNextUpArt.setImageResource(R.drawable.ic_music);
             }

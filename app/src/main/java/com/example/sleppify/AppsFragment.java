@@ -73,7 +73,6 @@ public class AppsFragment extends Fragment {
     private static final long RECENT_FORCE_STOP_HIDE_MS = 3L * 60L * 1000L;
     private static final long BACKGROUND_APPS_CACHE_TTL_MS = 25_000L;
     private static final long BACKGROUND_APPS_REFRESH_INTERVAL_MS = 12_000L;
-    private static final long APPS_SUGGESTION_PREFETCH_MIN_INTERVAL_MS = 15_000L;
     private static final long FORCE_STOP_START_RETRY_INTERVAL_MS = 450L;
     private static final int FORCE_STOP_START_MAX_ATTEMPTS = 7;
     private static final long FORCE_STOP_TIMEOUT_BASE_MS = 12_000L;
@@ -83,8 +82,6 @@ public class AppsFragment extends Fragment {
     private static final int MAX_TARGET_PACKAGES = 40;
     private static final int FALLBACK_LAUNCHABLE_APPS_LIMIT = 80;
     private static final int REQUEST_READ_EXTERNAL_STORAGE_PERMISSION = 4_201;
-    private static final String ACTION_APPLY = "apply";
-    private static final String ACTION_DISMISS = "dismiss";
     private static final long SYSTEM_CACHE_RECLAIM_REQUEST_BYTES = 96L * 1024L * 1024L;
     private static final String[] TEMP_FILE_SUFFIXES = {".tmp", ".temp", ".log", ".lck", ".pid"};
     private static final String[] JUNK_FILE_SUFFIXES = {".bak", ".old", ".dmp", ".dump", ".stacktrace", ".trace", ".chk"};
@@ -121,10 +118,6 @@ public class AppsFragment extends Fragment {
     private View cardStorageUsage;
     private View cardThermal;
     private View cardDeepClean;
-    private View cardAppsSmartSuggestion;
-    private TextView tvAppsSmartSuggestion;
-    private MaterialButton btnAppsSuggestionApply;
-    private MaterialButton btnAppsSuggestionDismiss;
     private LinearLayout layoutBackgroundAppsList;
     private TextView tvBackgroundAppsEmpty;
     private SharedPreferences settingsPrefs;
@@ -147,7 +140,6 @@ public class AppsFragment extends Fragment {
     private long cachedBackgroundBuiltAtMs;
     private int backgroundAppsRenderVersion;
     private long lastBackgroundAppsRefreshAtMs;
-    private long lastAppsSuggestionPrefetchAtMs;
     private boolean forceStopActionInProgress;
     @Nullable
     private Runnable pendingForceStopStartRunnable;
@@ -200,10 +192,6 @@ public class AppsFragment extends Fragment {
         cardStorageUsage = view.findViewById(R.id.cardStorageUsage);
         cardThermal = view.findViewById(R.id.cardThermal);
         cardDeepClean = view.findViewById(R.id.cardDeepClean);
-        cardAppsSmartSuggestion = view.findViewById(R.id.cardAppsSmartSuggestion);
-        tvAppsSmartSuggestion = view.findViewById(R.id.tvAppsSmartSuggestion);
-        btnAppsSuggestionApply = view.findViewById(R.id.btnAppsSuggestionApply);
-        btnAppsSuggestionDismiss = view.findViewById(R.id.btnAppsSuggestionDismiss);
         layoutBackgroundAppsList = view.findViewById(R.id.layoutBackgroundAppsList);
         tvBackgroundAppsEmpty = view.findViewById(R.id.tvBackgroundAppsEmpty);
         settingsPrefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE);
@@ -228,8 +216,6 @@ public class AppsFragment extends Fragment {
         if (cardDeepClean != null) {
             cardDeepClean.setOnClickListener(v -> showDeepCleanDialog());
         }
-        setupAppsSuggestionActions();
-        loadStoredAppsSuggestion();
 
         updateRamMetrics();
         updateStorageMetrics();
@@ -276,7 +262,6 @@ public class AppsFragment extends Fragment {
         refreshAccessibilityPermissionUi();
         refreshBackgroundAppsVerificationList();
         lastBackgroundAppsRefreshAtMs = System.currentTimeMillis();
-        refreshAppsSuggestionState();
         syncSystemInfoPreference();
     }
 
@@ -1157,7 +1142,7 @@ public class AppsFragment extends Fragment {
         cancelForceStopSafetyTimeout();
         Log.i(
                 STOP_APPS_LOG_TAG,
-                "Starting force-stop flow with " + targetPackages.size() + " targets, turboMode=" + isTurboModeEnabled()
+            "Starting force-stop flow with " + targetPackages.size() + " targets"
         );
 
         if (fabStopApps != null) {
@@ -1174,7 +1159,7 @@ public class AppsFragment extends Fragment {
             return;
         }
 
-        boolean started = AppAccessibilityService.requestForceStopPackages(targetPackages, isTurboModeEnabled());
+        boolean started = AppAccessibilityService.requestForceStopPackages(targetPackages);
         Log.i(
                 STOP_APPS_LOG_TAG,
                 "Start attempt " + (attemptNumber + 1) + "/" + FORCE_STOP_START_MAX_ATTEMPTS + " result=" + started
@@ -1459,190 +1444,6 @@ public class AppsFragment extends Fragment {
         });
 
         return result;
-    }
-
-    private void setupAppsSuggestionActions() {
-        if (btnAppsSuggestionApply != null) {
-            btnAppsSuggestionApply.setOnClickListener(v -> {
-                registerAppsSuggestionFeedback(ACTION_APPLY);
-                showAppsSuggestionCard();
-                setAppsSuggestionActionsVisible(false);
-            });
-        }
-
-        if (btnAppsSuggestionDismiss != null) {
-            btnAppsSuggestionDismiss.setOnClickListener(v -> {
-                registerAppsSuggestionFeedback(ACTION_DISMISS);
-                hideAppsSuggestionCard();
-                setAppsSuggestionActionsVisible(true);
-            });
-        }
-    }
-
-    private void loadStoredAppsSuggestion() {
-        if (tvAppsSmartSuggestion == null || settingsPrefs == null) {
-            return;
-        }
-
-        if (!areSmartSuggestionsEnabled()) {
-            hideAppsSuggestionCard();
-            return;
-        }
-
-        if (isAppsSuggestionHiddenUntilNextCycle()) {
-            hideAppsSuggestionCard();
-            return;
-        }
-
-        showAppsSuggestionCard();
-
-        String lastMessage = settingsPrefs.getString(SmartSuggestionPrefetcher.KEY_APPS_AI_LAST_MESSAGE, "");
-        if (TextUtils.isEmpty(lastMessage)) {
-            tvAppsSmartSuggestion.setText(R.string.apps_suggestion_generating);
-            setAppsSuggestionActionsVisible(false);
-            return;
-        }
-        tvAppsSmartSuggestion.setText(lastMessage);
-        boolean actionsHidden = settingsPrefs.getBoolean(SmartSuggestionPrefetcher.KEY_APPS_AI_ACTIONS_HIDDEN, false);
-        setAppsSuggestionActionsVisible(!actionsHidden);
-    }
-
-    private void refreshAppsSuggestionState() {
-        if (!isAdded() || settingsPrefs == null || tvAppsSmartSuggestion == null) {
-            return;
-        }
-
-        if (!areSmartSuggestionsEnabled()) {
-            hideAppsSuggestionCard();
-            return;
-        }
-
-        if (isAppsSuggestionHiddenUntilNextCycle()) {
-            hideAppsSuggestionCard();
-            return;
-        }
-
-        showAppsSuggestionCard();
-
-        Context appContext = requireContext().getApplicationContext();
-        long now = System.currentTimeMillis();
-        if (now - lastAppsSuggestionPrefetchAtMs >= APPS_SUGGESTION_PREFETCH_MIN_INTERVAL_MS) {
-            lastAppsSuggestionPrefetchAtMs = now;
-            backgroundExecutor.execute(() -> SmartSuggestionPrefetcher.prefetchAppsSuggestion(appContext));
-        }
-        String lastMessage = settingsPrefs.getString(SmartSuggestionPrefetcher.KEY_APPS_AI_LAST_MESSAGE, "");
-        if (TextUtils.isEmpty(lastMessage)) {
-            tvAppsSmartSuggestion.setText(R.string.apps_suggestion_generating);
-            setAppsSuggestionActionsVisible(false);
-        } else {
-            tvAppsSmartSuggestion.setText(lastMessage);
-            boolean actionsHidden = settingsPrefs.getBoolean(SmartSuggestionPrefetcher.KEY_APPS_AI_ACTIONS_HIDDEN, false);
-            setAppsSuggestionActionsVisible(!actionsHidden);
-        }
-
-        if (cardAppsSmartSuggestion != null) {
-            cardAppsSmartSuggestion.setAlpha(1f);
-        }
-    }
-
-    private void registerAppsSuggestionFeedback(@NonNull String action) {
-        if (settingsPrefs == null) {
-            return;
-        }
-
-        int acceptCount = settingsPrefs.getInt(SmartSuggestionPrefetcher.KEY_APPS_AI_ACCEPT_COUNT, 0);
-        int dismissCount = settingsPrefs.getInt(SmartSuggestionPrefetcher.KEY_APPS_AI_DISMISS_COUNT, 0);
-
-        if (ACTION_APPLY.equals(action)) {
-            acceptCount++;
-        } else if (ACTION_DISMISS.equals(action)) {
-            dismissCount++;
-        }
-
-        String renderedMessage = tvAppsSmartSuggestion != null
-                ? tvAppsSmartSuggestion.getText().toString()
-                : settingsPrefs.getString(SmartSuggestionPrefetcher.KEY_APPS_AI_LAST_MESSAGE, "");
-
-        boolean hideUntilNext = ACTION_DISMISS.equals(action);
-        boolean hideActions = ACTION_APPLY.equals(action);
-
-        settingsPrefs.edit()
-                .putInt(SmartSuggestionPrefetcher.KEY_APPS_AI_ACCEPT_COUNT, acceptCount)
-                .putInt(SmartSuggestionPrefetcher.KEY_APPS_AI_DISMISS_COUNT, dismissCount)
-                .putString(SmartSuggestionPrefetcher.KEY_APPS_AI_LAST_ACTION, action)
-                .putString(SmartSuggestionPrefetcher.KEY_APPS_AI_LAST_MESSAGE, renderedMessage)
-            .putBoolean(SmartSuggestionPrefetcher.KEY_APPS_AI_HIDDEN_UNTIL_NEXT, hideUntilNext)
-            .putBoolean(SmartSuggestionPrefetcher.KEY_APPS_AI_ACTIONS_HIDDEN, hideActions)
-                .putLong(SmartSuggestionPrefetcher.KEY_APPS_AI_NEXT_AT, System.currentTimeMillis() + SmartSuggestionPrefetcher.SUGGESTION_INTERVAL_MS)
-                .apply();
-    }
-
-    private boolean isAppsSuggestionHiddenUntilNextCycle() {
-        if (settingsPrefs == null) {
-            return false;
-        }
-
-        long lastProcessSession = settingsPrefs.getLong(
-                SmartSuggestionPrefetcher.KEY_APPS_AI_LAST_PROCESS_SESSION,
-                Long.MIN_VALUE
-        );
-        if (lastProcessSession != AiSuggestionSession.PROCESS_SESSION_ID) {
-            settingsPrefs.edit()
-                .putBoolean(SmartSuggestionPrefetcher.KEY_APPS_AI_HIDDEN_UNTIL_NEXT, false)
-                .putBoolean(SmartSuggestionPrefetcher.KEY_APPS_AI_ACTIONS_HIDDEN, false)
-                .apply();
-            return false;
-        }
-
-        boolean hidden = settingsPrefs.getBoolean(SmartSuggestionPrefetcher.KEY_APPS_AI_HIDDEN_UNTIL_NEXT, false);
-        if (!hidden) {
-            return false;
-        }
-
-        long nextAt = settingsPrefs.getLong(SmartSuggestionPrefetcher.KEY_APPS_AI_NEXT_AT, 0L);
-        if (System.currentTimeMillis() >= nextAt) {
-            settingsPrefs.edit()
-                    .putBoolean(SmartSuggestionPrefetcher.KEY_APPS_AI_HIDDEN_UNTIL_NEXT, false)
-                    .putBoolean(SmartSuggestionPrefetcher.KEY_APPS_AI_ACTIONS_HIDDEN, false)
-                    .apply();
-            return false;
-        }
-
-        return true;
-    }
-
-    private void hideAppsSuggestionCard() {
-        if (cardAppsSmartSuggestion != null) {
-            cardAppsSmartSuggestion.setVisibility(View.GONE);
-        }
-    }
-
-    private void showAppsSuggestionCard() {
-        if (cardAppsSmartSuggestion != null) {
-            cardAppsSmartSuggestion.setVisibility(View.VISIBLE);
-        }
-    }
-
-    private void setAppsSuggestionActionsVisible(boolean visible) {
-        int visibility = visible ? View.VISIBLE : View.GONE;
-        if (btnAppsSuggestionApply != null) {
-            btnAppsSuggestionApply.setVisibility(visibility);
-            btnAppsSuggestionApply.setEnabled(visible);
-        }
-        if (btnAppsSuggestionDismiss != null) {
-            btnAppsSuggestionDismiss.setVisibility(visibility);
-            btnAppsSuggestionDismiss.setEnabled(visible);
-        }
-    }
-
-    private boolean areSmartSuggestionsEnabled() {
-        if (settingsPrefs == null) {
-            return true;
-        }
-        return settingsPrefs.getBoolean(
-                CloudSyncManager.KEY_SMART_SUGGESTIONS_ENABLED,
-                settingsPrefs.getBoolean(CloudSyncManager.KEY_AI_SHIFT_ENABLED, true)
-        );
     }
 
     private boolean isAccessibilityServiceEnabled() {
@@ -2282,13 +2083,6 @@ public class AppsFragment extends Fragment {
         if (previous == null || score > previous) {
             scoreByPackage.put(packageName, score);
         }
-    }
-
-    private boolean isTurboModeEnabled() {
-        if (settingsPrefs == null) {
-            return false;
-        }
-        return settingsPrefs.getBoolean(CloudSyncManager.KEY_APPS_TURBO_MODE, false);
     }
 
     @NonNull

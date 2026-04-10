@@ -22,6 +22,10 @@ android {
         buildConfigField("String", "YOUTUBE_DATA_API_KEY", "\"$youtubeDataApiKey\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            abiFilters += setOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+        }
     }
 
     buildTypes {
@@ -41,6 +45,12 @@ android {
 
     buildFeatures {
         buildConfig = true
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 }
 
@@ -64,7 +74,7 @@ dependencies {
     implementation("androidx.work:work-runtime:2.9.1")
     implementation("androidx.media:media:1.7.0")
     implementation("com.pierfrancescosoffritti.androidyoutubeplayer:core:13.0.0")
-    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.0") {
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.25.2") {
         exclude(group = "com.google.protobuf", module = "protobuf-javalite")
     }
     implementation("androidx.camera:camera-core:$cameraXVersion")

@@ -45,6 +45,22 @@
                 android:scaleType="centerCrop"
                 android:src="@drawable/ic_music"
                 app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Small" />
+
+            <LinearLayout
+                android:id="@+id/llNowPlayingOverlay"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="#55233972"
+                android:gravity="center"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:src="@drawable/ic_equalizer"
+                    app:tint="@color/stitch_blue" />
+            </LinearLayout>
         </FrameLayout>
 
         <LinearLayout

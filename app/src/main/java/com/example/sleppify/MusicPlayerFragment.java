@@ -20,6 +20,7 @@ import android.graphics.drawable.RippleDrawable;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.text.TextUtils;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
 import android.view.LayoutInflater;
@@ -32,7 +33,6 @@ import android.widget.PopupMenu;
 import android.widget.ProgressBar;
 import android.widget.SeekBar;
 import android.widget.TextView;
-import android.widget.Toast;
 import android.widget.LinearLayout;
 import android.content.res.ColorStateList;
 import androidx.core.content.ContextCompat;
@@ -43,14 +43,15 @@ import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
+import androidx.lifecycle.Observer;
 import androidx.recyclerview.widget.DiffUtil;
-import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 import androidx.work.Data;
 import androidx.work.ExistingWorkPolicy;
 import androidx.work.OneTimeWorkRequest;
+import androidx.work.WorkInfo;
 import androidx.work.WorkManager;
 
 import com.bumptech.glide.Glide;
@@ -69,6 +70,8 @@ import com.google.android.gms.common.api.Scope;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.android.material.button.MaterialButton;
+import com.google.android.material.chip.Chip;
+import com.google.android.material.chip.ChipGroup;
 import com.google.android.material.imageview.ShapeableImageView;
 import com.google.android.material.textfield.TextInputEditText;
 
@@ -77,8 +80,11 @@ import org.json.JSONObject;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -108,12 +114,15 @@ public class MusicPlayerFragment extends Fragment {
     private static final String PREF_LAST_YOUTUBE_ACCESS_TOKEN = "stream_last_youtube_access_token";
     private static final String PREF_LAST_YOUTUBE_ACCESS_TOKEN_UPDATED_AT = "stream_last_youtube_access_token_updated_at";
     private static final String PREF_LAST_YOUTUBE_WEB_COOKIE = "stream_last_youtube_web_cookie";
+    private static final String PREF_LAST_STREAMING_OAUTH_ACCOUNT_EMAIL = "stream_last_oauth_account_email";
     private static final String STREAM_SCREEN_LIBRARY = "library";
     private static final String STREAM_SCREEN_PLAYLIST_DETAIL = "playlist_detail";
+    private static final String PREF_RECENT_SEARCH_QUERIES = "stream_recent_search_queries";
     private static final long MINI_PROGRESS_TICK_MS = 850L;
     private static final long MINI_SNAPSHOT_REFRESH_MS = 1200L;
     private static final long LIBRARY_INLINE_SEARCH_DEBOUNCE_MS = 320L;
     private static final String TAG_MODULE_MUSIC = "module_music";
+    private static final String TAG_STREAMING = "SleppifyStreaming";
     private static final String PREFS_STREAMING_CACHE = "streaming_cache";
     private static final String PREF_LIBRARY_UPDATED_AT_PREFIX = "library_updated_at_";
     private static final String PREF_LIBRARY_DATA_PREFIX = "library_data_";
@@ -123,14 +132,27 @@ public class MusicPlayerFragment extends Fragment {
     private static final String PREF_PLAYLIST_OFFLINE_COMPLETE_PREFIX = "playlist_offline_complete_";
     private static final String PREF_PLAYLIST_OFFLINE_AUTO_PREFIX = "playlist_offline_auto_";
     private static final String PREF_LAST_STREAMING_ACCOUNT_KEY = "stream_last_library_account_key";
-    private static final String PREF_LIBRARY_GRID_MODE = "library_grid_mode";
     private static final String OFFLINE_DOWNLOAD_UNIQUE_PREFIX = "offline_playlist_";
     private static final String OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME = "offline_playlist_queue";
+    private static final String OFFLINE_DOWNLOAD_MANUAL_TRACK_QUEUE_UNIQUE_NAME = "offline_manual_track_queue";
+    private static final int OFFLINE_AUTO_BATCH_TARGET_TRACKS = 3;
     private static final long OFFLINE_TRACKS_PREFETCH_STALE_MS = 7L * 24 * 60 * 60 * 1000L;
-    private static final int OFFLINE_TRACKS_PREFETCH_LIMIT = 200;
-    private static final int OFFLINE_TRACKS_PREFETCH_PER_PLAYLIST_LIMIT = 5000;
-    private static final int LIBRARY_PLAYLIST_FETCH_LIMIT = 500;
+    private static final int OFFLINE_TRACKS_PREFETCH_LIMIT = 12;
+    private static final int OFFLINE_TRACKS_PREFETCH_PER_PLAYLIST_LIMIT = 250;
+    private static final int LIBRARY_PLAYLIST_FETCH_LIMIT = 150;
+        private static final int SEARCH_PAGE_SIZE = 20;
+        private static final int SEARCH_SUGGESTION_RECENT_LIMIT = 6;
+        private static final int SEARCH_SCROLL_LOAD_MORE_THRESHOLD = 4;
+        private static final String[] DEFAULT_SEARCH_SUGGESTIONS = new String[] {
+            "musica para dormir",
+            "lofi chill",
+            "lluvia relajante",
+            "piano instrumental",
+            "white noise",
+            "deep sleep music"
+        };
     private static final int LIBRARY_INLINE_SEARCH_MAX_RESULTS = 220;
+    private static final int LIBRARY_INLINE_ONLINE_MIN_QUERY_CHARS = 3;
     private static final List<YouTubeMusicService.TrackResult> LIBRARY_CACHE = new ArrayList<>();
     private static final ExecutorService STREAMING_WARMUP_EXECUTOR = Executors.newSingleThreadExecutor();
     private static String libraryCacheAccountKey = "";
@@ -298,7 +320,7 @@ public class MusicPlayerFragment extends Fragment {
             if (isLikedCollection) {
                 title = "Musica que te gusto";
                 subtitle = playlist.itemCount > 0
-                        ? "Playlist autogenerada. " + playlist.itemCount + " canciones"
+                        ? "Playlist autogenerada • " + playlist.itemCount + " canciones"
                         : "Playlist autogenerada";
             } else if (playlist.itemCount > 0) {
                 subtitle = "Playlist • " + playlist.itemCount + " canciones";
@@ -317,16 +339,94 @@ public class MusicPlayerFragment extends Fragment {
         return mapped;
     }
 
+    private void ensureFavoritesPlaylistInLibraryTracks() {
+        if (!isAdded()) {
+            return;
+        }
+
+        List<FavoritesPlaylistStore.FavoriteTrack> favorites = FavoritesPlaylistStore.loadFavorites(requireContext());
+        int count = favorites.size();
+        String subtitle = FavoritesPlaylistStore.buildSubtitle(count);
+        String coverUrl = "";
+        for (FavoritesPlaylistStore.FavoriteTrack favorite : favorites) {
+            if (favorite == null || TextUtils.isEmpty(favorite.imageUrl)) {
+                continue;
+            }
+            coverUrl = favorite.imageUrl;
+            break;
+        }
+
+        int existingIndex = -1;
+        for (int i = 0; i < libraryTracks.size(); i++) {
+            YouTubeMusicService.TrackResult item = libraryTracks.get(i);
+            if (item == null) {
+                continue;
+            }
+            if (TextUtils.equals(FavoritesPlaylistStore.PLAYLIST_ID, item.contentId)) {
+                existingIndex = i;
+                break;
+            }
+        }
+
+        YouTubeMusicService.TrackResult favoritesTrack = new YouTubeMusicService.TrackResult(
+                "playlist",
+                FavoritesPlaylistStore.PLAYLIST_ID,
+                FavoritesPlaylistStore.PLAYLIST_TITLE,
+                subtitle,
+            coverUrl
+        );
+
+        if (existingIndex >= 0) {
+            libraryTracks.remove(existingIndex);
+        }
+        libraryTracks.add(0, favoritesTrack);
+    }
+
+    private void refreshCurrentPlayingPlaylistState() {
+        if (!isAdded()) {
+            return;
+        }
+
+        boolean previousActive = currentPlayingPlaylistActive;
+        String previousPlaylistId = currentPlayingPlaylistId;
+
+        SharedPreferences prefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
+        boolean isPlaying = prefs.getBoolean(PREF_LAST_IS_PLAYING, false);
+        String playlistId = prefs.getString(PREF_LAST_PLAYLIST_ID, "");
+        String normalizedPlaylistId = playlistId == null ? "" : playlistId.trim();
+        if (!isPlaying || TextUtils.isEmpty(normalizedPlaylistId)) {
+            normalizedPlaylistId = "";
+        }
+
+        boolean changed = currentPlayingPlaylistActive != isPlaying
+                || !TextUtils.equals(currentPlayingPlaylistId, normalizedPlaylistId);
+        currentPlayingPlaylistActive = isPlaying;
+        currentPlayingPlaylistId = normalizedPlaylistId;
+
+        if (changed && adapter != null) {
+            adapter.notifyPlayingPlaylistChanged(
+                    previousActive ? previousPlaylistId : "",
+                    currentPlayingPlaylistActive ? currentPlayingPlaylistId : ""
+            );
+        }
+    }
+
+    private boolean isPlaylistCurrentlyPlaying(@Nullable String playlistId) {
+        if (!currentPlayingPlaylistActive || TextUtils.isEmpty(playlistId)) {
+            return false;
+        }
+        return TextUtils.equals(currentPlayingPlaylistId, playlistId == null ? "" : playlistId.trim());
+    }
+
     private LinearLayout llSearchRow;
     private View llLibraryInlineSearch;
     private View tvLibraryTitle;
     private View hsvLibraryFilters;
-    private View llLibrarySortRow;
     private View llMusicState;
     private View hsvFilterChips;
     private View llSearchOverlay;
+    private ChipGroup cgSearchSuggestions;
     private ImageView ivLibraryQuickClear;
-    private ImageView ivLibraryViewToggle;
     private TextInputEditText etMusicQuery;
     private TextInputEditText etLibraryQuickSearch;
     private MaterialButton btnSearchMusic;
@@ -356,6 +456,8 @@ public class MusicPlayerFragment extends Fragment {
     private SwipeRefreshLayout swipeLibraryRefresh;
 
     private final YouTubeMusicService youTubeMusicService = new YouTubeMusicService();
+    private final ExecutorService offlinePrefetchExecutor = Executors.newSingleThreadExecutor();
+    private final YouTubeMusicService offlinePrefetchService = new YouTubeMusicService(offlinePrefetchExecutor);
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Handler miniProgressHandler = new Handler(Looper.getMainLooper());
     private final Runnable miniProgressTicker = new Runnable() {
@@ -375,8 +477,19 @@ public class MusicPlayerFragment extends Fragment {
     private final List<YouTubeMusicService.TrackResult> libraryTracks = new ArrayList<>();
     private final Map<String, String> normalizedFilterCache = new HashMap<>();
     private final Set<String> offlinePrefetchInFlight = new HashSet<>();
+    private final Object cachedPlaylistTracksLock = new Object();
+    private final Map<String, ArrayList<CachedPlaylistTrack>> cachedPlaylistTracksById = new HashMap<>();
+    private final Map<String, Long> cachedPlaylistTracksUpdatedAtById = new HashMap<>();
+    private final List<String> recentSearchQueries = new ArrayList<>();
     private MusicResultsAdapter adapter;
+    private LinearLayoutManager musicResultsLayoutManager;
     private boolean searching;
+    private boolean searchPaginationInFlight;
+    private boolean hasMoreSearchPages;
+    @NonNull
+    private String nextSearchPageToken = "";
+    @NonNull
+    private String activeSearchQuery = "";
     private boolean loadingLibrary;
     @Nullable
     private Runnable pendingLibraryInlineSearchRunnable;
@@ -387,19 +500,22 @@ public class MusicPlayerFragment extends Fragment {
     private long latestSearchRequestId;
     @NonNull
     private String lastLibraryInlineDispatchedQuery = "";
+    private boolean libraryInlineManualModeActive;
+    private boolean libraryInlinePendingReveal;
     @Nullable
     private GoogleSignInClient googleSignInClient;
     @Nullable
     private GoogleSignInAccount pendingRecoverableAccount;
+    private boolean pendingWebSessionAuthRecovery;
+    private boolean pendingWebSessionUserTriggered;
+    private boolean pendingWebSessionBackgroundRefresh;
+    private boolean pendingWebSessionForceRefresh;
     @Nullable
     private YouTubeMusicService.TrackResult featuredTrack;
     private String youtubeAccessToken = "";
     private boolean youtubeAuthRefreshInProgress;
     private boolean streamingOauthCompleted;
-    private boolean libraryGridMode;
     private long lastAutoWebSessionLaunchAtMs;
-    @Nullable
-    private Boolean lastAppliedLibraryLayoutGridMode;
     @Nullable
     private PlaybackHistoryStore.Snapshot miniSnapshotCache;
     @Nullable
@@ -407,16 +523,29 @@ public class MusicPlayerFragment extends Fragment {
     private long miniSnapshotCacheReadAtMs;
     private boolean restoringHiddenMiniPlayerFromSnapshot;
     @NonNull
+    private String streamingOauthAccountEmail = "";
+    @NonNull
     private String lastMiniArtworkTrackId = "";
     @NonNull
     private String lastMiniArtworkUrl = "";
     private int lastMiniProgressValue = -1;
+    @NonNull
+    private String currentPlayingPlaylistId = "";
+    private boolean currentPlayingPlaylistActive;
+    @Nullable
+    private Observer<List<WorkInfo>> offlineQueueObserver;
+    @Nullable
+    private Observer<List<WorkInfo>> offlineManualQueueObserver;
+    private boolean offlineAutoQueueScanInFlight;
+    private boolean offlineQueueHadActiveWork;
+    private boolean offlineManualQueueHadActiveWork;
     @Nullable
     private OnBackPressedCallback clearSearchBackPressedCallback;
 
     private ActivityResultLauncher<Intent> signInLauncher;
     private ActivityResultLauncher<Intent> recoverAuthLauncher;
     private ActivityResultLauncher<Intent> webSessionLauncher;
+    private ActivityResultLauncher<Intent> searchActivityLauncher;
 
     private enum ScreenMode {
         SEARCH,
@@ -442,6 +571,33 @@ public class MusicPlayerFragment extends Fragment {
 
     private ChipFilter activeFilter = ChipFilter.SONGS;
 
+    private final RecyclerView.OnScrollListener searchPaginationScrollListener = new RecyclerView.OnScrollListener() {
+        @Override
+        public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
+            if (dy <= 0) {
+                return;
+            }
+            if (activeScreen != ScreenMode.SEARCH
+                    || musicResultsLayoutManager == null
+                    || searchPaginationInFlight
+                    || searching
+                    || !hasMoreSearchPages
+                    || TextUtils.isEmpty(activeSearchQuery)) {
+                return;
+            }
+
+            int totalItems = musicResultsLayoutManager.getItemCount();
+            if (totalItems <= 0) {
+                return;
+            }
+
+            int lastVisible = musicResultsLayoutManager.findLastVisibleItemPosition();
+            if (lastVisible >= (totalItems - SEARCH_SCROLL_LOAD_MORE_THRESHOLD)) {
+                loadMoreSearchResultsIfNeeded();
+            }
+        }
+    };
+
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -455,13 +611,29 @@ public class MusicPlayerFragment extends Fragment {
                 new ActivityResultContracts.StartActivityForResult(),
                 result -> {
                     GoogleSignInAccount account = pendingRecoverableAccount;
+                    boolean retryWebSessionFlow = pendingWebSessionAuthRecovery;
+                    boolean retryUserTriggered = pendingWebSessionUserTriggered;
+                    boolean retryBackgroundRefresh = pendingWebSessionBackgroundRefresh;
+                    boolean retryForceRefresh = pendingWebSessionForceRefresh;
+                    clearPendingRecoverableAuthState();
                     pendingRecoverableAccount = null;
 
-                    if (result.getResultCode() == Activity.RESULT_OK && account != null) {
-                        requestYoutubeAccessToken(account, true);
-                    } else {
-                        setLibraryLoading(false, "Permiso de YouTube no concedido.");
+                    if (result.getResultCode() == Activity.RESULT_OK) {
+                        if (account != null) {
+                            requestYoutubeAccessToken(account, true);
+                            return;
+                        }
+                        if (retryWebSessionFlow) {
+                            requestYoutubeAccessTokenFromPrimaryAccountAfterWebSession(
+                                    retryUserTriggered,
+                                    retryBackgroundRefresh,
+                                    retryForceRefresh
+                            );
+                            return;
+                        }
                     }
+
+                    setLibraryLoading(false, "Permiso de YouTube no concedido.");
                 }
         );
 
@@ -478,6 +650,19 @@ public class MusicPlayerFragment extends Fragment {
                     handleWebSessionAuthSuccess(result.getData());
                 }
         );
+
+        searchActivityLauncher = registerForActivityResult(
+                new ActivityResultContracts.StartActivityForResult(),
+                result -> {
+                    if (!isAdded()) {
+                        return;
+                    }
+                    if (result.getData() == null) {
+                        return;
+                    }
+                    handleSearchActivityResult(result.getResultCode(), result.getData());
+                }
+        );
     }
 
     @Nullable
@@ -490,21 +675,12 @@ public class MusicPlayerFragment extends Fragment {
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
 
-        llSearchRow = view.findViewById(R.id.llSearchRow);
         llLibraryInlineSearch = view.findViewById(R.id.llLibraryInlineSearch);
         tvLibraryTitle = view.findViewById(R.id.tvLibraryTitle);
         hsvLibraryFilters = view.findViewById(R.id.hsvLibraryFilters);
-        llLibrarySortRow = view.findViewById(R.id.llLibrarySortRow);
         llMusicState = view.findViewById(R.id.llMusicState);
-        hsvFilterChips = view.findViewById(R.id.hsvFilterChips);
-        llSearchOverlay = view.findViewById(R.id.llSearchOverlay);
         ivLibraryQuickClear = view.findViewById(R.id.ivLibraryQuickClear);
-        ivLibraryViewToggle = view.findViewById(R.id.ivLibraryViewToggle);
-        etMusicQuery = view.findViewById(R.id.etMusicQuery);
         etLibraryQuickSearch = view.findViewById(R.id.etLibraryQuickSearch);
-        btnSearchMusic = view.findViewById(R.id.btnSearchMusic);
-        btnTabSearch = view.findViewById(R.id.btnTabSearch);
-        btnTabLibrary = view.findViewById(R.id.btnTabLibrary);
         btnYoutubeLogin = view.findViewById(R.id.btnYoutubeLogin);
         llLibraryEmptyState = view.findViewById(R.id.llLibraryEmptyState);
         progressMusic = view.findViewById(R.id.progressMusic);
@@ -516,10 +692,6 @@ public class MusicPlayerFragment extends Fragment {
         tvFeaturedSubtitle = view.findViewById(R.id.tvFeaturedSubtitle);
         btnFeaturedPlay = view.findViewById(R.id.btnFeaturedPlay);
         btnFeaturedSave = view.findViewById(R.id.btnFeaturedSave);
-        btnChipVideos = view.findViewById(R.id.btnChipVideos);
-        btnChipSongs = view.findViewById(R.id.btnChipSongs);
-        btnChipArtists = view.findViewById(R.id.btnChipArtists);
-        btnChipPlaylists = view.findViewById(R.id.btnChipPlaylists);
         llMiniPlayer = view.findViewById(R.id.llMiniPlayer);
         ivMiniPlayerArt = view.findViewById(R.id.ivMiniPlayerArt);
         tvMiniPlayerTitle = view.findViewById(R.id.tvMiniPlayerTitle);
@@ -528,40 +700,32 @@ public class MusicPlayerFragment extends Fragment {
         btnMiniPlayPause = view.findViewById(R.id.btnMiniPlayPause);
         swipeLibraryRefresh = view.findViewById(R.id.swipeLibraryRefresh);
 
-        libraryGridMode = getCachePrefs().getBoolean(PREF_LIBRARY_GRID_MODE, false);
         adapter = new MusicResultsAdapter(this::openTrack, this::onLibraryPlaylistMorePressed);
-        adapter.setGridMode(libraryGridMode);
-        rvMusicResults.setLayoutManager(new LinearLayoutManager(requireContext()));
+        musicResultsLayoutManager = new LinearLayoutManager(requireContext());
+        rvMusicResults.setLayoutManager(musicResultsLayoutManager);
         rvMusicResults.setAdapter(adapter);
-        applyLibraryLayoutMode();
+        rvMusicResults.addOnScrollListener(searchPaginationScrollListener);
 
+        rebuildGoogleSignInClient();
         restoreCachedStreamingSessionState();
+        restoreRecentSearchQueries();
+        ensureFavoritesPlaylistInLibraryTracks();
+        refreshCurrentPlayingPlaylistState();
         setupLibraryPullToRefresh();
+        startObservingOfflineQueue();
 
         llFeaturedResult.setVisibility(View.GONE);
         btnYoutubeLogin.setVisibility(View.GONE);
 
-        btnSearchMusic.setOnClickListener(v -> performSearch(true));
-        btnTabSearch.setOnClickListener(v -> switchScreen(ScreenMode.SEARCH));
-        btnTabLibrary.setOnClickListener(v -> switchScreen(ScreenMode.LIBRARY));
+        if (btnSearchMusic != null) btnSearchMusic.setOnClickListener(v -> performSearch(true));
+        if (btnTabSearch != null) btnTabSearch.setOnClickListener(v -> switchScreen(ScreenMode.SEARCH));
+        if (btnTabLibrary != null) btnTabLibrary.setOnClickListener(v -> switchScreen(ScreenMode.LIBRARY));
         btnYoutubeLogin.setOnClickListener(v -> onYoutubeLoginClicked());
 
-        btnChipVideos.setOnClickListener(v -> setActiveFilter(ChipFilter.VIDEOS));
-        btnChipSongs.setOnClickListener(v -> setActiveFilter(ChipFilter.SONGS));
-        btnChipArtists.setOnClickListener(v -> setActiveFilter(ChipFilter.ARTISTS));
-        btnChipPlaylists.setOnClickListener(v -> setActiveFilter(ChipFilter.PLAYLISTS));
-
-        View.OnClickListener toggleListener = v -> {
-            if (activeScreen != ScreenMode.LIBRARY) {
-                return;
-            }
-            libraryGridMode = !libraryGridMode;
-            getCachePrefs().edit().putBoolean(PREF_LIBRARY_GRID_MODE, libraryGridMode).apply();
-            applyLibraryLayoutMode();
-        };
-        if (ivLibraryViewToggle != null) {
-            ivLibraryViewToggle.setOnClickListener(toggleListener);
-        }
+        if (btnChipVideos != null) btnChipVideos.setOnClickListener(v -> setActiveFilter(ChipFilter.VIDEOS));
+        if (btnChipSongs != null) btnChipSongs.setOnClickListener(v -> setActiveFilter(ChipFilter.SONGS));
+        if (btnChipArtists != null) btnChipArtists.setOnClickListener(v -> setActiveFilter(ChipFilter.ARTISTS));
+        if (btnChipPlaylists != null) btnChipPlaylists.setOnClickListener(v -> setActiveFilter(ChipFilter.PLAYLISTS));
 
         btnFeaturedPlay.setOnClickListener(v -> {
             if (featuredTrack != null) {
@@ -576,24 +740,27 @@ public class MusicPlayerFragment extends Fragment {
             shareTrackResult(featuredTrack);
         });
 
-        etMusicQuery.setOnEditorActionListener((textView, actionId, event) -> {
-            performSearch(true);
-            return true;
-        });
-        etMusicQuery.addTextChangedListener(new TextWatcher() {
-            @Override
-            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
-            }
+        if (etMusicQuery != null) {
+            etMusicQuery.setOnEditorActionListener((textView, actionId, event) -> {
+                performSearch(true);
+                return true;
+            });
+            etMusicQuery.addTextChangedListener(new TextWatcher() {
+                @Override
+                public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+                }
 
-            @Override
-            public void onTextChanged(CharSequence s, int start, int before, int count) {
-            }
+                @Override
+                public void onTextChanged(CharSequence s, int start, int before, int count) {
+                }
 
-            @Override
-            public void afterTextChanged(Editable s) {
-                updateClearSearchBackPressedEnabled();
-            }
-        });
+                @Override
+                public void afterTextChanged(Editable s) {
+                    updateClearSearchBackPressedEnabled();
+                    handleSearchQueryTypingState();
+                }
+            });
+        }
 
         if (etLibraryQuickSearch != null) {
             etLibraryQuickSearch.addTextChangedListener(new TextWatcher() {
@@ -614,8 +781,31 @@ public class MusicPlayerFragment extends Fragment {
             });
 
             etLibraryQuickSearch.setOnEditorActionListener((textView, actionId, event) -> {
-                applyLibraryInlineSongSearch();
+                submitLibraryInlineSongSearch();
                 return true;
+            });
+
+            etLibraryQuickSearch.setOnFocusChangeListener((v, hasFocus) -> {
+                if (activeScreen != ScreenMode.LIBRARY) {
+                    return;
+                }
+
+                if (hasFocus) {
+                    libraryInlineManualModeActive = true;
+                    showLibraryInlineBlankState();
+                } else if (TextUtils.isEmpty(getLibraryInlineQuery())) {
+                    libraryInlineManualModeActive = false;
+                    renderLibraryResults();
+                }
+
+                updateClearSearchBackPressedEnabled();
+            });
+
+            etLibraryQuickSearch.setOnClickListener(v -> {
+                if (activeScreen != ScreenMode.LIBRARY) {
+                    return;
+                }
+                launchSearchActivity();
             });
         }
 
@@ -637,6 +827,7 @@ public class MusicPlayerFragment extends Fragment {
         applyChipStyles();
         applyTopTabStyles();
         updateYoutubeButtonLabel();
+        refreshSearchSuggestions("");
         switchScreen(ScreenMode.LIBRARY);
         if (!isPlaylistDetailStatePending()) {
             persistStreamingScreen(STREAM_SCREEN_LIBRARY);
@@ -654,10 +845,17 @@ public class MusicPlayerFragment extends Fragment {
     @Override
     public void onResume() {
         super.onResume();
+        startObservingOfflineQueue();
+        offlineQueueHadActiveWork = false;
+        offlineManualQueueHadActiveWork = false;
         resetMiniPlayerRenderCache();
+        updateClearSearchBackPressedEnabled();
+        ensureFavoritesPlaylistInLibraryTracks();
+        refreshCurrentPlayingPlaylistState();
         if (adapter != null) {
             adapter.invalidatePlaylistOfflineState(null);
         }
+        maybeEnqueueNextOfflineAutoPlaylist();
         startMiniProgressTicker();
         maybeRestoreHiddenMiniPlayerFromPausedSnapshot();
         maybeAutoLaunchWebSessionIfNeeded();
@@ -666,6 +864,9 @@ public class MusicPlayerFragment extends Fragment {
 
     @Override
     public void onPause() {
+        if (clearSearchBackPressedCallback != null) {
+            clearSearchBackPressedCallback.setEnabled(false);
+        }
         stopMiniProgressTicker();
         super.onPause();
     }
@@ -673,10 +874,18 @@ public class MusicPlayerFragment extends Fragment {
     @Override
     public void onHiddenChanged(boolean hidden) {
         super.onHiddenChanged(hidden);
+        updateClearSearchBackPressedEnabled();
         if (hidden) {
             stopMiniProgressTicker();
             return;
         }
+        startObservingOfflineQueue();
+        ensureFavoritesPlaylistInLibraryTracks();
+        refreshCurrentPlayingPlaylistState();
+        if (adapter != null) {
+            adapter.invalidatePlaylistOfflineState(null);
+        }
+        maybeEnqueueNextOfflineAutoPlaylist();
         startMiniProgressTicker();
         maybeRestoreHiddenMiniPlayerFromPausedSnapshot();
         maybeAutoLaunchWebSessionIfNeeded();
@@ -775,7 +984,7 @@ public class MusicPlayerFragment extends Fragment {
         }
 
         PlaybackHistoryStore.Snapshot snapshot = loadPlaybackSnapshot();
-        if (!snapshot.isValid() || snapshot.isPlaying || snapshot.queue.isEmpty()) {
+        if (!snapshot.isValid() || snapshot.queue.isEmpty()) {
             return;
         }
 
@@ -837,14 +1046,12 @@ public class MusicPlayerFragment extends Fragment {
             adapter.setSearchMode(mode == ScreenMode.SEARCH
                     || (mode == ScreenMode.LIBRARY && !TextUtils.isEmpty(getLibraryInlineQuery())));
         }
-        applyLibraryLayoutMode();
 
         boolean searchVisible = mode == ScreenMode.SEARCH;
-        if (llSearchOverlay != null) {
-            llSearchOverlay.setVisibility(searchVisible ? View.VISIBLE : View.GONE);
-        }
-        llSearchRow.setVisibility(searchVisible ? View.VISIBLE : View.GONE);
-        hsvFilterChips.setVisibility(searchVisible ? View.VISIBLE : View.GONE);
+        if (llSearchOverlay != null) llSearchOverlay.setVisibility(searchVisible ? View.VISIBLE : View.GONE);
+        if (llSearchRow != null) llSearchRow.setVisibility(searchVisible ? View.VISIBLE : View.GONE);
+        if (hsvFilterChips != null) hsvFilterChips.setVisibility(searchVisible ? View.VISIBLE : View.GONE);
+        if (cgSearchSuggestions != null) cgSearchSuggestions.setVisibility(searchVisible ? View.VISIBLE : View.GONE);
         llLibraryEmptyState.setVisibility(View.GONE);
         if (llLibraryInlineSearch != null) {
             llLibraryInlineSearch.setVisibility(searchVisible ? View.GONE : View.VISIBLE);
@@ -856,13 +1063,13 @@ public class MusicPlayerFragment extends Fragment {
 
         if (searchVisible) {
             String query = etMusicQuery.getText() != null ? etMusicQuery.getText().toString().trim() : "";
-            if (!allTracks.isEmpty()) {
+            refreshSearchSuggestions(query);
+            if (!TextUtils.isEmpty(query)
+                    && !allTracks.isEmpty()
+                    && TextUtils.equals(query, activeSearchQuery)) {
                 applyActiveFilter(query);
             } else {
-                featuredTrack = null;
-                llFeaturedResult.setVisibility(View.GONE);
-                adapter.submitResults(new ArrayList<>());
-                tvMusicState.setText("Escribe y busca para cargar resultados.");
+                resetSearchResultsForTypingState(query);
             }
             return;
         }
@@ -870,11 +1077,14 @@ public class MusicPlayerFragment extends Fragment {
         llFeaturedResult.setVisibility(View.GONE);
         String inlineQuery = getLibraryInlineQuery();
         if (!TextUtils.isEmpty(inlineQuery)) {
-            triggerOnlineMusicSearchFromLibrary(inlineQuery);
+            libraryInlineManualModeActive = true;
+            showLibraryInlineBlankState();
             return;
         } else if (!libraryTracks.isEmpty()) {
+            libraryInlineManualModeActive = false;
             renderLibraryResults();
         } else {
+            libraryInlineManualModeActive = false;
             adapter.submitResults(new ArrayList<>());
             tvMusicState.setText("");
             showLibraryEmptyState();
@@ -1010,7 +1220,17 @@ public class MusicPlayerFragment extends Fragment {
         if (clearSearchBackPressedCallback == null) {
             return;
         }
-        clearSearchBackPressedCallback.setEnabled(hasAnySearchInputText());
+        boolean shouldEnable = isResumed()
+                && !isHidden()
+                && (hasAnySearchInputText() || isLibraryInlineAwaitingSubmitState());
+        clearSearchBackPressedCallback.setEnabled(shouldEnable);
+    }
+
+    private boolean isLibraryInlineAwaitingSubmitState() {
+        return activeScreen == ScreenMode.LIBRARY
+                && libraryInlineManualModeActive
+                && etLibraryQuickSearch != null
+                && etLibraryQuickSearch.hasFocus();
     }
 
     private boolean hasAnySearchInputText() {
@@ -1056,113 +1276,22 @@ public class MusicPlayerFragment extends Fragment {
             cleared = true;
         }
 
+        if (!cleared && activeScreen == ScreenMode.LIBRARY && libraryInlineManualModeActive) {
+            if (etLibraryQuickSearch != null) {
+                etLibraryQuickSearch.setText("");
+                etLibraryQuickSearch.clearFocus();
+            }
+            libraryInlineManualModeActive = false;
+            libraryInlinePendingReveal = false;
+            renderLibraryResults();
+            cleared = true;
+        }
+
         return cleared;
-    }
-
-    private void applyLibraryLayoutMode() {
-        if (rvMusicResults == null || adapter == null || !isAdded()) {
-            return;
-        }
-
-        boolean useGrid = activeScreen == ScreenMode.LIBRARY && libraryGridMode;
-        boolean modeChanged = lastAppliedLibraryLayoutGridMode != null
-                && lastAppliedLibraryLayoutGridMode != useGrid;
-
-        if (activeScreen == ScreenMode.LIBRARY && modeChanged) {
-            animateLibraryLayoutSwitch(useGrid);
-        } else {
-            applyRecyclerLayoutManager(useGrid);
-            adapter.setGridMode(useGrid);
-            rvMusicResults.setAlpha(1f);
-            rvMusicResults.setTranslationY(0f);
-        }
-
-        if (ivLibraryViewToggle != null) {
-            int tint = ContextCompat.getColor(requireContext(), R.color.text_secondary);
-            ivLibraryViewToggle.setActivated(false);
-            ivLibraryViewToggle.setContentDescription(useGrid
-                    ? "Cambiar a vista de lista"
-                    : "Cambiar a vista de cuadrícula");
-
-            if (activeScreen == ScreenMode.LIBRARY && modeChanged) {
-            animateToggleIconMorph(useGrid, tint);
-            } else {
-            ivLibraryViewToggle.setImageResource(useGrid ? R.drawable.ic_view_list_mode : R.drawable.ic_view_grid_mode);
-            ivLibraryViewToggle.setColorFilter(tint);
-            ivLibraryViewToggle.setRotation(0f);
-            ivLibraryViewToggle.setAlpha(1f);
-                ivLibraryViewToggle.setScaleX(1f);
-                ivLibraryViewToggle.setScaleY(1f);
-            }
-        }
-
-        lastAppliedLibraryLayoutGridMode = useGrid;
-    }
-
-    private void applyRecyclerLayoutManager(boolean useGrid) {
-        if (useGrid) {
-            if (!(rvMusicResults.getLayoutManager() instanceof GridLayoutManager)) {
-                rvMusicResults.setLayoutManager(new GridLayoutManager(requireContext(), 2));
-            }
-        } else {
-            if (!(rvMusicResults.getLayoutManager() instanceof LinearLayoutManager)
-                    || rvMusicResults.getLayoutManager() instanceof GridLayoutManager) {
-                rvMusicResults.setLayoutManager(new LinearLayoutManager(requireContext()));
-            }
-        }
-    }
-
-    private void animateLibraryLayoutSwitch(boolean useGrid) {
-        rvMusicResults.animate().cancel();
-        rvMusicResults.animate()
-                .alpha(0f)
-                .translationY(dpToPx(6))
-                .setDuration(90)
-                .withEndAction(() -> {
-                    if (!isAdded()) {
-                        return;
-                    }
-                    applyRecyclerLayoutManager(useGrid);
-                    adapter.setGridMode(useGrid);
-                    rvMusicResults.setTranslationY(dpToPx(4));
-                    rvMusicResults.animate()
-                            .alpha(1f)
-                            .translationY(0f)
-                            .setDuration(170)
-                            .start();
-                })
-                .start();
     }
 
     private int dpToPx(int dp) {
         return Math.round(dp * getResources().getDisplayMetrics().density);
-    }
-
-    private void animateToggleIconMorph(boolean useGrid, int tint) {
-        if (ivLibraryViewToggle == null) {
-            return;
-        }
-
-        ivLibraryViewToggle.animate().cancel();
-        ivLibraryViewToggle.animate()
-                .alpha(0.25f)
-                .scaleX(0.72f)
-                .scaleY(0.72f)
-                .setDuration(90)
-                .withEndAction(() -> {
-                    if (ivLibraryViewToggle == null || !isAdded()) {
-                        return;
-                    }
-                    ivLibraryViewToggle.setImageResource(useGrid ? R.drawable.ic_view_list_mode : R.drawable.ic_view_grid_mode);
-                    ivLibraryViewToggle.setColorFilter(tint);
-                    ivLibraryViewToggle.animate()
-                            .alpha(1f)
-                            .scaleX(1f)
-                            .scaleY(1f)
-                            .setDuration(130)
-                            .start();
-                })
-                .start();
     }
 
     private void rebuildGoogleSignInClient() {
@@ -1225,6 +1354,7 @@ public class MusicPlayerFragment extends Fragment {
     }
 
     private void styleTopTab(@NonNull MaterialButton tab, boolean selected) {
+        if (tab == null) return;
         int bg = selected
                 ? ContextCompat.getColor(requireContext(), R.color.stitch_blue)
                 : ContextCompat.getColor(requireContext(), R.color.surface_low);
@@ -1239,6 +1369,8 @@ public class MusicPlayerFragment extends Fragment {
         if (!isAdded()) {
             return;
         }
+
+        Log.i(TAG_STREAMING, "login:web_session_launch requested");
 
         streamingOauthCompleted = false;
         youtubeAccessToken = "";
@@ -1266,9 +1398,15 @@ public class MusicPlayerFragment extends Fragment {
         String cookieHeader = data.getStringExtra(YouTubeMusicWebSessionActivity.EXTRA_SESSION_COOKIE_HEADER);
         String userAgent = data.getStringExtra(YouTubeMusicWebSessionActivity.EXTRA_SESSION_USER_AGENT);
         if (TextUtils.isEmpty(cookieHeader)) {
+            Log.w(TAG_STREAMING, "web_session_result missing_cookie_header");
             setLibraryLoading(false, "No se detecto sesion web valida.");
             return;
         }
+
+        Log.i(
+                TAG_STREAMING,
+                "web_session_result authenticated cookieLength=" + cookieHeader.length()
+        );
 
         if (isAdded()) {
             requireContext()
@@ -1298,17 +1436,28 @@ public class MusicPlayerFragment extends Fragment {
             return;
         }
 
-        String accountEmail = getPrimaryAppGoogleEmail();
-        if (TextUtils.isEmpty(accountEmail)) {
-            setLibraryLoading(false, "No hay cuenta principal de app para validar YouTube.");
+        StreamingAccountCandidate accountCandidate = resolveStreamingOAuthAccountCandidate();
+        if (accountCandidate == null || TextUtils.isEmpty(accountCandidate.email)) {
+            Log.w(TAG_STREAMING, "oauth_account unresolved; trying account chooser fallback");
+            if (googleSignInClient != null) {
+                setLibraryLoading(true, "Selecciona tu cuenta Google para Streaming...");
+                launchGoogleSignInChooser(false);
+                return;
+            }
+            setLibraryLoading(false, "No se encontro cuenta Google para validar YouTube.");
             return;
         }
+
+        Log.i(
+                TAG_STREAMING,
+                "oauth_account selected email=" + accountCandidate.email + " source=" + accountCandidate.source
+        );
 
         if (!backgroundRefresh) {
             setLibraryLoading(true, "Validando sesion web y permisos YouTube...");
         }
 
-        Account resolvedAccount = new Account(accountEmail, "com.google");
+        Account resolvedAccount = new Account(accountCandidate.email, "com.google");
         android.content.Context appContext = requireContext().getApplicationContext();
         authExecutor.execute(() -> {
             try {
@@ -1320,27 +1469,41 @@ public class MusicPlayerFragment extends Fragment {
 
                 String finalToken = token;
                 mainHandler.post(() -> {
+                    streamingOauthAccountEmail = accountCandidate.email;
+                    rememberStreamingOauthAccountEmail(accountCandidate.email);
                     youtubeAccessToken = finalToken;
                     streamingOauthCompleted = true;
                     cacheTokenForCurrentAccount(finalToken);
                     updateYoutubeButtonLabel();
+                    Log.i(TAG_STREAMING, "oauth_token acquired; loading playlists");
                     fetchLibraryPlaylists(userTriggered, backgroundRefresh, forceRefresh);
                 });
             } catch (UserRecoverableAuthException recoverableException) {
                 mainHandler.post(() -> {
                     youtubeAuthRefreshInProgress = false;
+                    Log.w(TAG_STREAMING, "oauth_token requires user consent");
                     setLibraryLoading(false, "Sesion web lista. Falta permiso OAuth de YouTube.");
                     Intent recoverIntent = recoverableException.getIntent();
                     if (recoverIntent != null) {
                         try {
-                            startActivity(recoverIntent);
-                        } catch (Exception ignored) {
+                            pendingWebSessionAuthRecovery = true;
+                            pendingWebSessionUserTriggered = userTriggered;
+                            pendingWebSessionBackgroundRefresh = backgroundRefresh;
+                            pendingWebSessionForceRefresh = forceRefresh;
+                            recoverAuthLauncher.launch(recoverIntent);
+                        } catch (Exception launchError) {
+                            clearPendingRecoverableAuthState();
+                            try {
+                                startActivity(recoverIntent);
+                            } catch (Exception ignored) {
+                            }
                         }
                     }
                 });
             } catch (IOException | GoogleAuthException | IllegalStateException e) {
                 mainHandler.post(() -> {
                     youtubeAuthRefreshInProgress = false;
+                    Log.e(TAG_STREAMING, "oauth_token failed: " + e.getMessage());
                     setLibraryLoading(false, "No se pudo validar YouTube: " + e.getMessage());
                     if (userTriggered && isAdded()) {
                         
@@ -1488,6 +1651,7 @@ public class MusicPlayerFragment extends Fragment {
                     if (backgroundRefresh && !userTriggered) {
                         return;
                     }
+                    clearPendingRecoverableAuthState();
                     pendingRecoverableAccount = account;
                     setLibraryLoading(false, "Confirma el permiso para leer tu biblioteca.");
                     Intent recoverIntent = recoverableException.getIntent();
@@ -1521,6 +1685,13 @@ public class MusicPlayerFragment extends Fragment {
         });
     }
 
+    private void clearPendingRecoverableAuthState() {
+        pendingWebSessionAuthRecovery = false;
+        pendingWebSessionUserTriggered = false;
+        pendingWebSessionBackgroundRefresh = false;
+        pendingWebSessionForceRefresh = false;
+    }
+
     private void fetchLibraryPlaylists(boolean userTriggered) {
         fetchLibraryPlaylists(userTriggered, false, false);
     }
@@ -1531,6 +1702,7 @@ public class MusicPlayerFragment extends Fragment {
 
     private void fetchLibraryPlaylists(boolean userTriggered, boolean backgroundRefresh, boolean forceRefresh) {
         if (TextUtils.isEmpty(youtubeAccessToken)) {
+            Log.w(TAG_STREAMING, "playlist_fetch skipped: empty_token");
             if (restoreLibraryFromPersistentCache()) {
                 if (!backgroundRefresh) {
                     setLibraryLoading(false, "Modo offline: biblioteca guardada.");
@@ -1546,6 +1718,7 @@ public class MusicPlayerFragment extends Fragment {
         }
 
         if (!isNetworkAvailable()) {
+            Log.w(TAG_STREAMING, "playlist_fetch network_unavailable");
             if (restoreLibraryFromPersistentCache() || !libraryTracks.isEmpty()) {
                 if (!backgroundRefresh) {
                     setLibraryLoading(false, "Sin internet. Mostrando biblioteca guardada.");
@@ -1563,6 +1736,7 @@ public class MusicPlayerFragment extends Fragment {
         if (!backgroundRefresh) {
             setLibraryLoading(true, "Cargando playlists de tu biblioteca...");
         }
+        Log.i(TAG_STREAMING, "playlist_fetch start limit=" + LIBRARY_PLAYLIST_FETCH_LIMIT);
         youTubeMusicService.fetchMyPlaylists(youtubeAccessToken, LIBRARY_PLAYLIST_FETCH_LIMIT, new YouTubeMusicService.PlaylistsCallback() {
             @Override
             public void onSuccess(@NonNull List<YouTubeMusicService.PlaylistResult> playlists) {
@@ -1570,8 +1744,11 @@ public class MusicPlayerFragment extends Fragment {
                     return;
                 }
 
+                Log.i(TAG_STREAMING, "playlist_fetch success playlists=" + playlists.size());
+
                 libraryTracks.clear();
                 libraryTracks.addAll(mapPlaylistsToLibraryTracks(playlists));
+                ensureFavoritesPlaylistInLibraryTracks();
 
                 cacheLibraryForCurrentAccount(libraryTracks);
                 prefetchLibraryTracksForOffline(libraryTracks, youtubeAccessToken);
@@ -1591,6 +1768,8 @@ public class MusicPlayerFragment extends Fragment {
                 if (!isAdded()) {
                     return;
                 }
+
+                Log.e(TAG_STREAMING, "playlist_fetch error: " + error);
 
                 if (isLikelyNetworkError(error)) {
                     boolean restored = restoreLibraryFromPersistentCache();
@@ -1639,9 +1818,12 @@ public class MusicPlayerFragment extends Fragment {
     }
 
     private void renderLibraryResults() {
+        ensureFavoritesPlaylistInLibraryTracks();
+        libraryInlinePendingReveal = false;
+
         String inlineQuery = getLibraryInlineQuery();
         if (!TextUtils.isEmpty(inlineQuery)) {
-            triggerOnlineMusicSearchFromLibrary(inlineQuery);
+            showLibraryInlineBlankState();
             return;
         }
 
@@ -1655,7 +1837,6 @@ public class MusicPlayerFragment extends Fragment {
         if (hsvLibraryFilters != null) hsvLibraryFilters.setVisibility(View.VISIBLE);
         if (llLibraryInlineSearch != null) llLibraryInlineSearch.setVisibility(View.VISIBLE);
         llLibraryEmptyState.setVisibility(View.GONE);
-        llLibrarySortRowVisible(true);
         updateLibraryInlineClearButton();
         rvMusicResults.setVisibility(View.VISIBLE);
         llMusicStateVisible(false);
@@ -1668,6 +1849,8 @@ public class MusicPlayerFragment extends Fragment {
         } else {
             tvMusicState.setText("");
         }
+
+        maybeEnqueueNextOfflineAutoPlaylist();
     }
 
     private void showLibraryEmptyState() {
@@ -1677,7 +1860,6 @@ public class MusicPlayerFragment extends Fragment {
         if (ivLibraryQuickClear != null) ivLibraryQuickClear.setVisibility(View.GONE);
         llMusicStateVisible(false);
         rvMusicResults.setVisibility(View.GONE);
-        llLibrarySortRowVisible(false);
         llLibraryEmptyState.setVisibility(View.VISIBLE);
         updateYoutubeButtonLabel();
     }
@@ -1699,11 +1881,116 @@ public class MusicPlayerFragment extends Fragment {
         if (TextUtils.isEmpty(query)) {
             cancelPendingLibraryInlineSearch();
             lastLibraryInlineDispatchedQuery = "";
+            libraryInlineManualModeActive = false;
             renderLibraryResults();
             return;
         }
 
-        scheduleLibraryInlineOnlineSearch(query);
+        libraryInlineManualModeActive = true;
+        showLibraryInlineBlankState();
+    }
+
+    private void submitLibraryInlineSongSearch() {
+        if (activeScreen != ScreenMode.LIBRARY) {
+            return;
+        }
+
+        String query = getLibraryInlineQuery();
+        if (TextUtils.isEmpty(query)) {
+            libraryInlineManualModeActive = false;
+            renderLibraryResults();
+            return;
+        }
+
+        libraryInlineManualModeActive = true;
+        showLibraryInlineLoadingState();
+        triggerOnlineMusicSearchFromLibrary(query);
+    }
+
+    private void showLibraryInlineBlankState() {
+        if (activeScreen != ScreenMode.LIBRARY) {
+            return;
+        }
+
+        cancelPendingLibraryInlineSearch();
+        libraryInlinePendingReveal = false;
+
+        if (tvLibraryTitle != null) tvLibraryTitle.setVisibility(View.VISIBLE);
+        if (hsvLibraryFilters != null) hsvLibraryFilters.setVisibility(View.VISIBLE);
+        if (llLibraryInlineSearch != null) llLibraryInlineSearch.setVisibility(View.VISIBLE);
+        llLibraryEmptyState.setVisibility(View.GONE);
+        updateLibraryInlineClearButton();
+
+        featuredTrack = null;
+        llFeaturedResult.setVisibility(View.GONE);
+        tracks.clear();
+        allTracks.clear();
+
+        if (adapter != null) {
+            adapter.setSearchMode(true);
+            adapter.submitResults(new ArrayList<>());
+        }
+
+        if (rvMusicResults != null) {
+            rvMusicResults.animate().cancel();
+            rvMusicResults.setAlpha(0f);
+            rvMusicResults.setVisibility(View.GONE);
+        }
+
+        llMusicStateVisible(false);
+        tvMusicState.setText("");
+    }
+
+    private void showLibraryInlineLoadingState() {
+        if (activeScreen != ScreenMode.LIBRARY) {
+            return;
+        }
+
+        if (tvLibraryTitle != null) tvLibraryTitle.setVisibility(View.VISIBLE);
+        if (hsvLibraryFilters != null) hsvLibraryFilters.setVisibility(View.VISIBLE);
+        if (llLibraryInlineSearch != null) llLibraryInlineSearch.setVisibility(View.VISIBLE);
+        llLibraryEmptyState.setVisibility(View.GONE);
+        updateLibraryInlineClearButton();
+
+        featuredTrack = null;
+        llFeaturedResult.setVisibility(View.GONE);
+        tracks.clear();
+
+        if (adapter != null) {
+            adapter.setSearchMode(true);
+            adapter.submitResults(new ArrayList<>());
+        }
+
+        if (rvMusicResults != null) {
+            rvMusicResults.animate().cancel();
+            rvMusicResults.setAlpha(0f);
+            rvMusicResults.setVisibility(View.GONE);
+        }
+
+        libraryInlinePendingReveal = true;
+        llMusicStateVisible(true);
+        tvMusicState.setText("Buscando musica en YouTube...");
+    }
+
+    private void revealLibraryInlineResultsWithFade() {
+        if (rvMusicResults == null) {
+            return;
+        }
+
+        if (!libraryInlinePendingReveal) {
+            rvMusicResults.setVisibility(View.VISIBLE);
+            rvMusicResults.setAlpha(1f);
+            return;
+        }
+
+        libraryInlinePendingReveal = false;
+        rvMusicResults.animate().cancel();
+        rvMusicResults.setAlpha(0f);
+        rvMusicResults.setVisibility(View.VISIBLE);
+        rvMusicResults.animate()
+                .alpha(1f)
+                .setDuration(210L)
+                .start();
     }
 
     private void cancelPendingLibraryInlineSearch() {
@@ -1730,6 +2017,12 @@ public class MusicPlayerFragment extends Fragment {
             }
 
             if (TextUtils.equals(latestQuery, lastLibraryInlineDispatchedQuery) && searching) {
+                return;
+            }
+
+            if (latestQuery.length() < LIBRARY_INLINE_ONLINE_MIN_QUERY_CHARS) {
+                lastLibraryInlineDispatchedQuery = latestQuery;
+                renderLibrarySongSearchResults(latestQuery);
                 return;
             }
 
@@ -1764,9 +2057,7 @@ public class MusicPlayerFragment extends Fragment {
         if (hsvLibraryFilters != null) hsvLibraryFilters.setVisibility(View.VISIBLE);
         if (llLibraryInlineSearch != null) llLibraryInlineSearch.setVisibility(View.VISIBLE);
         llLibraryEmptyState.setVisibility(View.GONE);
-        llLibrarySortRowVisible(false);
         updateLibraryInlineClearButton();
-        rvMusicResults.setVisibility(View.VISIBLE);
         llMusicStateVisible(true);
         if (adapter != null) {
             adapter.setSearchMode(true);
@@ -1807,11 +2098,12 @@ public class MusicPlayerFragment extends Fragment {
         if (hsvLibraryFilters != null) hsvLibraryFilters.setVisibility(View.VISIBLE);
         if (llLibraryInlineSearch != null) llLibraryInlineSearch.setVisibility(View.VISIBLE);
         llLibraryEmptyState.setVisibility(View.GONE);
-        llLibrarySortRowVisible(false);
         updateLibraryInlineClearButton();
-        rvMusicResults.setVisibility(View.VISIBLE);
         llMusicStateVisible(true);
-        adapter.submitResults(new ArrayList<>(tracks));
+        if (adapter != null) {
+            adapter.submitResults(new ArrayList<>(tracks));
+        }
+        revealLibraryInlineResultsWithFade();
 
         if (resultTracks.isEmpty()) {
             tvMusicState.setText("Sin coincidencias en playlists guardadas para: " + query);
@@ -1831,12 +2123,13 @@ public class MusicPlayerFragment extends Fragment {
             return result;
         }
 
+        ensureFavoritesPlaylistInLibraryTracks();
+
         String[] queryTokens = extractSearchTokens(query);
         if (queryTokens.length == 0) {
             return result;
         }
 
-        SharedPreferences cachePrefs = getCachePrefs();
         Set<String> seenVideoIds = new HashSet<>();
 
         for (YouTubeMusicService.TrackResult playlist : libraryTracks) {
@@ -1849,73 +2142,53 @@ public class MusicPlayerFragment extends Fragment {
                 continue;
             }
 
-            String raw = cachePrefs.getString(PREF_TRACKS_DATA_PREFIX + playlistId, "");
-            if (TextUtils.isEmpty(raw)) {
+            String playlistTitle = TextUtils.isEmpty(playlist.title) ? "Playlist" : playlist.title;
+            ArrayList<CachedPlaylistTrack> cachedTracks = loadCachedPlaylistTracksForOffline(playlistId);
+            if (cachedTracks.isEmpty()) {
                 continue;
             }
 
-            String playlistTitle = TextUtils.isEmpty(playlist.title) ? "Playlist" : playlist.title;
-
-            try {
-                JSONArray array = new JSONArray(raw);
-                for (int i = 0; i < array.length(); i++) {
-                    JSONObject obj = array.optJSONObject(i);
-                    if (obj == null) {
-                        continue;
-                    }
-
-                    String videoId = obj.optString("videoId", "").trim();
-                    String title = obj.optString("title", "").trim();
-                    String artist = obj.optString("artist", "").trim();
-                    String imageUrl = obj.optString("imageUrl", "").trim();
-                    if (videoId.isEmpty()) {
-                        continue;
-                    }
-
-                    String normalizedTitle = normalizeForFilter(title);
-                    String normalizedArtist = normalizeForFilter(artist);
-                    String normalizedPlaylistTitle = normalizeForFilter(playlistTitle);
-                        boolean matches = matchesOrderedTokens(normalizedTitle, queryTokens)
-                            || matchesOrderedTokens(normalizedArtist, queryTokens)
-                            || matchesOrderedTokens(normalizedPlaylistTitle, queryTokens)
-                            || matchesOrderedTokens(
-                                (normalizedTitle + " " + normalizedArtist + " " + normalizedPlaylistTitle).trim(),
-                                queryTokens
-                            );
-                    if (!matches || !seenVideoIds.add(videoId)) {
-                        continue;
-                    }
-
-                    String displayTitle = TextUtils.isEmpty(title) ? "Cancion" : title;
-                    String subtitle = TextUtils.isEmpty(artist)
-                            ? "Playlist: " + playlistTitle
-                            : artist + " • " + playlistTitle;
-
-                    result.add(new YouTubeMusicService.TrackResult(
-                            "video",
-                            videoId,
-                            displayTitle,
-                            subtitle,
-                            imageUrl
-                    ));
-
-                    if (result.size() >= LIBRARY_INLINE_SEARCH_MAX_RESULTS) {
-                        return result;
-                    }
+            for (CachedPlaylistTrack cachedTrack : cachedTracks) {
+                if (cachedTrack == null || TextUtils.isEmpty(cachedTrack.videoId)) {
+                    continue;
                 }
-            } catch (Exception ignored) {
+
+                String normalizedTitle = normalizeForFilter(cachedTrack.title);
+                String normalizedArtist = normalizeForFilter(cachedTrack.artist);
+                String normalizedPlaylistTitle = normalizeForFilter(playlistTitle);
+                boolean matches = matchesOrderedTokens(normalizedTitle, queryTokens)
+                        || matchesOrderedTokens(normalizedArtist, queryTokens)
+                        || matchesOrderedTokens(normalizedPlaylistTitle, queryTokens)
+                        || matchesOrderedTokens(
+                        (normalizedTitle + " " + normalizedArtist + " " + normalizedPlaylistTitle).trim(),
+                        queryTokens
+                );
+                if (!matches || !seenVideoIds.add(cachedTrack.videoId)) {
+                    continue;
+                }
+
+                String displayTitle = TextUtils.isEmpty(cachedTrack.title) ? "Cancion" : cachedTrack.title;
+                String subtitle = TextUtils.isEmpty(cachedTrack.artist)
+                        ? "Playlist: " + playlistTitle
+                        : cachedTrack.artist + " • " + playlistTitle;
+
+                result.add(new YouTubeMusicService.TrackResult(
+                        "video",
+                        cachedTrack.videoId,
+                        displayTitle,
+                        subtitle,
+                        cachedTrack.imageUrl
+                ));
+
+                if (result.size() >= LIBRARY_INLINE_SEARCH_MAX_RESULTS) {
+                    return result;
+                }
             }
         }
 
         sortSearchResultsByBestMatch(result, query);
 
         return result;
-    }
-
-    private void llLibrarySortRowVisible(boolean visible) {
-        if (llLibrarySortRow != null) {
-            llLibrarySortRow.setVisibility(visible ? View.VISIBLE : View.GONE);
-        }
     }
 
     private void updateLibraryInlineClearButton() {
@@ -1936,6 +2209,233 @@ public class MusicPlayerFragment extends Fragment {
         }
     }
 
+    private void handleSearchQueryTypingState() {
+        if (activeScreen != ScreenMode.SEARCH) {
+            return;
+        }
+
+        String query = etMusicQuery != null && etMusicQuery.getText() != null
+                ? etMusicQuery.getText().toString().trim()
+                : "";
+
+        invalidatePendingSearchState();
+        resetSearchResultsForTypingState(query);
+        refreshSearchSuggestions(query);
+    }
+
+    private void invalidatePendingSearchState() {
+        queuedSearchQuery = null;
+        queuedSearchFromUser = false;
+        queuedSearchKeepLibraryLayout = false;
+        latestSearchRequestId++;
+        hasMoreSearchPages = false;
+        nextSearchPageToken = "";
+        setSearchLoadingState(false, "");
+        setSearchPaginationLoading(false);
+    }
+
+    private void resetSearchResultsForTypingState(@Nullable String currentQuery) {
+        allTracks.clear();
+        tracks.clear();
+        activeSearchQuery = "";
+        featuredTrack = null;
+        llFeaturedResult.setVisibility(View.GONE);
+        if (adapter != null) {
+            adapter.submitResults(new ArrayList<>());
+        }
+
+        String query = currentQuery == null ? "" : currentQuery.trim();
+        if (TextUtils.isEmpty(query)) {
+            tvMusicState.setText("Escribe y presiona Buscar o Enter.");
+        } else {
+            tvMusicState.setText("Presiona Buscar o Enter para ver resultados.");
+        }
+    }
+
+    private void startPagedSearch(@NonNull String query, boolean fromUserAction) {
+        String normalizedQuery = query.trim();
+        if (normalizedQuery.isEmpty()) {
+            resetSearchResultsForTypingState("");
+            return;
+        }
+
+        invalidatePendingSearchState();
+        activeSearchQuery = normalizedQuery;
+        rememberRecentSearchQuery(normalizedQuery);
+        refreshSearchSuggestions(normalizedQuery);
+        requestPagedSearchResults(normalizedQuery, "", false, fromUserAction);
+    }
+
+    private void requestPagedSearchResults(
+            @NonNull String query,
+            @NonNull String pageToken,
+            boolean append,
+            boolean fromUserAction
+    ) {
+        if (!isNetworkAvailable()) {
+            if (append) {
+                setSearchPaginationLoading(false);
+                return;
+            }
+
+            if (activeFilter != ChipFilter.SONGS) {
+                activeFilter = ChipFilter.SONGS;
+                applyChipStyles();
+            }
+
+            allTracks.clear();
+            allTracks.addAll(findSongsAcrossCachedPlaylists(query));
+            applyActiveFilter(query);
+            hasMoreSearchPages = false;
+            nextSearchPageToken = "";
+            activeSearchQuery = query;
+
+            if (allTracks.isEmpty()) {
+                tvMusicState.setText("Sin internet. No encontre canciones en tus playlists para: " + query);
+            } else {
+                tvMusicState.setText(String.format(
+                        Locale.getDefault(),
+                        "%d canciones encontradas en tus playlists (offline).",
+                        allTracks.size()
+                ));
+            }
+            return;
+        }
+
+        final long requestId = ++latestSearchRequestId;
+        if (append) {
+            setSearchPaginationLoading(true);
+            tvMusicState.setText("Cargando mas resultados...");
+        } else {
+            setSearchLoadingState(true, "Buscando musica en YouTube...");
+        }
+
+        youTubeMusicService.searchTracksPaged(
+                query,
+                SEARCH_PAGE_SIZE,
+                TextUtils.isEmpty(pageToken) ? null : pageToken,
+                new YouTubeMusicService.SearchPageCallback() {
+                    @Override
+                    public void onSuccess(@NonNull YouTubeMusicService.SearchPageResult pageResult) {
+                        if (!isAdded()) {
+                            return;
+                        }
+                        if (requestId != latestSearchRequestId) {
+                            return;
+                        }
+
+                        if (append) {
+                            setSearchPaginationLoading(false);
+                        } else {
+                            setSearchLoadingState(false, "");
+                        }
+
+                        List<YouTubeMusicService.TrackResult> incoming = filterTracksByOrderedQuery(pageResult.tracks, query);
+                        if (!append) {
+                            allTracks.clear();
+                        }
+                        appendUniqueTracks(incoming);
+
+                        activeSearchQuery = query;
+                        nextSearchPageToken = pageResult.nextPageToken;
+                        hasMoreSearchPages = !TextUtils.isEmpty(nextSearchPageToken);
+
+                        applyActiveFilter(query);
+
+                        if (allTracks.isEmpty()) {
+                            tvMusicState.setText("No encontre resultados para: " + query);
+                        }
+                    }
+
+                    @Override
+                    public void onError(@NonNull String error) {
+                        if (!isAdded()) {
+                            return;
+                        }
+                        if (requestId != latestSearchRequestId) {
+                            return;
+                        }
+
+                        if (append) {
+                            setSearchPaginationLoading(false);
+                            tvMusicState.setText("No se pudieron cargar mas resultados.");
+                            return;
+                        }
+
+                        setSearchLoadingState(false, "");
+
+                        if (!isNetworkAvailable()) {
+                            if (activeFilter != ChipFilter.SONGS) {
+                                activeFilter = ChipFilter.SONGS;
+                                applyChipStyles();
+                            }
+                            allTracks.clear();
+                            allTracks.addAll(findSongsAcrossCachedPlaylists(query));
+                            applyActiveFilter(query);
+                            hasMoreSearchPages = false;
+                            nextSearchPageToken = "";
+                            activeSearchQuery = query;
+                            if (allTracks.isEmpty()) {
+                                tvMusicState.setText("Sin internet. No encontre canciones en tus playlists para: " + query);
+                            } else {
+                                tvMusicState.setText(String.format(
+                                        Locale.getDefault(),
+                                        "%d canciones encontradas en tus playlists (offline).",
+                                        allTracks.size()
+                                ));
+                            }
+                            return;
+                        }
+
+                        hasMoreSearchPages = false;
+                        nextSearchPageToken = "";
+                        setSearchLoadingState(false, "Error: " + error);
+                        if (fromUserAction) {
+
+                        }
+                    }
+                }
+        );
+    }
+
+    private void appendUniqueTracks(@NonNull List<YouTubeMusicService.TrackResult> incoming) {
+        Set<String> seen = new HashSet<>();
+        for (YouTubeMusicService.TrackResult existing : allTracks) {
+            if (existing == null) {
+                continue;
+            }
+            String key = (existing.resultType == null ? "" : existing.resultType)
+                    + "|"
+                    + (existing.contentId == null ? "" : existing.contentId);
+            seen.add(key);
+        }
+
+        for (YouTubeMusicService.TrackResult candidate : incoming) {
+            if (candidate == null) {
+                continue;
+            }
+            String key = (candidate.resultType == null ? "" : candidate.resultType)
+                    + "|"
+                    + (candidate.contentId == null ? "" : candidate.contentId);
+            if (!seen.add(key)) {
+                continue;
+            }
+            allTracks.add(candidate);
+        }
+    }
+
+    private void loadMoreSearchResultsIfNeeded() {
+        if (activeScreen != ScreenMode.SEARCH
+                || searching
+                || searchPaginationInFlight
+                || !hasMoreSearchPages
+                || TextUtils.isEmpty(activeSearchQuery)) {
+            return;
+        }
+
+        requestPagedSearchResults(activeSearchQuery, nextSearchPageToken, true, false);
+    }
+
     private void performSearch(boolean fromUserAction) {
         if (activeScreen != ScreenMode.SEARCH || searching) {
             return;
@@ -1944,7 +2444,7 @@ public class MusicPlayerFragment extends Fragment {
         String query = etMusicQuery.getText() != null ? etMusicQuery.getText().toString().trim() : "";
         if (TextUtils.isEmpty(query)) {
             if (fromUserAction) {
-                
+                resetSearchResultsForTypingState("");
             }
             return;
         }
@@ -1954,7 +2454,7 @@ public class MusicPlayerFragment extends Fragment {
             applyChipStyles();
         }
 
-        performYoutubeMusicSearch(query, fromUserAction, false);
+        startPagedSearch(query, fromUserAction);
     }
 
     private void performYoutubeMusicSearch(
@@ -2127,6 +2627,7 @@ public class MusicPlayerFragment extends Fragment {
             adapter.setSearchMode(true);
             adapter.submitResults(new ArrayList<>(tracks));
         }
+        revealLibraryInlineResultsWithFade();
 
         if (filtered.isEmpty()) {
             tvMusicState.setText("No encontre canciones para: " + query);
@@ -2153,6 +2654,11 @@ public class MusicPlayerFragment extends Fragment {
         }
     }
 
+    private void setSearchPaginationLoading(boolean loading) {
+        searchPaginationInFlight = loading;
+        refreshGlobalLoadingIndicator();
+    }
+
     private void setLibraryLoading(boolean loading, @NonNull String stateMessage) {
         loadingLibrary = loading;
         if (btnYoutubeLogin != null) {
@@ -2171,7 +2677,150 @@ public class MusicPlayerFragment extends Fragment {
         if (progressMusic == null) {
             return;
         }
-        progressMusic.setVisibility((searching || loadingLibrary) ? View.VISIBLE : View.GONE);
+
+        boolean visible = searching || searchPaginationInFlight || loadingLibrary;
+        progressMusic.animate().cancel();
+        if (visible) {
+            if (progressMusic.getVisibility() != View.VISIBLE) {
+                progressMusic.setAlpha(0f);
+                progressMusic.setVisibility(View.VISIBLE);
+            }
+            progressMusic.animate()
+                    .alpha(1f)
+                    .setDuration(160L)
+                    .start();
+            return;
+        }
+
+        if (progressMusic.getVisibility() != View.VISIBLE) {
+            return;
+        }
+
+        progressMusic.animate()
+                .alpha(0f)
+                .setDuration(140L)
+                .withEndAction(() -> {
+                    if (progressMusic != null) {
+                        progressMusic.setVisibility(View.GONE);
+                    }
+                })
+                .start();
+    }
+
+    private void rememberRecentSearchQuery(@Nullable String query) {
+        String normalized = query == null ? "" : query.trim();
+        if (normalized.isEmpty()) {
+            return;
+        }
+
+        for (int i = recentSearchQueries.size() - 1; i >= 0; i--) {
+            if (normalized.equalsIgnoreCase(recentSearchQueries.get(i))) {
+                recentSearchQueries.remove(i);
+            }
+        }
+
+        recentSearchQueries.add(0, normalized);
+        while (recentSearchQueries.size() > SEARCH_SUGGESTION_RECENT_LIMIT) {
+            recentSearchQueries.remove(recentSearchQueries.size() - 1);
+        }
+        
+        saveRecentSearchQueries();
+    }
+
+    private void restoreRecentSearchQueries() {
+        if (!isAdded()) return;
+        SharedPreferences prefs = requireContext().getSharedPreferences(PREFS_STREAMING_CACHE, Activity.MODE_PRIVATE);
+        String json = prefs.getString(PREF_RECENT_SEARCH_QUERIES, "[]");
+        recentSearchQueries.clear();
+        try {
+            JSONArray array = new JSONArray(json);
+            for (int i = 0; i < array.length(); i++) {
+                recentSearchQueries.add(array.getString(i));
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void saveRecentSearchQueries() {
+        if (!isAdded()) return;
+        JSONArray array = new JSONArray();
+        for (String query : recentSearchQueries) {
+            array.put(query);
+        }
+        requireContext()
+                .getSharedPreferences(PREFS_STREAMING_CACHE, Activity.MODE_PRIVATE)
+                .edit()
+                .putString(PREF_RECENT_SEARCH_QUERIES, array.toString())
+                .apply();
+    }
+
+    private void refreshSearchSuggestions(@Nullable String queryDraft) {
+        if (!isAdded() || cgSearchSuggestions == null) {
+            return;
+        }
+
+        String draft = queryDraft == null ? "" : queryDraft.trim();
+        List<String> suggestions = buildSearchSuggestions(draft);
+        cgSearchSuggestions.removeAllViews();
+
+        for (String suggestion : suggestions) {
+            Chip chip = new Chip(requireContext());
+            chip.setText(suggestion);
+            chip.setCheckable(false);
+            chip.setClickable(true);
+            chip.setChipBackgroundColor(ColorStateList.valueOf(
+                    ContextCompat.getColor(requireContext(), R.color.surface_low)
+            ));
+            chip.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_primary));
+            chip.setEnsureMinTouchTargetSize(false);
+            chip.setOnClickListener(v -> {
+                if (etMusicQuery == null) {
+                    return;
+                }
+                etMusicQuery.setText(suggestion);
+                etMusicQuery.setSelection(etMusicQuery.getText() == null ? 0 : etMusicQuery.getText().length());
+                performSearch(true);
+            });
+            cgSearchSuggestions.addView(chip);
+        }
+
+        if (cgSearchSuggestions != null) cgSearchSuggestions.setVisibility(suggestions.isEmpty() ? View.GONE : View.VISIBLE);
+    }
+
+    @NonNull
+    private List<String> buildSearchSuggestions(@NonNull String queryDraft) {
+        LinkedHashSet<String> pool = new LinkedHashSet<>();
+        for (String recent : recentSearchQueries) {
+            if (!TextUtils.isEmpty(recent)) {
+                pool.add(recent);
+            }
+        }
+        for (String fallback : DEFAULT_SEARCH_SUGGESTIONS) {
+            if (!TextUtils.isEmpty(fallback)) {
+                pool.add(fallback);
+            }
+        }
+
+        String normalizedDraft = normalizeForFilter(queryDraft);
+        List<String> result = new ArrayList<>();
+        for (String candidate : pool) {
+            String normalizedCandidate = normalizeForFilter(candidate);
+            if (!TextUtils.isEmpty(normalizedDraft)
+                    && !normalizedCandidate.contains(normalizedDraft)
+                    && !normalizedCandidate.startsWith(normalizedDraft)) {
+                continue;
+            }
+            if (!TextUtils.isEmpty(normalizedDraft)
+                    && TextUtils.equals(normalizedCandidate, normalizedDraft)) {
+                continue;
+            }
+
+            result.add(candidate);
+            if (result.size() >= SEARCH_SUGGESTION_RECENT_LIMIT) {
+                break;
+            }
+        }
+        return result;
     }
 
     private void updateYoutubeButtonLabel() {
@@ -2232,6 +2881,9 @@ public class MusicPlayerFragment extends Fragment {
         }
 
         SharedPreferences playerPrefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
+        streamingOauthAccountEmail = normalizeAccountEmail(
+                playerPrefs.getString(PREF_LAST_STREAMING_OAUTH_ACCOUNT_EMAIL, "")
+        );
         String accountKey = resolveAccountKey();
         String persistedToken = playerPrefs.getString(PREF_LAST_YOUTUBE_ACCESS_TOKEN, "");
         long persistedTokenUpdatedAt = playerPrefs.getLong(PREF_LAST_YOUTUBE_ACCESS_TOKEN_UPDATED_AT, 0L);
@@ -2254,6 +2906,14 @@ public class MusicPlayerFragment extends Fragment {
         boolean hasWebSession = !TextUtils.isEmpty(webCookie == null ? "" : webCookie.trim());
         boolean hasCachedLibrary = !libraryTracks.isEmpty();
         streamingOauthCompleted = hasWebSession || hasCachedLibrary || !TextUtils.isEmpty(youtubeAccessToken);
+
+        Log.i(
+            TAG_STREAMING,
+            "restore_session web=" + hasWebSession
+                + " cachedLibrary=" + hasCachedLibrary
+                + " token=" + !TextUtils.isEmpty(youtubeAccessToken)
+                + " oauthAccount=" + streamingOauthAccountEmail
+        );
     }
 
     private void hydrateCachedSessionState() {
@@ -2265,6 +2925,7 @@ public class MusicPlayerFragment extends Fragment {
         if (hasValidLibraryCache(accountKey) && libraryTracks.isEmpty()) {
             libraryTracks.clear();
             libraryTracks.addAll(new ArrayList<>(LIBRARY_CACHE));
+            ensureFavoritesPlaylistInLibraryTracks();
             return;
         }
 
@@ -2272,8 +2933,9 @@ public class MusicPlayerFragment extends Fragment {
         if (!persisted.isEmpty() && libraryTracks.isEmpty()) {
             libraryTracks.clear();
             libraryTracks.addAll(persisted);
+            ensureFavoritesPlaylistInLibraryTracks();
             LIBRARY_CACHE.clear();
-            LIBRARY_CACHE.addAll(persisted);
+            LIBRARY_CACHE.addAll(libraryTracks);
             libraryCacheAccountKey = accountKey;
             libraryCacheUpdatedAtMs = getPersistedLibraryUpdatedAt(accountKey);
         }
@@ -2292,8 +2954,9 @@ public class MusicPlayerFragment extends Fragment {
 
         libraryTracks.clear();
         libraryTracks.addAll(persisted);
+        ensureFavoritesPlaylistInLibraryTracks();
         LIBRARY_CACHE.clear();
-        LIBRARY_CACHE.addAll(persisted);
+        LIBRARY_CACHE.addAll(libraryTracks);
         libraryCacheAccountKey = accountKey;
         libraryCacheUpdatedAtMs = getPersistedLibraryUpdatedAt(accountKey);
         return true;
@@ -2316,6 +2979,49 @@ public class MusicPlayerFragment extends Fragment {
 
         String persistedKey = resolvePersistedLibraryAccountKey();
         return persistedKey == null ? "" : persistedKey;
+    }
+
+    @Nullable
+    private StreamingAccountCandidate resolveStreamingOAuthAccountCandidate() {
+        LinkedHashMap<String, String> candidates = new LinkedHashMap<>();
+        addStreamingAccountCandidate(candidates, streamingOauthAccountEmail, "session_cached_oauth");
+        addStreamingAccountCandidate(candidates, getPrimaryAppGoogleEmail(), "firebase_primary");
+
+        if (isAdded()) {
+            GoogleSignInAccount account = GoogleSignIn.getLastSignedInAccount(requireContext());
+            if (account != null) {
+                addStreamingAccountCandidate(candidates, account.getEmail(), "google_signin_last");
+            }
+
+            SharedPreferences playerPrefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
+            addStreamingAccountCandidate(
+                    candidates,
+                    playerPrefs.getString(PREF_LAST_STREAMING_OAUTH_ACCOUNT_EMAIL, ""),
+                    "prefs_oauth"
+            );
+        }
+
+        addStreamingAccountCandidate(candidates, resolvePersistedLibraryAccountKey(), "library_cache_key");
+        addStreamingAccountCandidate(candidates, tokenCacheAccountKey, "token_cache_key");
+
+        if (candidates.isEmpty()) {
+            return null;
+        }
+
+        Map.Entry<String, String> first = candidates.entrySet().iterator().next();
+        return new StreamingAccountCandidate(first.getKey(), first.getValue());
+    }
+
+    private void addStreamingAccountCandidate(
+            @NonNull LinkedHashMap<String, String> candidates,
+            @Nullable String email,
+            @NonNull String source
+    ) {
+        String normalized = normalizeAccountEmail(email);
+        if (TextUtils.isEmpty(normalized) || candidates.containsKey(normalized)) {
+            return;
+        }
+        candidates.put(normalized, source);
     }
 
     @NonNull
@@ -2380,7 +3086,7 @@ public class MusicPlayerFragment extends Fragment {
     }
 
     private void cacheTokenForCurrentAccount(@NonNull String token) {
-        String accountKey = resolveAccountKey();
+        String accountKey = resolveActiveStreamingAccountKey();
         if (TextUtils.isEmpty(accountKey)) {
             return;
         }
@@ -2394,6 +3100,7 @@ public class MusicPlayerFragment extends Fragment {
                     .edit()
                     .putString(PREF_LAST_YOUTUBE_ACCESS_TOKEN, token)
                     .putLong(PREF_LAST_YOUTUBE_ACCESS_TOKEN_UPDATED_AT, tokenCacheUpdatedAtMs)
+                    .putString(PREF_LAST_STREAMING_OAUTH_ACCOUNT_EMAIL, accountKey)
                     .apply();
         }
     }
@@ -2413,7 +3120,7 @@ public class MusicPlayerFragment extends Fragment {
     }
 
     private void cacheLibraryForCurrentAccount(@NonNull List<YouTubeMusicService.TrackResult> source) {
-        String accountKey = resolveAccountKey();
+        String accountKey = resolveActiveStreamingAccountKey();
         if (TextUtils.isEmpty(accountKey)) {
             return;
         }
@@ -2424,6 +3131,41 @@ public class MusicPlayerFragment extends Fragment {
         libraryCacheUpdatedAtMs = System.currentTimeMillis();
         rememberStreamingAccountKey(accountKey);
         persistLibrary(accountKey, source, libraryCacheUpdatedAtMs);
+    }
+
+    @NonNull
+    private String resolveActiveStreamingAccountKey() {
+        String oauthEmail = normalizeAccountEmail(streamingOauthAccountEmail);
+        if (!TextUtils.isEmpty(oauthEmail)) {
+            return oauthEmail;
+        }
+        return resolveAccountKey();
+    }
+
+    private void rememberStreamingOauthAccountEmail(@Nullable String email) {
+        String normalized = normalizeAccountEmail(email);
+        streamingOauthAccountEmail = normalized;
+        if (!isAdded()) {
+            return;
+        }
+
+        requireContext()
+                .getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE)
+                .edit()
+                .putString(PREF_LAST_STREAMING_OAUTH_ACCOUNT_EMAIL, normalized)
+                .apply();
+    }
+
+    private static final class StreamingAccountCandidate {
+        @NonNull
+        final String email;
+        @NonNull
+        final String source;
+
+        private StreamingAccountCandidate(@NonNull String email, @NonNull String source) {
+            this.email = email;
+            this.source = source;
+        }
     }
 
     private void rememberStreamingAccountKey(@NonNull String accountKey) {
@@ -2564,7 +3306,7 @@ public class MusicPlayerFragment extends Fragment {
 
             final String targetPlaylistId = playlistId;
             requested++;
-            youTubeMusicService.fetchPlaylistTracks(
+                offlinePrefetchService.fetchPlaylistTracks(
                     accessToken,
                     targetPlaylistId,
                     OFFLINE_TRACKS_PREFETCH_PER_PLAYLIST_LIMIT,
@@ -2627,6 +3369,11 @@ public class MusicPlayerFragment extends Fragment {
                     )
                     .putString(PREF_TRACKS_DATA_PREFIX + playlistId, array.toString())
                     .apply();
+
+            synchronized (cachedPlaylistTracksLock) {
+                cachedPlaylistTracksById.remove(playlistId);
+                cachedPlaylistTracksUpdatedAtById.remove(playlistId);
+            }
         } catch (Exception ignored) {
         }
     }
@@ -2670,13 +3417,7 @@ public class MusicPlayerFragment extends Fragment {
             filtered.add(track);
         }
 
-        boolean mergedWithPlaylistSongs = false;
-        if (activeFilter == ChipFilter.SONGS && !TextUtils.isEmpty(normalizedQuery)) {
-            filtered = mergeSongResultsWithCachedPlaylists(filtered, normalizedQuery);
-            mergedWithPlaylistSongs = true;
-        }
-
-        if (!TextUtils.isEmpty(normalizedQuery) && filtered.size() > 1 && !mergedWithPlaylistSongs) {
+        if (!TextUtils.isEmpty(normalizedQuery) && filtered.size() > 1) {
             sortSearchResultsByBestMatch(filtered, normalizedQuery);
         }
 
@@ -2914,10 +3655,79 @@ public class MusicPlayerFragment extends Fragment {
     }
 
     private void styleChip(@NonNull MaterialButton chip, boolean selected) {
+        if (chip == null) return;
         int bg = selected ? ContextCompat.getColor(requireContext(), R.color.stitch_blue) : ContextCompat.getColor(requireContext(), R.color.surface_low);
         int fg = selected ? ContextCompat.getColor(requireContext(), android.R.color.white) : ContextCompat.getColor(requireContext(), R.color.text_primary);
         chip.setBackgroundTintList(ColorStateList.valueOf(bg));
         chip.setTextColor(fg);
+    }
+
+    private int bucketArtworkDimension(int value) {
+        int safe = Math.max(1, value);
+        return Math.max(64, ((safe + 63) / 64) * 64);
+    }
+
+    private int resolveArtworkTargetSize(int measured, int layoutValue) {
+        if (measured > 0) {
+            return measured;
+        }
+        if (layoutValue > 0) {
+            return layoutValue;
+        }
+        return 0;
+    }
+
+    private void loadArtworkInto(@NonNull ImageView target, @Nullable String imageUrl) {
+        if (TextUtils.isEmpty(imageUrl)) {
+            target.setTag(R.id.tag_artwork_signature, null);
+            target.setImageResource(R.drawable.ic_music);
+            return;
+        }
+
+        String safeUrl = imageUrl.trim();
+        ViewGroup.LayoutParams params = target.getLayoutParams();
+        int rawWidth = resolveArtworkTargetSize(target.getWidth(), params == null ? 0 : params.width);
+        int rawHeight = resolveArtworkTargetSize(target.getHeight(), params == null ? 0 : params.height);
+
+        String signature;
+        if (rawWidth > 0 && rawHeight > 0) {
+            int targetWidth = bucketArtworkDimension(rawWidth);
+            int targetHeight = bucketArtworkDimension(rawHeight);
+            signature = safeUrl + "|" + targetWidth + "x" + targetHeight;
+            Object previousSignature = target.getTag(R.id.tag_artwork_signature);
+            if (previousSignature instanceof String && signature.equals(previousSignature)) {
+                return;
+            }
+            target.setTag(R.id.tag_artwork_signature, signature);
+            Glide.with(target)
+                    .load(safeUrl)
+                    .diskCacheStrategy(DiskCacheStrategy.ALL)
+                    .skipMemoryCache(false)
+                    .dontAnimate()
+                    .centerCrop()
+                    .override(targetWidth, targetHeight)
+                    .placeholder(R.drawable.ic_music)
+                    .error(R.drawable.ic_music)
+                    .into(target);
+            return;
+        }
+
+        signature = safeUrl + "|auto";
+        Object previousSignature = target.getTag(R.id.tag_artwork_signature);
+        if (previousSignature instanceof String && signature.equals(previousSignature)) {
+            return;
+        }
+        target.setTag(R.id.tag_artwork_signature, signature);
+
+        Glide.with(target)
+                .load(safeUrl)
+                .diskCacheStrategy(DiskCacheStrategy.ALL)
+                .skipMemoryCache(false)
+                .dontAnimate()
+                .centerCrop()
+                .placeholder(R.drawable.ic_music)
+                .error(R.drawable.ic_music)
+                .into(target);
     }
 
     private void bindFeaturedTrack(@NonNull YouTubeMusicService.TrackResult track) {
@@ -2928,19 +3738,7 @@ public class MusicPlayerFragment extends Fragment {
             : typeLabel + " • " + track.subtitle;
         tvFeaturedSubtitle.setText(subtitle);
 
-        if (!TextUtils.isEmpty(track.thumbnailUrl)) {
-            Glide.with(this)
-                    .load(track.thumbnailUrl)
-                    .diskCacheStrategy(DiskCacheStrategy.AUTOMATIC)
-                    .skipMemoryCache(false)
-                    .dontAnimate()
-                    .centerCrop()
-                    .placeholder(R.drawable.ic_music)
-                    .error(R.drawable.ic_music)
-                    .into(ivFeaturedThumb);
-        } else {
-            ivFeaturedThumb.setImageResource(R.drawable.ic_music);
-        }
+        loadArtworkInto(ivFeaturedThumb, track.thumbnailUrl);
     }
 
     private void sortSearchResultsByBestMatch(
@@ -3071,6 +3869,9 @@ public class MusicPlayerFragment extends Fragment {
         PopupMenu popup = new PopupMenu(requireContext(), anchor);
         popup.getMenu().add(0, 1, 0, "Reproducir");
         popup.getMenu().add(0, 2, 1, "Compartir");
+        if (track.isVideo()) {
+            popup.getMenu().add(0, 3, 2, "Agregar a Favoritos");
+        }
         popup.setOnMenuItemClickListener(item -> {
             if (item.getItemId() == 1) {
                 openTrack(track);
@@ -3080,9 +3881,30 @@ public class MusicPlayerFragment extends Fragment {
                 shareTrackResult(track);
                 return true;
             }
+            if (item.getItemId() == 3) {
+                addSearchTrackToFavorites(track);
+                return true;
+            }
             return false;
         });
         popup.show();
+    }
+
+    private void addSearchTrackToFavorites(@NonNull YouTubeMusicService.TrackResult track) {
+        if (!isAdded() || !track.isVideo()) {
+            return;
+        }
+
+        FavoritesPlaylistStore.upsertFavorite(
+                requireContext(),
+                track.videoId,
+                TextUtils.isEmpty(track.title) ? "Tema" : track.title,
+                track.subtitle == null ? "" : track.subtitle,
+                "--:--",
+                track.thumbnailUrl == null ? "" : track.thumbnailUrl
+        );
+
+        ensureFavoritesPlaylistInLibraryTracks();
     }
 
     private void shareTrackResult(@NonNull YouTubeMusicService.TrackResult track) {
@@ -3255,6 +4077,7 @@ public class MusicPlayerFragment extends Fragment {
         androidx.fragment.app.FragmentTransaction transaction = getParentFragmentManager()
                 .beginTransaction()
                 .setReorderingAllowed(true)
+                .setCustomAnimations(R.anim.player_screen_enter, 0)
                 .add(R.id.fragmentContainer, playerFragment, "song_player");
 
         if (showPlayer) {
@@ -3432,6 +4255,7 @@ public class MusicPlayerFragment extends Fragment {
             getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
+                    .setCustomAnimations(R.anim.player_screen_enter, 0)
                     .hide(this)
                     .show(existingPlayer)
                     .commit();
@@ -3450,6 +4274,7 @@ public class MusicPlayerFragment extends Fragment {
             getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
+                    .setCustomAnimations(R.anim.player_screen_enter, 0)
                     .hide(this)
                     .add(R.id.fragmentContainer, playerFragment, "song_player")
                     .commit();
@@ -3574,19 +4399,7 @@ public class MusicPlayerFragment extends Fragment {
         String trackId = currentTrack.videoId == null ? "" : currentTrack.videoId;
         if (!TextUtils.equals(lastMiniArtworkTrackId, trackId)
                 || !TextUtils.equals(lastMiniArtworkUrl, imageUrl)) {
-            if (!TextUtils.isEmpty(imageUrl)) {
-                Glide.with(this)
-                        .load(imageUrl)
-                        .diskCacheStrategy(DiskCacheStrategy.AUTOMATIC)
-                        .skipMemoryCache(false)
-                        .dontAnimate()
-                        .centerCrop()
-                        .placeholder(R.drawable.ic_music)
-                        .error(R.drawable.ic_music)
-                        .into(ivMiniPlayerArt);
-            } else {
-                ivMiniPlayerArt.setImageResource(R.drawable.ic_music);
-            }
+            loadArtworkInto(ivMiniPlayerArt, imageUrl);
             lastMiniArtworkTrackId = trackId;
             lastMiniArtworkUrl = imageUrl;
         }
@@ -3790,16 +4603,28 @@ public class MusicPlayerFragment extends Fragment {
             adapter.invalidatePlaylistOfflineState(playlistId);
         }
 
+        enqueuePlaylistOfflineDownloadInternal(playlistId, playlistTitle, true);
+    }
+
+    private boolean enqueuePlaylistOfflineDownloadInternal(
+            @NonNull String playlistId,
+            @NonNull String playlistTitle,
+            boolean userInitiated
+    ) {
+        if (!isAdded()) {
+            return false;
+        }
+
         ArrayList<CachedPlaylistTrack> cachedTracks = loadCachedPlaylistTracksForOffline(playlistId);
         if (cachedTracks.isEmpty()) {
-            
-            return;
+            return false;
         }
 
         Set<String> restrictedIds = OfflineRestrictionStore.getRestrictedVideoIds(requireContext());
         ArrayList<String> ids = new ArrayList<>();
         ArrayList<String> titles = new ArrayList<>();
         ArrayList<String> artists = new ArrayList<>();
+        ArrayList<String> durations = new ArrayList<>();
         HashSet<String> seen = new HashSet<>();
         int skippedAlreadyOffline = 0;
         int skippedRestricted = 0;
@@ -3821,7 +4646,7 @@ public class MusicPlayerFragment extends Fragment {
 
             totalEligibleWithVideoId++;
 
-            if (OfflineAudioStore.hasOfflineAudio(requireContext(), track.videoId)) {
+            if (OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), track.videoId, track.duration)) {
                 skippedAlreadyOffline++;
                 continue;
             }
@@ -3829,30 +4654,30 @@ public class MusicPlayerFragment extends Fragment {
             ids.add(track.videoId);
             titles.add(track.title);
             artists.add(track.artist);
+            durations.add(track.duration);
         }
 
         int totalWithVideoId = totalEligibleWithVideoId;
         if (totalWithVideoId <= 0) {
-            if (skippedRestricted > 0) {
-                
-            } else {
-                
-            }
+            persistPlaylistOfflineComplete(playlistId, true);
             if (adapter != null) {
                 adapter.invalidatePlaylistOfflineState(playlistId);
             }
-            return;
+            if (!userInitiated) {
+                maybeEnqueueNextOfflineAutoPlaylist();
+            }
+            return false;
         }
 
         if (ids.isEmpty()) {
-            String message = skippedRestricted > 0
-                    ? "Ya tienes las canciones disponibles offline. Se omitieron restringidas."
-                    : "Ya tienes todas las canciones offline.";
-            
+            persistPlaylistOfflineComplete(playlistId, true);
             if (adapter != null) {
                 adapter.invalidatePlaylistOfflineState(playlistId);
             }
-            return;
+            if (!userInitiated) {
+                maybeEnqueueNextOfflineAutoPlaylist();
+            }
+            return false;
         }
 
         Data input = new Data.Builder()
@@ -3861,8 +4686,11 @@ public class MusicPlayerFragment extends Fragment {
                 .putStringArray(OfflinePlaylistDownloadWorker.INPUT_VIDEO_IDS, ids.toArray(new String[0]))
                 .putStringArray(OfflinePlaylistDownloadWorker.INPUT_TITLES, titles.toArray(new String[0]))
                 .putStringArray(OfflinePlaylistDownloadWorker.INPUT_ARTISTS, artists.toArray(new String[0]))
+                .putStringArray(OfflinePlaylistDownloadWorker.INPUT_DURATIONS, durations.toArray(new String[0]))
                 .putInt(OfflinePlaylistDownloadWorker.INPUT_ALREADY_OFFLINE_COUNT, skippedAlreadyOffline)
                 .putInt(OfflinePlaylistDownloadWorker.INPUT_TOTAL_WITH_VIDEO_ID, totalWithVideoId)
+                .putBoolean(OfflinePlaylistDownloadWorker.INPUT_USER_INITIATED, userInitiated)
+                .putBoolean(OfflinePlaylistDownloadWorker.INPUT_MANUAL_QUEUE, false)
                 .build();
 
         OneTimeWorkRequest request = new OneTimeWorkRequest.Builder(OfflinePlaylistDownloadWorker.class)
@@ -3871,14 +4699,337 @@ public class MusicPlayerFragment extends Fragment {
                 .addTag(OFFLINE_DOWNLOAD_UNIQUE_PREFIX + playlistId)
                 .build();
 
-        WorkManager.getInstance(requireContext().getApplicationContext())
-                .enqueueUniqueWork(OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request);
+        enqueueOfflineDownloadUniqueWork(request);
 
         if (adapter != null) {
             adapter.invalidatePlaylistOfflineState(playlistId);
         }
 
-        Toast.makeText(requireContext(), "Descarga agregada a la cola offline.", Toast.LENGTH_SHORT).show();
+        return true;
+    }
+
+    private void enqueueOfflineDownloadUniqueWork(@NonNull OneTimeWorkRequest request) {
+        WorkManager manager = WorkManager.getInstance(requireContext().getApplicationContext());
+        manager.enqueueUniqueWork(OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request);
+    }
+
+    private void startObservingOfflineQueue() {
+        if (!isAdded()) {
+            return;
+        }
+
+        if (offlineQueueObserver == null) {
+            offlineQueueObserver = this::onOfflineQueueWorkInfosChanged;
+            WorkManager.getInstance(requireContext().getApplicationContext())
+                    .getWorkInfosForUniqueWorkLiveData(OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME)
+                    .observe(getViewLifecycleOwner(), offlineQueueObserver);
+        }
+
+        if (offlineManualQueueObserver == null) {
+            offlineManualQueueObserver = this::onOfflineManualQueueWorkInfosChanged;
+            WorkManager.getInstance(requireContext().getApplicationContext())
+                    .getWorkInfosForUniqueWorkLiveData(OFFLINE_DOWNLOAD_MANUAL_TRACK_QUEUE_UNIQUE_NAME)
+                    .observe(getViewLifecycleOwner(), offlineManualQueueObserver);
+        }
+    }
+
+    private void stopObservingOfflineQueue() {
+        if (!isAdded()) {
+            offlineQueueObserver = null;
+            offlineManualQueueObserver = null;
+            return;
+        }
+
+        if (offlineQueueObserver != null) {
+            WorkManager.getInstance(requireContext().getApplicationContext())
+                    .getWorkInfosForUniqueWorkLiveData(OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME)
+                    .removeObserver(offlineQueueObserver);
+        }
+
+        if (offlineManualQueueObserver != null) {
+            WorkManager.getInstance(requireContext().getApplicationContext())
+                    .getWorkInfosForUniqueWorkLiveData(OFFLINE_DOWNLOAD_MANUAL_TRACK_QUEUE_UNIQUE_NAME)
+                    .removeObserver(offlineManualQueueObserver);
+        }
+
+        offlineQueueObserver = null;
+        offlineManualQueueObserver = null;
+    }
+
+    private void onOfflineQueueWorkInfosChanged(@Nullable List<WorkInfo> workInfos) {
+        if (!isAdded()) {
+            return;
+        }
+
+        boolean hasActiveWork = hasActiveOfflineWork(workInfos);
+        boolean hasEnqueuedWork = hasEnqueuedOfflineWork(workInfos);
+
+        if (hasActiveWork) {
+            offlineQueueHadActiveWork = true;
+            if (!hasEnqueuedWork) {
+                maybeEnqueueNextOfflineAutoPlaylist();
+            }
+            return;
+        }
+
+        if (offlineQueueHadActiveWork && adapter != null) {
+            adapter.invalidatePlaylistOfflineState(null);
+        }
+        offlineQueueHadActiveWork = false;
+
+        maybeEnqueueNextOfflineAutoPlaylist();
+    }
+
+    private void onOfflineManualQueueWorkInfosChanged(@Nullable List<WorkInfo> workInfos) {
+        if (!isAdded()) {
+            return;
+        }
+
+        boolean hasActiveWork = hasActiveOfflineWork(workInfos);
+        if (hasActiveWork) {
+            offlineManualQueueHadActiveWork = true;
+            return;
+        }
+
+        if (offlineManualQueueHadActiveWork && adapter != null) {
+            adapter.invalidatePlaylistOfflineState(null);
+        }
+        offlineManualQueueHadActiveWork = false;
+    }
+
+    private boolean hasActiveOfflineWork(@Nullable List<WorkInfo> workInfos) {
+        if (workInfos == null || workInfos.isEmpty()) {
+            return false;
+        }
+
+        for (WorkInfo info : workInfos) {
+            if (info == null) {
+                continue;
+            }
+            WorkInfo.State state = info.getState();
+            if (state == WorkInfo.State.RUNNING
+                    || state == WorkInfo.State.ENQUEUED) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private boolean hasEnqueuedOfflineWork(@Nullable List<WorkInfo> workInfos) {
+        if (workInfos == null || workInfos.isEmpty()) {
+            return false;
+        }
+
+        for (WorkInfo info : workInfos) {
+            if (info == null) {
+                continue;
+            }
+            if (info.getState() == WorkInfo.State.ENQUEUED) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void maybeEnqueueNextOfflineAutoPlaylist() {
+        if (!isAdded() || offlineAutoQueueScanInFlight) {
+            return;
+        }
+
+        Context appContext = requireContext().getApplicationContext();
+        ArrayList<YouTubeMusicService.TrackResult> playlistsSnapshot = new ArrayList<>(libraryTracks);
+        offlineAutoQueueScanInFlight = true;
+
+        offlineStateExecutor.execute(() -> {
+            PendingOfflineBatchCandidate candidate = resolveNextPendingOfflineAutoBatch(appContext, playlistsSnapshot);
+            mainHandler.post(() -> {
+                offlineAutoQueueScanInFlight = false;
+                if (!isAdded() || candidate == null) {
+                    return;
+                }
+
+                boolean enqueued = enqueueOfflineAutoBatchDownloadInternal(candidate);
+                if (enqueued && adapter != null) {
+                    for (String playlistId : candidate.playlistIds) {
+                        adapter.invalidatePlaylistOfflineState(playlistId);
+                    }
+                }
+            });
+        });
+    }
+
+    @Nullable
+    private PendingOfflineBatchCandidate resolveNextPendingOfflineAutoBatch(
+            @NonNull Context appContext,
+            @NonNull List<YouTubeMusicService.TrackResult> playlistsSnapshot
+    ) {
+        ArrayList<PendingOfflinePlaylistCandidate> candidates = new ArrayList<>();
+
+        for (YouTubeMusicService.TrackResult playlist : playlistsSnapshot) {
+            if (playlist == null || !"playlist".equals(playlist.resultType)) {
+                continue;
+            }
+
+            String playlistId = playlist.contentId == null ? "" : playlist.contentId.trim();
+            if (TextUtils.isEmpty(playlistId) || !isPersistedPlaylistOfflineAutoEnabled(playlistId)) {
+                continue;
+            }
+
+            if (isPlaylistFullyOffline(appContext, playlistId)) {
+                continue;
+            }
+
+            ArrayList<CachedPlaylistTrack> cachedTracks = loadCachedPlaylistTracksForOffline(appContext, playlistId);
+            if (cachedTracks.isEmpty()) {
+                continue;
+            }
+
+            int pendingCount = countPendingOfflineTracks(appContext, cachedTracks);
+            if (pendingCount <= 0) {
+                persistPlaylistOfflineComplete(appContext, playlistId, true);
+                continue;
+            }
+
+            String playlistTitle = playlist.title == null ? "" : playlist.title.trim();
+            if (TextUtils.isEmpty(playlistTitle)) {
+                playlistTitle = playlistId;
+            }
+
+            candidates.add(new PendingOfflinePlaylistCandidate(playlistId, playlistTitle, pendingCount, cachedTracks));
+        }
+
+        if (candidates.isEmpty()) {
+            return null;
+        }
+
+        Collections.sort(candidates, (left, right) -> Integer.compare(left.pendingCount, right.pendingCount));
+
+        Set<String> restrictedIds = OfflineRestrictionStore.getRestrictedVideoIds(appContext);
+        HashSet<String> seenIds = new HashSet<>();
+        ArrayList<PendingOfflineTrackCandidate> batchTracks = new ArrayList<>();
+        ArrayList<String> batchPlaylistIds = new ArrayList<>();
+        String primaryPlaylistId = "";
+        String primaryPlaylistTitle = "";
+
+        for (PendingOfflinePlaylistCandidate candidate : candidates) {
+            int addedFromPlaylist = 0;
+            for (CachedPlaylistTrack track : candidate.cachedTracks) {
+                if (track == null || TextUtils.isEmpty(track.videoId)) {
+                    continue;
+                }
+                if (!seenIds.add(track.videoId)) {
+                    continue;
+                }
+                if (OfflineRestrictionStore.isRestricted(restrictedIds, track.videoId)) {
+                    continue;
+                }
+                if (OfflineAudioStore.hasValidatedOfflineAudio(appContext, track.videoId, track.duration)) {
+                    continue;
+                }
+
+                batchTracks.add(new PendingOfflineTrackCandidate(track.videoId, track.title, track.artist, track.duration));
+                addedFromPlaylist++;
+                if (batchTracks.size() >= OFFLINE_AUTO_BATCH_TARGET_TRACKS) {
+                    break;
+                }
+            }
+
+            if (addedFromPlaylist > 0) {
+                batchPlaylistIds.add(candidate.playlistId);
+                if (TextUtils.isEmpty(primaryPlaylistId)) {
+                    primaryPlaylistId = candidate.playlistId;
+                    primaryPlaylistTitle = candidate.playlistTitle;
+                }
+            }
+
+            if (batchTracks.size() >= OFFLINE_AUTO_BATCH_TARGET_TRACKS) {
+                break;
+            }
+        }
+
+        if (batchTracks.isEmpty() || TextUtils.isEmpty(primaryPlaylistId)) {
+            return null;
+        }
+
+        return new PendingOfflineBatchCandidate(
+                primaryPlaylistId,
+                primaryPlaylistTitle,
+                batchPlaylistIds,
+                batchTracks
+        );
+    }
+
+    private boolean enqueueOfflineAutoBatchDownloadInternal(@NonNull PendingOfflineBatchCandidate candidate) {
+        if (!isAdded() || candidate.tracks.isEmpty()) {
+            return false;
+        }
+
+        ArrayList<String> ids = new ArrayList<>(candidate.tracks.size());
+        ArrayList<String> titles = new ArrayList<>(candidate.tracks.size());
+        ArrayList<String> artists = new ArrayList<>(candidate.tracks.size());
+        ArrayList<String> durations = new ArrayList<>(candidate.tracks.size());
+
+        for (PendingOfflineTrackCandidate track : candidate.tracks) {
+            ids.add(track.videoId);
+            titles.add(track.title);
+            artists.add(track.artist);
+            durations.add(track.duration);
+        }
+
+        Data input = new Data.Builder()
+                .putString(OfflinePlaylistDownloadWorker.INPUT_PLAYLIST_ID, candidate.primaryPlaylistId)
+                .putString(OfflinePlaylistDownloadWorker.INPUT_PLAYLIST_TITLE, candidate.primaryPlaylistTitle)
+                .putStringArray(OfflinePlaylistDownloadWorker.INPUT_VIDEO_IDS, ids.toArray(new String[0]))
+                .putStringArray(OfflinePlaylistDownloadWorker.INPUT_TITLES, titles.toArray(new String[0]))
+                .putStringArray(OfflinePlaylistDownloadWorker.INPUT_ARTISTS, artists.toArray(new String[0]))
+                .putStringArray(OfflinePlaylistDownloadWorker.INPUT_DURATIONS, durations.toArray(new String[0]))
+                .putInt(OfflinePlaylistDownloadWorker.INPUT_ALREADY_OFFLINE_COUNT, 0)
+                .putInt(OfflinePlaylistDownloadWorker.INPUT_TOTAL_WITH_VIDEO_ID, ids.size())
+                .putBoolean(OfflinePlaylistDownloadWorker.INPUT_USER_INITIATED, false)
+                .putBoolean(OfflinePlaylistDownloadWorker.INPUT_MANUAL_QUEUE, false)
+                .build();
+
+        OneTimeWorkRequest.Builder requestBuilder = new OneTimeWorkRequest.Builder(OfflinePlaylistDownloadWorker.class)
+                .setInputData(input)
+                .addTag(OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME);
+
+        for (String playlistId : candidate.playlistIds) {
+            if (TextUtils.isEmpty(playlistId)) {
+                continue;
+            }
+            requestBuilder.addTag(OFFLINE_DOWNLOAD_UNIQUE_PREFIX + playlistId);
+        }
+
+        enqueueOfflineDownloadUniqueWork(requestBuilder.build());
+        return true;
+    }
+
+    private int countPendingOfflineTracks(
+            @NonNull Context appContext,
+            @NonNull List<CachedPlaylistTrack> cachedTracks
+    ) {
+        int pending = 0;
+        HashSet<String> seen = new HashSet<>();
+        Set<String> restrictedIds = OfflineRestrictionStore.getRestrictedVideoIds(appContext);
+
+        for (CachedPlaylistTrack track : cachedTracks) {
+            if (track == null || TextUtils.isEmpty(track.videoId)) {
+                continue;
+            }
+            if (!seen.add(track.videoId)) {
+                continue;
+            }
+            if (OfflineRestrictionStore.isRestricted(restrictedIds, track.videoId)) {
+                continue;
+            }
+            if (!OfflineAudioStore.hasValidatedOfflineAudio(appContext, track.videoId, track.duration)) {
+                pending++;
+            }
+        }
+
+        return pending;
     }
 
     private boolean isPlaylistFullyOffline(@NonNull String playlistId) {
@@ -3886,16 +5037,23 @@ public class MusicPlayerFragment extends Fragment {
         if (context == null || TextUtils.isEmpty(playlistId)) {
             return false;
         }
-        Context appContext = context.getApplicationContext();
+        return isPlaylistFullyOffline(context.getApplicationContext(), playlistId);
+    }
 
-        ArrayList<CachedPlaylistTrack> cachedTracks = loadCachedPlaylistTracksForOffline(playlistId);
+    private boolean isPlaylistFullyOffline(@NonNull Context appContext, @NonNull String playlistId) {
+        if (TextUtils.isEmpty(playlistId)) {
+            return false;
+        }
+
+        ArrayList<CachedPlaylistTrack> cachedTracks = loadCachedPlaylistTracksForOffline(appContext, playlistId);
         if (cachedTracks.isEmpty()) {
             return isPersistedPlaylistOfflineComplete(appContext, playlistId);
         }
 
-        ArrayList<String> ids = new ArrayList<>();
         HashSet<String> seen = new HashSet<>();
         Set<String> restrictedIds = OfflineRestrictionStore.getRestrictedVideoIds(appContext);
+        int eligibleCount = 0;
+        int offlineCount = 0;
         for (CachedPlaylistTrack track : cachedTracks) {
             if (TextUtils.isEmpty(track.videoId) || seen.contains(track.videoId)) {
                 continue;
@@ -3904,16 +5062,18 @@ public class MusicPlayerFragment extends Fragment {
             if (OfflineRestrictionStore.isRestricted(restrictedIds, track.videoId)) {
                 continue;
             }
-            ids.add(track.videoId);
+            eligibleCount++;
+            if (OfflineAudioStore.hasValidatedOfflineAudio(appContext, track.videoId, track.duration)) {
+                offlineCount++;
+            }
         }
 
-        if (ids.isEmpty()) {
+        if (eligibleCount <= 0) {
             persistPlaylistOfflineComplete(appContext, playlistId, true);
             return true;
         }
 
-        int offlineCount = OfflineAudioStore.countOfflineAvailable(appContext, ids);
-        boolean complete = offlineCount >= ids.size();
+        boolean complete = offlineCount >= eligibleCount;
         persistPlaylistOfflineComplete(appContext, playlistId, complete);
         return complete;
     }
@@ -4001,8 +5161,24 @@ public class MusicPlayerFragment extends Fragment {
             return result;
         }
 
-        String raw = getCachePrefs(context).getString(PREF_TRACKS_DATA_PREFIX + playlistId, "");
+        SharedPreferences prefs = getCachePrefs(context);
+        long updatedAt = prefs.getLong(PREF_TRACKS_UPDATED_AT_PREFIX + playlistId, 0L);
+        if (updatedAt > 0L) {
+            synchronized (cachedPlaylistTracksLock) {
+                Long cachedUpdatedAt = cachedPlaylistTracksUpdatedAtById.get(playlistId);
+                ArrayList<CachedPlaylistTrack> cachedTracks = cachedPlaylistTracksById.get(playlistId);
+                if (cachedUpdatedAt != null && cachedTracks != null && cachedUpdatedAt == updatedAt) {
+                    return new ArrayList<>(cachedTracks);
+                }
+            }
+        }
+
+        String raw = prefs.getString(PREF_TRACKS_DATA_PREFIX + playlistId, "");
         if (TextUtils.isEmpty(raw)) {
+            synchronized (cachedPlaylistTracksLock) {
+                cachedPlaylistTracksById.remove(playlistId);
+                cachedPlaylistTracksUpdatedAtById.remove(playlistId);
+            }
             return result;
         }
 
@@ -4017,14 +5193,21 @@ public class MusicPlayerFragment extends Fragment {
                 String videoId = obj.optString("videoId", "").trim();
                 String title = obj.optString("title", "").trim();
                 String artist = obj.optString("artist", "").trim();
+                String duration = obj.optString("duration", "").trim();
+                String imageUrl = obj.optString("imageUrl", "").trim();
                 if (TextUtils.isEmpty(videoId)) {
                     continue;
                 }
 
-                result.add(new CachedPlaylistTrack(videoId, title, artist));
+                result.add(new CachedPlaylistTrack(videoId, title, artist, duration, imageUrl));
             }
         } catch (Exception ignored) {
             return new ArrayList<>();
+        }
+
+        synchronized (cachedPlaylistTracksLock) {
+            cachedPlaylistTracksById.put(playlistId, new ArrayList<>(result));
+            cachedPlaylistTracksUpdatedAtById.put(playlistId, updatedAt);
         }
 
         return result;
@@ -4041,6 +5224,49 @@ public class MusicPlayerFragment extends Fragment {
             return value;
         }
         return Math.round(requireContext().getResources().getDisplayMetrics().density * value);
+    }
+
+    private void launchSearchActivity() {
+        Intent intent = new Intent(requireContext(), SearchActivity.class);
+        searchActivityLauncher.launch(intent);
+    }
+
+    private void handleSearchActivityResult(int resultCode, @NonNull Intent data) {
+        if (resultCode == SearchActivity.RESULT_TRACK_SELECTED || resultCode == SearchActivity.RESULT_PLAYLIST_SELECTED) {
+            String resultType = data.getStringExtra(SearchActivity.EXTRA_RESULT_TYPE);
+            String videoId = data.getStringExtra(SearchActivity.EXTRA_RESULT_VIDEO_ID);
+            String contentId = data.getStringExtra(SearchActivity.EXTRA_RESULT_CONTENT_ID);
+            String title = data.getStringExtra(SearchActivity.EXTRA_RESULT_TITLE);
+            String subtitle = data.getStringExtra(SearchActivity.EXTRA_RESULT_SUBTITLE);
+            String thumbnailUrl = data.getStringExtra(SearchActivity.EXTRA_RESULT_THUMBNAIL);
+            String queueJson = data.getStringExtra(SearchActivity.EXTRA_RESULT_TRACKS_JSON);
+
+            YouTubeMusicService.TrackResult track = new YouTubeMusicService.TrackResult(
+                    resultType, contentId, title, subtitle, thumbnailUrl);
+            
+            // Populate tracks for queue finding
+            tracks.clear();
+            featuredTrack = track;
+            try {
+                if (queueJson != null) {
+                    org.json.JSONArray array = new org.json.JSONArray(queueJson);
+                    for (int i = 0; i < array.length(); i++) {
+                        org.json.JSONObject obj = array.getJSONObject(i);
+                        YouTubeMusicService.TrackResult qTrack = new YouTubeMusicService.TrackResult(
+                                obj.optString("resultType", ""),
+                                obj.optString("contentId", ""),
+                                obj.optString("title", ""),
+                                obj.optString("subtitle", ""),
+                                obj.optString("thumbnailUrl", "")
+                        );
+                        tracks.add(qTrack);
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+
+            openTrack(track);
+        }
     }
 
     private void openTrack(@NonNull YouTubeMusicService.TrackResult track) {
@@ -4064,6 +5290,113 @@ public class MusicPlayerFragment extends Fragment {
         }
     }
 
+    private boolean shouldUseRadioQueueForTrack(@NonNull YouTubeMusicService.TrackResult selectedTrack) {
+        if (!selectedTrack.isVideo()) {
+            return false;
+        }
+
+        if (activeScreen == ScreenMode.SEARCH) {
+            return true;
+        }
+
+        return activeScreen == ScreenMode.LIBRARY && !TextUtils.isEmpty(getLibraryInlineQuery());
+    }
+
+    @NonNull
+    private ArrayList<YouTubeMusicService.TrackResult> buildPlaybackQueueCandidates(
+            @NonNull YouTubeMusicService.TrackResult selectedTrack,
+            boolean radioMode
+    ) {
+        ArrayList<YouTubeMusicService.TrackResult> queue = new ArrayList<>();
+        HashSet<String> seenVideoIds = new HashSet<>();
+
+        if (!TextUtils.isEmpty(selectedTrack.videoId)) {
+            queue.add(selectedTrack);
+            seenVideoIds.add(selectedTrack.videoId);
+        }
+
+        if (featuredTrack != null
+                && featuredTrack.isVideo()
+                && !TextUtils.isEmpty(featuredTrack.videoId)
+                && !seenVideoIds.contains(featuredTrack.videoId)) {
+            queue.add(featuredTrack);
+            seenVideoIds.add(featuredTrack.videoId);
+        }
+
+        for (YouTubeMusicService.TrackResult item : tracks) {
+            if (item == null || !item.isVideo() || TextUtils.isEmpty(item.videoId)) {
+                continue;
+            }
+            if (seenVideoIds.contains(item.videoId)) {
+                continue;
+            }
+            queue.add(item);
+            seenVideoIds.add(item.videoId);
+        }
+
+        if (!radioMode || queue.size() <= 2) {
+            return queue;
+        }
+
+        YouTubeMusicService.TrackResult anchor = queue.get(0);
+        ArrayList<YouTubeMusicService.TrackResult> tail = new ArrayList<>(queue.subList(1, queue.size()));
+        tail.sort((left, right) -> {
+            int leftScore = computeRadioQueueScore(anchor, left);
+            int rightScore = computeRadioQueueScore(anchor, right);
+            if (leftScore != rightScore) {
+                return Integer.compare(rightScore, leftScore);
+            }
+            String leftTitle = normalizeForFilter(left.title);
+            String rightTitle = normalizeForFilter(right.title);
+            return leftTitle.compareTo(rightTitle);
+        });
+
+        ArrayList<YouTubeMusicService.TrackResult> radioQueue = new ArrayList<>(queue.size());
+        radioQueue.add(anchor);
+        radioQueue.addAll(tail);
+        return radioQueue;
+    }
+
+    private int computeRadioQueueScore(
+            @NonNull YouTubeMusicService.TrackResult anchor,
+            @NonNull YouTubeMusicService.TrackResult candidate
+    ) {
+        if (TextUtils.equals(anchor.videoId, candidate.videoId)) {
+            return Integer.MAX_VALUE;
+        }
+
+        String anchorTitle = normalizeForFilter(anchor.title);
+        String anchorSubtitle = normalizeForFilter(anchor.subtitle);
+        String candidateTitle = normalizeForFilter(candidate.title);
+        String candidateSubtitle = normalizeForFilter(candidate.subtitle);
+
+        int score = 0;
+        if (!anchorSubtitle.isEmpty() && candidateSubtitle.contains(anchorSubtitle)) {
+            score += 240;
+        }
+
+        String[] tokens = extractSearchTokens((anchorTitle + " " + anchorSubtitle).trim());
+        for (String token : tokens) {
+            if (token.length() < 3) {
+                continue;
+            }
+            if (candidateTitle.contains(token)) {
+                score += 85;
+            }
+            if (candidateSubtitle.contains(token)) {
+                score += 40;
+            }
+        }
+
+        if (candidateTitle.startsWith(anchorTitle) || anchorTitle.startsWith(candidateTitle)) {
+            score += 110;
+        }
+        if (candidateSubtitle.startsWith(anchorSubtitle) || anchorSubtitle.startsWith(candidateSubtitle)) {
+            score += 60;
+        }
+        return score;
+    }
+
     private void openTrackInIntegratedPlayer(@NonNull YouTubeMusicService.TrackResult selectedTrack) {
         if (!isAdded()) {
             return;
@@ -4080,12 +5413,11 @@ public class MusicPlayerFragment extends Fragment {
         ArrayList<String> durations = new ArrayList<>();
         ArrayList<String> images = new ArrayList<>();
 
-        int selectedIndex = -1;
-        for (YouTubeMusicService.TrackResult item : tracks) {
-            if (item == null || !item.isVideo() || TextUtils.isEmpty(item.videoId)) {
-                continue;
-            }
+        boolean radioMode = shouldUseRadioQueueForTrack(selectedTrack);
+        ArrayList<YouTubeMusicService.TrackResult> queueCandidates = buildPlaybackQueueCandidates(selectedTrack, radioMode);
 
+        int selectedIndex = -1;
+        for (YouTubeMusicService.TrackResult item : queueCandidates) {
             ids.add(item.videoId);
             titles.add(TextUtils.isEmpty(item.title) ? "Tema" : item.title);
             artists.add(item.subtitle == null ? "" : item.subtitle);
@@ -4116,6 +5448,7 @@ public class MusicPlayerFragment extends Fragment {
             getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
+                    .setCustomAnimations(R.anim.player_screen_enter, 0)
                     .hide(this)
                     .show(existingPlayer)
                     .commit();
@@ -4138,6 +5471,7 @@ public class MusicPlayerFragment extends Fragment {
             getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
+                    .setCustomAnimations(R.anim.player_screen_enter, 0)
                     .hide(this)
                     .add(R.id.fragmentContainer, playerFragment, "song_player")
                     .commit();
@@ -4152,12 +5486,8 @@ public class MusicPlayerFragment extends Fragment {
             return;
         }
 
-        try {
-            getParentFragmentManager().popBackStackImmediate(
-                    "playlist_detail",
-                    androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE
-            );
-        } catch (Exception ignored) {
+        if (getParentFragmentManager().isStateSaved()) {
+            return;
         }
 
         String accessTokenForDetail = resolveAccessTokenForPlaylistDetail();
@@ -4260,6 +5590,7 @@ public class MusicPlayerFragment extends Fragment {
         queuedSearchQuery = null;
         lastLibraryInlineDispatchedQuery = "";
         dismissPlaylistActionTooltip();
+        stopObservingOfflineQueue();
         stopMiniProgressTicker();
         invalidateMiniSnapshotCache();
         resetMiniPlayerRenderCache();
@@ -4271,13 +5602,81 @@ public class MusicPlayerFragment extends Fragment {
     public void onDestroy() {
         authExecutor.shutdownNow();
         offlineStateExecutor.shutdownNow();
+        offlinePrefetchExecutor.shutdownNow();
         super.onDestroy();
+    }
+
+    private static final class PendingOfflinePlaylistCandidate {
+        @NonNull
+        final String playlistId;
+        @NonNull
+        final String playlistTitle;
+        final int pendingCount;
+        @NonNull
+        final List<CachedPlaylistTrack> cachedTracks;
+
+        private PendingOfflinePlaylistCandidate(
+                @NonNull String playlistId,
+                @NonNull String playlistTitle,
+                int pendingCount,
+                @NonNull List<CachedPlaylistTrack> cachedTracks
+        ) {
+            this.playlistId = playlistId;
+            this.playlistTitle = playlistTitle;
+            this.pendingCount = Math.max(0, pendingCount);
+            this.cachedTracks = cachedTracks;
+        }
+    }
+
+    private static final class PendingOfflineTrackCandidate {
+        @NonNull
+        final String videoId;
+        @NonNull
+        final String title;
+        @NonNull
+        final String artist;
+        @NonNull
+        final String duration;
+
+        private PendingOfflineTrackCandidate(
+                @NonNull String videoId,
+                @Nullable String title,
+                @Nullable String artist,
+                @Nullable String duration
+        ) {
+            this.videoId = videoId;
+            this.title = title == null ? "" : title;
+            this.artist = artist == null ? "" : artist;
+            this.duration = duration == null ? "" : duration;
+        }
+    }
+
+    private static final class PendingOfflineBatchCandidate {
+        @NonNull
+        final String primaryPlaylistId;
+        @NonNull
+        final String primaryPlaylistTitle;
+        @NonNull
+        final List<String> playlistIds;
+        @NonNull
+        final List<PendingOfflineTrackCandidate> tracks;
+
+        private PendingOfflineBatchCandidate(
+                @NonNull String primaryPlaylistId,
+                @NonNull String primaryPlaylistTitle,
+                @NonNull List<String> playlistIds,
+                @NonNull List<PendingOfflineTrackCandidate> tracks
+        ) {
+            this.primaryPlaylistId = primaryPlaylistId;
+            this.primaryPlaylistTitle = primaryPlaylistTitle;
+            this.playlistIds = playlistIds;
+            this.tracks = tracks;
+        }
     }
 
     private final class MusicResultsAdapter extends RecyclerView.Adapter<MusicResultsAdapter.TrackViewHolder> {
 
         private static final int VIEW_TYPE_LIST = 0;
-        private static final int VIEW_TYPE_GRID = 1;
         private static final int VIEW_TYPE_SEARCH = 2;
 
         private final List<YouTubeMusicService.TrackResult> data = new ArrayList<>();
@@ -4286,7 +5685,6 @@ public class MusicPlayerFragment extends Fragment {
         private final Map<String, Boolean> playlistOfflineCompleteCache = new HashMap<>();
         private final Set<String> playlistOfflineRefreshInFlight = new HashSet<>();
         private long playlistOfflineStateGeneration;
-        private boolean gridMode;
         private boolean searchMode;
 
         MusicResultsAdapter(
@@ -4303,11 +5701,48 @@ public class MusicPlayerFragment extends Fragment {
                 playlistOfflineStateGeneration++;
                 playlistOfflineCompleteCache.clear();
                 playlistOfflineRefreshInFlight.clear();
+
+                long generation = playlistOfflineStateGeneration;
+                for (YouTubeMusicService.TrackResult item : data) {
+                    if (!"playlist".equals(item.resultType)) {
+                        continue;
+                    }
+
+                    String candidateId = item.contentId == null ? "" : item.contentId.trim();
+                    if (candidateId.isEmpty()) {
+                        continue;
+                    }
+
+                    playlistOfflineCompleteCache.put(candidateId, isPersistedPlaylistOfflineComplete(candidateId));
+                    requestPlaylistOfflineStateRefreshAsync(candidateId, generation);
+                }
+
+                if (!data.isEmpty()) {
+                    notifyItemRangeChanged(0, data.size());
+                }
             } else {
                 playlistOfflineCompleteCache.remove(playlistId);
                 requestPlaylistOfflineStateRefreshAsync(playlistId, playlistOfflineStateGeneration);
+                int updatedPosition = findPlaylistPositionById(playlistId);
+                if (updatedPosition >= 0) {
+                    notifyItemChanged(updatedPosition);
+                }
             }
-            notifyDataSetChanged();
+        }
+
+        void notifyPlayingPlaylistChanged(@Nullable String previousPlaylistId, @Nullable String currentPlaylistId) {
+            String previous = previousPlaylistId == null ? "" : previousPlaylistId.trim();
+            String current = currentPlaylistId == null ? "" : currentPlaylistId.trim();
+
+            int previousPosition = findPlaylistPositionById(previous);
+            int currentPosition = findPlaylistPositionById(current);
+
+            if (previousPosition >= 0) {
+                notifyItemChanged(previousPosition);
+            }
+            if (currentPosition >= 0 && currentPosition != previousPosition) {
+                notifyItemChanged(currentPosition);
+            }
         }
 
         @Override
@@ -4322,14 +5757,6 @@ public class MusicPlayerFragment extends Fragment {
                     + "|"
                     + (item.title == null ? "" : item.title);
             return identity.hashCode();
-        }
-
-        void setGridMode(boolean gridMode) {
-            if (this.gridMode == gridMode) {
-                return;
-            }
-            this.gridMode = gridMode;
-            notifyDataSetChanged();
         }
 
         void setSearchMode(boolean searchMode) {
@@ -4405,9 +5832,7 @@ public class MusicPlayerFragment extends Fragment {
         @Override
         public TrackViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
             int layoutRes;
-            if (viewType == VIEW_TYPE_GRID) {
-                layoutRes = R.layout.item_music_result_grid;
-            } else if (viewType == VIEW_TYPE_SEARCH) {
+            if (viewType == VIEW_TYPE_SEARCH) {
                 layoutRes = R.layout.item_music_search_result;
             } else {
                 layoutRes = R.layout.item_music_result;
@@ -4421,7 +5846,7 @@ public class MusicPlayerFragment extends Fragment {
             if (searchMode) {
                 return VIEW_TYPE_SEARCH;
             }
-            return gridMode ? VIEW_TYPE_GRID : VIEW_TYPE_LIST;
+            return VIEW_TYPE_LIST;
         }
 
         @Override
@@ -4433,12 +5858,20 @@ public class MusicPlayerFragment extends Fragment {
                 return;
             }
 
-            boolean isLikedPlaylistStyle = isLikedPlaylistStyle(item, position);
+            boolean isFavoritesPlaylistStyle = isFavoritesPlaylistStyle(item);
+            boolean isLikedPlaylistStyle = !isFavoritesPlaylistStyle && isLikedPlaylistStyle(item);
+                boolean useFavoritesSpecialStyle = isFavoritesPlaylistStyle
+                    && TextUtils.isEmpty(item.thumbnailUrl);
 
-            if (isLikedPlaylistStyle) {
+            if (isFavoritesPlaylistStyle) {
+                holder.tvTrackTitle.setText(FavoritesPlaylistStore.PLAYLIST_TITLE);
+                holder.tvTrackSubtitle.setText(TextUtils.isEmpty(item.subtitle)
+                        ? FavoritesPlaylistStore.buildSubtitle(0)
+                        : item.subtitle);
+            } else if (isLikedPlaylistStyle) {
                 holder.tvTrackTitle.setText("Musica que te gusto");
                 if (TextUtils.isEmpty(item.subtitle)) {
-                    holder.tvTrackSubtitle.setText("Playlist autogenerada");
+                    holder.tvTrackSubtitle.setText("Playlist autogenerada • 0 canciones");
                 } else {
                     holder.tvTrackSubtitle.setText(item.subtitle);
                 }
@@ -4455,35 +5888,36 @@ public class MusicPlayerFragment extends Fragment {
                 holder.tvTrackSubtitle.setText("Playlist");
             }
 
-            holder.vLikedBackground.setVisibility(isLikedPlaylistStyle ? View.VISIBLE : View.GONE);
-            holder.ivLikedIcon.setVisibility(isLikedPlaylistStyle ? View.VISIBLE : View.GONE);
-            holder.ivTrackThumb.setVisibility(isLikedPlaylistStyle ? View.GONE : View.VISIBLE);
+            boolean specialPlaylistStyle = isLikedPlaylistStyle || useFavoritesSpecialStyle;
+            holder.vLikedBackground.setVisibility(specialPlaylistStyle ? View.VISIBLE : View.GONE);
+            holder.ivLikedIcon.setVisibility(specialPlaylistStyle ? View.VISIBLE : View.GONE);
+            holder.ivTrackThumb.setVisibility(specialPlaylistStyle ? View.GONE : View.VISIBLE);
 
-            if (!isLikedPlaylistStyle) {
-                if (!TextUtils.isEmpty(item.thumbnailUrl)) {
-                    Glide.with(holder.itemView)
-                            .load(item.thumbnailUrl)
-                            .diskCacheStrategy(DiskCacheStrategy.AUTOMATIC)
-                            .skipMemoryCache(false)
-                            .dontAnimate()
-                            .centerCrop()
-                            .placeholder(R.drawable.ic_music)
-                            .error(R.drawable.ic_music)
-                            .into(holder.ivTrackThumb);
-                } else {
-                    holder.ivTrackThumb.setImageResource(R.drawable.ic_music);
-                }
+            if (specialPlaylistStyle) {
+                holder.ivLikedIcon.setImageResource(useFavoritesSpecialStyle
+                        ? R.drawable.ic_favorite_star
+                        : R.drawable.ic_thumb_up_liked);
+                holder.ivLikedIcon.setColorFilter(Color.WHITE);
             }
 
-            if (gridMode) {
-                holder.vTrackDivider.setVisibility(View.GONE);
-            } else {
-                holder.vTrackDivider.setVisibility(position == data.size() - 1 ? View.GONE : View.VISIBLE);
+            if (!specialPlaylistStyle) {
+                loadArtworkInto(holder.ivTrackThumb, item.thumbnailUrl);
             }
+
+            holder.vTrackDivider.setVisibility(position == data.size() - 1 ? View.GONE : View.VISIBLE);
 
             boolean isPlaylistItem = "playlist".equals(item.resultType);
             holder.ivTrackMore.setVisibility(isPlaylistItem ? View.VISIBLE : View.GONE);
             holder.ivPlaylistOfflineAll.setVisibility(isPlaylistItem ? View.VISIBLE : View.GONE);
+            if (holder.llNowPlayingOverlay != null) {
+                holder.llNowPlayingOverlay.setVisibility(View.GONE);
+            }
+
+            int defaultTitleColor = ContextCompat.getColor(holder.itemView.getContext(), R.color.text_primary);
+            int defaultSubtitleColor = ContextCompat.getColor(holder.itemView.getContext(), R.color.text_secondary);
+            int activeTitleColor = ContextCompat.getColor(holder.itemView.getContext(), R.color.stitch_blue_light);
+            holder.tvTrackTitle.setTextColor(defaultTitleColor);
+            holder.tvTrackSubtitle.setTextColor(defaultSubtitleColor);
 
             if (isPlaylistItem) {
                 String playlistId = item.contentId == null ? "" : item.contentId.trim();
@@ -4519,6 +5953,13 @@ public class MusicPlayerFragment extends Fragment {
                     holder.ivPlaylistOfflineAll.setAlpha(0.85f);
                 }
 
+                if (isPlaylistCurrentlyPlaying(playlistId) && !specialPlaylistStyle) {
+                    if (holder.llNowPlayingOverlay != null) {
+                        holder.llNowPlayingOverlay.setVisibility(View.VISIBLE);
+                    }
+                    holder.tvTrackTitle.setTextColor(activeTitleColor);
+                }
+
                 holder.ivTrackMore.setOnClickListener(v -> onTrackMoreClick.onTrackMoreClick(item, holder.ivTrackMore));
             } else {
                 holder.ivTrackMore.setOnClickListener(null);
@@ -4536,6 +5977,9 @@ public class MusicPlayerFragment extends Fragment {
             holder.ivLikedIcon.setVisibility(View.GONE);
             holder.ivPlaylistOfflineAll.setVisibility(View.GONE);
             holder.ivTrackThumb.setVisibility(View.VISIBLE);
+            if (holder.llNowPlayingOverlay != null) {
+                holder.llNowPlayingOverlay.setVisibility(View.GONE);
+            }
 
             String title = TextUtils.isEmpty(item.title) ? "Resultado" : item.title;
             holder.tvTrackTitle.setText(title);
@@ -4546,19 +5990,7 @@ public class MusicPlayerFragment extends Fragment {
                     : typeLabel + " • " + item.subtitle;
             holder.tvTrackSubtitle.setText(subtitle);
 
-            if (!TextUtils.isEmpty(item.thumbnailUrl)) {
-                Glide.with(holder.itemView)
-                        .load(item.thumbnailUrl)
-                        .diskCacheStrategy(DiskCacheStrategy.AUTOMATIC)
-                        .skipMemoryCache(false)
-                        .dontAnimate()
-                        .centerCrop()
-                        .placeholder(R.drawable.ic_music)
-                        .error(R.drawable.ic_music)
-                        .into(holder.ivTrackThumb);
-            } else {
-                holder.ivTrackThumb.setImageResource(R.drawable.ic_music);
-            }
+            loadArtworkInto(holder.ivTrackThumb, item.thumbnailUrl);
 
             holder.vTrackDivider.setVisibility(position == data.size() - 1 ? View.GONE : View.VISIBLE);
             holder.ivTrackMore.setVisibility(View.VISIBLE);
@@ -4566,11 +5998,7 @@ public class MusicPlayerFragment extends Fragment {
             holder.itemView.setOnClickListener(v -> onTrackClick.onTrackClick(item));
         }
 
-        private boolean isLikedPlaylistStyle(@NonNull YouTubeMusicService.TrackResult item, int position) {
-            if (position != 0) {
-                return false;
-            }
-
+        private boolean isLikedPlaylistStyle(@NonNull YouTubeMusicService.TrackResult item) {
             if (YouTubeMusicService.SPECIAL_LIKED_VIDEOS_ID.equals(item.contentId)) {
                 return true;
             }
@@ -4579,6 +6007,10 @@ public class MusicPlayerFragment extends Fragment {
             return normalizedTitle.contains("gusto")
                     || normalizedTitle.contains("liked")
                     || normalizedTitle.contains("me gusta");
+        }
+
+        private boolean isFavoritesPlaylistStyle(@NonNull YouTubeMusicService.TrackResult item) {
+            return TextUtils.equals(FavoritesPlaylistStore.PLAYLIST_ID, item.contentId);
         }
 
         @Override
@@ -4640,6 +6072,7 @@ public class MusicPlayerFragment extends Fragment {
             final TextView tvTrackSubtitle;
             final ImageView ivTrackMore;
             final View vTrackDivider;
+            final View llNowPlayingOverlay;
 
             TrackViewHolder(@NonNull View itemView) {
                 super(itemView);
@@ -4651,6 +6084,7 @@ public class MusicPlayerFragment extends Fragment {
                 tvTrackSubtitle = itemView.findViewById(R.id.tvTrackSubtitle);
                 ivTrackMore = itemView.findViewById(R.id.ivTrackMore);
                 vTrackDivider = itemView.findViewById(R.id.vTrackDivider);
+                llNowPlayingOverlay = itemView.findViewById(R.id.llNowPlayingOverlay);
             }
         }
     }
@@ -4659,11 +6093,21 @@ public class MusicPlayerFragment extends Fragment {
         final String videoId;
         final String title;
         final String artist;
+        final String duration;
+        final String imageUrl;
 
-        CachedPlaylistTrack(@NonNull String videoId, @NonNull String title, @NonNull String artist) {
+        CachedPlaylistTrack(
+                @NonNull String videoId,
+                @NonNull String title,
+                @NonNull String artist,
+                @NonNull String duration,
+                @NonNull String imageUrl
+        ) {
             this.videoId = videoId;
             this.title = title;
             this.artist = artist;
+            this.duration = duration;
+            this.imageUrl = imageUrl;
         }
     }
 }

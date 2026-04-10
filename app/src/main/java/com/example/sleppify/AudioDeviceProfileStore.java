@@ -9,15 +9,23 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 public final class AudioDeviceProfileStore {
+    private static final String GLOBAL_PROFILE_ID = "global_audio_profile";
+    private static final String BUILTIN_SPEAKER_PROFILE_ID = "builtin_speaker";
+    private static final String BUILTIN_EARPIECE_PROFILE_ID = "builtin_earpiece";
     private static final String KEY_ACTIVE_PROFILE_ID = "active_profile_id";
     private static final String KEY_PROFILE_PREFIX = "device_profile_";
     private static final String KEY_SELECTED_PRESET = "selected_preset";
     private static final String KEY_USER_PRESET_BAND_PREFIX = "user_preset_band_";
     private static final String KEY_PROFILE_CUSTOM_PRESET_NAME_PREFIX = "profile_custom_preset_name_";
+    private static final String PRESET_DEFAULT = "default";
     private static final String PRESET_CUSTOM = "custom";
     private static final String USER_PRESET_ID_PREFIX = "user_profile_";
     private static final int BAND_COUNT = AudioEffectsService.EQ_BAND_COUNT;
     private static final float FLOAT_TOLERANCE = 0.01f;
+    private static final float PROFILE_DEFAULT_BASS_DB = 0f;
+    private static final int PROFILE_DEFAULT_BASS_TYPE = AudioEffectsService.BASS_TYPE_NATURAL;
+    private static final float PROFILE_DEFAULT_BASS_FREQUENCY_HZ = 62f;
+    private static final boolean PROFILE_DEFAULT_ENABLED = false;
 
     private AudioDeviceProfileStore() {
     }
@@ -38,10 +46,11 @@ public final class AudioDeviceProfileStore {
                     copyProfileValuesToActive(editor, prefs, aliasProfileId);
                     copyProfileValuesToProfile(editor, prefs, aliasProfileId, targetProfileId);
                 } else {
-                    copyActiveValuesToProfile(editor, prefs, targetProfileId);
+                    writeDefaultValuesToProfile(editor, targetProfileId);
+                    writeDefaultValuesToActive(editor);
                 }
                 editor.apply();
-                return !TextUtils.isEmpty(aliasProfileId);
+                return true;
             }
             if (!areActiveValuesAlignedWithProfile(prefs, targetProfileId)) {
                 SharedPreferences.Editor editor = prefs.edit();
@@ -64,8 +73,9 @@ public final class AudioDeviceProfileStore {
             copyProfileValuesToActive(editor, prefs, aliasProfileId);
             copyProfileValuesToProfile(editor, prefs, aliasProfileId, targetProfileId);
         } else {
-            // First time on this output: clone current active config as base profile.
-            copyActiveValuesToProfile(editor, prefs, targetProfileId);
+            // First time on this output: use explicit default profile baseline.
+            writeDefaultValuesToProfile(editor, targetProfileId);
+            writeDefaultValuesToActive(editor);
         }
 
         editor.putString(KEY_ACTIVE_PROFILE_ID, targetProfileId);
@@ -133,31 +143,56 @@ public final class AudioDeviceProfileStore {
 
     @NonNull
     public static String buildProfileId(@Nullable AudioDeviceInfo selectedOutput) {
-        if (selectedOutput == null) {
-            return "builtin_speaker";
+        if (selectedOutput == null || !selectedOutput.isSink()) {
+            return GLOBAL_PROFILE_ID;
         }
 
         int type = selectedOutput.getType();
-        String uniquePart = sanitize(uniqueOutputName(selectedOutput));
-
         if (isBluetoothType(type)) {
-            return TextUtils.isEmpty(uniquePart) ? "bluetooth" : "bluetooth_" + uniquePart;
-        }
-        if (isWiredType(type)) {
-            return TextUtils.isEmpty(uniquePart) ? "wired" : "wired_" + uniquePart;
-        }
-        if (type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER || type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER_SAFE) {
-            return "builtin_speaker";
-        }
-        if (type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE) {
-            return "builtin_earpiece";
+            String unique = sanitize(uniqueOutputName(selectedOutput));
+            if (!TextUtils.isEmpty(unique)) {
+                return "bluetooth_" + unique;
+            }
+            String byName = sanitizeProductName(selectedOutput);
+            if (!TextUtils.isEmpty(byName)) {
+                return "bluetooth_" + byName;
+            }
+            return "bluetooth";
         }
 
-        String typeKey = "type_" + type;
-        return TextUtils.isEmpty(uniquePart) ? typeKey : typeKey + "_" + uniquePart;
+        if (isWiredType(type)) {
+            String unique = sanitize(uniqueOutputName(selectedOutput));
+            if (!TextUtils.isEmpty(unique)) {
+                return "wired_" + unique;
+            }
+            String byName = sanitizeProductName(selectedOutput);
+            if (!TextUtils.isEmpty(byName)) {
+                return "wired_" + byName;
+            }
+            return "wired";
+        }
+
+        if (type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE) {
+            return BUILTIN_EARPIECE_PROFILE_ID;
+        }
+
+        if (type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+                || type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER_SAFE) {
+            return BUILTIN_SPEAKER_PROFILE_ID;
+        }
+
+        String name = sanitizeProductName(selectedOutput);
+        if (!TextUtils.isEmpty(name)) {
+            return "type_" + type + "_" + name;
+        }
+
+        return "type_" + type;
     }
 
     private static boolean hasProfileData(@NonNull SharedPreferences prefs, @NonNull String profileId) {
+        if (prefs.contains(profileKey(profileId, AudioEffectsService.KEY_ENABLED))) {
+            return true;
+        }
         if (prefs.contains(profileKey(profileId, AudioEffectsService.KEY_BASS_DB))) {
             return true;
         }
@@ -191,6 +226,11 @@ public final class AudioDeviceProfileStore {
                 prefs.getFloat(AudioEffectsService.KEY_BASS_DB, 0f),
                 prefs.getFloat(profileKey(profileId, AudioEffectsService.KEY_BASS_DB), 0f)
         )) {
+            return false;
+        }
+
+        if (prefs.getBoolean(AudioEffectsService.KEY_ENABLED, false)
+                != prefs.getBoolean(profileKey(profileId, AudioEffectsService.KEY_ENABLED), false)) {
             return false;
         }
 
@@ -242,6 +282,10 @@ public final class AudioDeviceProfileStore {
             @NonNull SharedPreferences prefs,
             @NonNull String profileId
     ) {
+        editor.putBoolean(
+            profileKey(profileId, AudioEffectsService.KEY_ENABLED),
+            prefs.getBoolean(AudioEffectsService.KEY_ENABLED, false)
+        );
         editor.putFloat(
                 profileKey(profileId, AudioEffectsService.KEY_BASS_DB),
             prefs.getFloat(AudioEffectsService.KEY_BASS_DB, 0f)
@@ -281,6 +325,11 @@ public final class AudioDeviceProfileStore {
     ) {
         String profilePresetId = resolveProfilePresetId(prefs, profileId);
 
+        editor.putBoolean(
+            AudioEffectsService.KEY_ENABLED,
+            prefs.getBoolean(profileKey(profileId, AudioEffectsService.KEY_ENABLED), false)
+        );
+
         editor.putFloat(
                 AudioEffectsService.KEY_BASS_DB,
             prefs.getFloat(profileKey(profileId, AudioEffectsService.KEY_BASS_DB), 0f)
@@ -318,6 +367,10 @@ public final class AudioDeviceProfileStore {
             @NonNull String sourceProfileId,
             @NonNull String targetProfileId
     ) {
+        editor.putBoolean(
+            profileKey(targetProfileId, AudioEffectsService.KEY_ENABLED),
+            prefs.getBoolean(profileKey(sourceProfileId, AudioEffectsService.KEY_ENABLED), false)
+        );
         editor.putFloat(
                 profileKey(targetProfileId, AudioEffectsService.KEY_BASS_DB),
                 prefs.getFloat(profileKey(sourceProfileId, AudioEffectsService.KEY_BASS_DB), 0f)
@@ -345,6 +398,43 @@ public final class AudioDeviceProfileStore {
                     profileBandKey(targetProfileId, i),
                     resolveProfileBandValue(prefs, sourceProfileId, i, selectedPreset)
             );
+        }
+    }
+
+    private static void writeDefaultValuesToProfile(
+            @NonNull SharedPreferences.Editor editor,
+            @NonNull String profileId
+    ) {
+        editor.putBoolean(
+                profileKey(profileId, AudioEffectsService.KEY_ENABLED),
+                PROFILE_DEFAULT_ENABLED
+        );
+        editor.putFloat(
+                profileKey(profileId, AudioEffectsService.KEY_BASS_DB),
+                PROFILE_DEFAULT_BASS_DB
+        );
+        editor.putInt(
+                profileKey(profileId, AudioEffectsService.KEY_BASS_TYPE),
+                PROFILE_DEFAULT_BASS_TYPE
+        );
+        editor.putFloat(
+                profileKey(profileId, AudioEffectsService.KEY_BASS_FREQUENCY_HZ),
+                PROFILE_DEFAULT_BASS_FREQUENCY_HZ
+        );
+        editor.putString(profileKey(profileId, KEY_SELECTED_PRESET), PRESET_DEFAULT);
+        for (int i = 0; i < BAND_COUNT; i++) {
+            editor.putFloat(profileBandKey(profileId, i), 0f);
+        }
+    }
+
+    private static void writeDefaultValuesToActive(@NonNull SharedPreferences.Editor editor) {
+        editor.putBoolean(AudioEffectsService.KEY_ENABLED, PROFILE_DEFAULT_ENABLED);
+        editor.putFloat(AudioEffectsService.KEY_BASS_DB, PROFILE_DEFAULT_BASS_DB);
+        editor.putInt(AudioEffectsService.KEY_BASS_TYPE, PROFILE_DEFAULT_BASS_TYPE);
+        editor.putFloat(AudioEffectsService.KEY_BASS_FREQUENCY_HZ, PROFILE_DEFAULT_BASS_FREQUENCY_HZ);
+        editor.putString(KEY_SELECTED_PRESET, PRESET_DEFAULT);
+        for (int i = 0; i < BAND_COUNT; i++) {
+            editor.putFloat(AudioEffectsService.bandDbKey(i), 0f);
         }
     }
 
@@ -543,6 +633,10 @@ public final class AudioDeviceProfileStore {
         String typeOnly = "type_" + type;
         if (!TextUtils.equals(typeOnly, targetProfileId) && hasProfileData(prefs, typeOnly)) {
             return typeOnly;
+        }
+
+        if (!TextUtils.equals(GLOBAL_PROFILE_ID, targetProfileId) && hasProfileData(prefs, GLOBAL_PROFILE_ID)) {
+            return GLOBAL_PROFILE_ID;
         }
 
         return null;

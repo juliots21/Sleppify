@@ -16,8 +16,8 @@ import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.ViewGroup;
-import android.view.ViewTreeObserver;
 import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.WebSettings;
@@ -69,26 +69,12 @@ import java.util.TreeMap;
 public class WeeklySchedulerFragment extends Fragment {
 
     private static final int WEEKS_AHEAD = 10;
-    private static final String KEY_SCHEDULE_AI_ACCEPT_COUNT = "schedule_ai_accept_count";
-    private static final String KEY_SCHEDULE_AI_DISMISS_COUNT = "schedule_ai_dismiss_count";
-    private static final String KEY_SCHEDULE_AI_LAST_MESSAGE = "schedule_ai_last_message";
-    private static final String KEY_SCHEDULE_AI_LAST_ACTION = "schedule_ai_last_action";
-    private static final String KEY_SCHEDULE_AI_OPEN_COUNT = "schedule_ai_open_count";
-    private static final String KEY_SCHEDULE_AI_NEXT_AT = "schedule_ai_next_at";
-    private static final String KEY_SCHEDULE_AI_LAST_PROCESS_SESSION = "schedule_ai_last_process_session";
-    private static final String KEY_SCHEDULE_AI_HIDDEN_UNTIL_NEXT = "schedule_ai_hidden_until_next";
-    private static final String KEY_SCHEDULE_AI_ACTIONS_HIDDEN = "schedule_ai_actions_hidden";
-    private static final String KEY_SCHEDULE_AI_FEEDBACK_MESSAGE_HASH = "schedule_ai_feedback_message_hash";
     private static final String KEY_FUTURE_INSIGHT_LOCK_DATE = "future_insight_lock_date";
     private static final String KEY_FUTURE_INSIGHT_LOCK_TASK = "future_insight_lock_task";
     private static final String KEY_FUTURE_INSIGHT_LOCK_TITLE = "future_insight_lock_title";
     private static final String KEY_FUTURE_INSIGHT_LOCK_MESSAGE = "future_insight_lock_message";
     private static final String KEY_FUTURE_INSIGHT_LOCK_ACTION = "future_insight_lock_action";
     private static final String KEY_FUTURE_INSIGHT_LOCK_MICRO = "future_insight_lock_micro";
-    private static final long SCHEDULE_AI_SUGGESTION_INTERVAL_MS = 2L * 60L * 60L * 1000L;
-    private static final long PROCESS_SESSION_ID = AiSuggestionSession.PROCESS_SESSION_ID;
-    private static final String ACTION_APPLY = "apply";
-    private static final String ACTION_DISMISS = "dismiss";
     private static final String FUTURE_INSIGHT_ACTION_SCHEME = "sleppify";
     private static final String FUTURE_INSIGHT_ACTION_HOST = "future-insight";
     private static final String FUTURE_INSIGHT_ACTION_PATH = "/action";
@@ -115,6 +101,7 @@ public class WeeklySchedulerFragment extends Fragment {
     private static final int TASK_METADATA_PULL_REFRESH_LIMIT = 24;
     private static final long TASK_METADATA_BACKFILL_INTERVAL_MS = 2L * 60L * 1000L;
     private static final String FUTURE_TASKS_DYNAMIC_TOKEN = "__DYNAMIC_SECTIONS__";
+    private static final String FUTURE_TASKS_THEME_BODY_CLASS_TOKEN = "__THEME_BODY_CLASS__";
     private static final int FUTURE_TASK_DAYS_LIMIT = 35;
     private static final int FUTURE_TASKS_PER_DAY_LIMIT = 12;
     private static final long AGENDA_CLOUD_REFRESH_MIN_INTERVAL_MS = 15000L;
@@ -132,13 +119,21 @@ public class WeeklySchedulerFragment extends Fragment {
     private List<Calendar> allDayDates = new ArrayList<>();
     private List<String> allDayDateKeys = new ArrayList<>();
     @Nullable
-    private ViewTreeObserver.OnScrollChangedListener daysCarouselScrollListener;
+    private View.OnScrollChangeListener daysCarouselScrollListener;
     @NonNull
     private final Runnable syncCarouselHeaderRunnable = this::syncWeekRangeAndActiveMonthFromCarousel;
+    private boolean isCarouselHeaderSyncQueued;
     @NonNull
     private String carouselFocusedDateKey = "";
+    @NonNull
+    private String carouselFocusedWeekStartKey = "";
+    private int activeMonthLabelIndex = -1;
+    private float daysCarouselTouchDownX;
+    private float daysCarouselTouchDownY;
+    private boolean daysCarouselHorizontalGesture;
+    private int daysCarouselTouchSlop = -1;
 
-    private TextView tvGreeting, tvDateRange, tvSelectedDayTitle;
+    private TextView tvDateRange, tvSelectedDayTitle;
     private TextView tvFabHint;
     private ImageView ivWeekCalendarPicker;
     private LinearLayout llDaysContainer;
@@ -154,12 +149,7 @@ public class WeeklySchedulerFragment extends Fragment {
     private CloudSyncManager cloudSyncManager;
     private SharedPreferences settingsPrefs;
     private boolean fabLockedForAuth;
-    private MaterialCardView cardSmartSuggestion;
-    private TextView tvSmartSuggestion;
-    private MaterialButton btnSuggestionApply;
-    private MaterialButton btnSuggestionDismiss;
     private WebView wvFutureTasksLayer;
-    private boolean scheduleSuggestionInFlight;
     private final Handler aiTaskMetadataHandler = new Handler(Looper.getMainLooper());
     private final HashSet<String> pendingTaskMetadataRequests = new HashSet<>();
     @Nullable
@@ -175,8 +165,6 @@ public class WeeklySchedulerFragment extends Fragment {
     private long lastAgendaReminderRescheduleAtMs;
     private long lastAgendaCloudRefreshAtMs;
     private long lastTaskMetadataBackfillAtMs;
-    @Nullable
-    private GeminiIntelligenceService.ScheduleSuggestion currentScheduleSuggestion;
     @Nullable
     private FutureInsightModel currentFutureInsightModel;
     private boolean futureInsightRequestInFlight;
@@ -267,7 +255,6 @@ public class WeeklySchedulerFragment extends Fragment {
 
         tvDateRange = view.findViewById(R.id.tvDateRange);
         tvSelectedDayTitle = view.findViewById(R.id.tvSelectedDayTitle);
-        tvGreeting = view.findViewById(R.id.tvGreeting);
         ivWeekCalendarPicker = view.findViewById(R.id.ivWeekCalendarPicker);
         llDaysContainer = view.findViewById(R.id.llDaysContainer);
         scrollAgendaContent = view.findViewById(R.id.scrollAgendaContent);
@@ -277,10 +264,6 @@ public class WeeklySchedulerFragment extends Fragment {
         fabAddTask = view.findViewById(R.id.fabAddTask);
         cardFabHint = view.findViewById(R.id.cardFabHint);
         tvFabHint = view.findViewById(R.id.tvFabHint);
-        cardSmartSuggestion = view.findViewById(R.id.cardSmartSuggestion);
-        tvSmartSuggestion = view.findViewById(R.id.tvSmartSuggestion);
-        btnSuggestionApply = view.findViewById(R.id.btnSuggestionApply);
-        btnSuggestionDismiss = view.findViewById(R.id.btnSuggestionDismiss);
         wvFutureTasksLayer = view.findViewById(R.id.wvFutureTasksLayer);
 
         rvTasks.setLayoutManager(new LinearLayoutManager(getContext()));
@@ -292,12 +275,9 @@ public class WeeklySchedulerFragment extends Fragment {
         settingsPrefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE);
         configureFutureTasksWebView();
         setupAgendaPullToRefresh();
-
-        setupSuggestionActions();
-        loadStoredSuggestionIntoCard();
+        setupDaysCarouselTouchInterception();
 
         setupCalendarAndDays();
-        updateGreeting();
 
         if (ivWeekCalendarPicker != null) {
             ivWeekCalendarPicker.setOnClickListener(v -> showSystemCalendarDayPicker());
@@ -321,15 +301,12 @@ public class WeeklySchedulerFragment extends Fragment {
         if (cloudSyncManager == null) {
             return;
         }
-        updateGreeting();
-        incrementScheduleOpenCount();
         if (cloudSyncManager.isCloudEnabledForCurrentUser()) {
             long now = System.currentTimeMillis();
             if ((now - lastAgendaCloudRefreshAtMs) < AGENDA_CLOUD_REFRESH_MIN_INTERVAL_MS) {
                 loadAgendaFromLocal(false);
                 refreshSelectedDayTasks();
                 updateFabLoginState();
-                refreshSmartScheduleSuggestionState();
                 return;
             }
             lastAgendaCloudRefreshAtMs = now;
@@ -337,14 +314,12 @@ public class WeeklySchedulerFragment extends Fragment {
                 loadAgendaFromLocal(false);
                 refreshSelectedDayTasks();
                 updateFabLoginState();
-                refreshSmartScheduleSuggestionState();
             });
             return;
         }
         loadAgendaFromLocal(false);
         refreshSelectedDayTasks();
         updateFabLoginState();
-        refreshSmartScheduleSuggestionState();
     }
 
     public void onCloudAgendaHydrationCompleted() {
@@ -354,11 +329,9 @@ public class WeeklySchedulerFragment extends Fragment {
         }
 
         lastAgendaCloudRefreshAtMs = System.currentTimeMillis();
-        updateGreeting();
         loadAgendaFromLocal(false);
         refreshSelectedDayTasks();
         updateFabLoginState();
-        refreshSmartScheduleSuggestionState();
         setAgendaPullRefreshState(false);
     }
 
@@ -382,6 +355,63 @@ public class WeeklySchedulerFragment extends Fragment {
             return child != null && child.canScrollVertically(-1);
         });
         swipeAgendaRefresh.setOnRefreshListener(this::triggerAgendaPullRefresh);
+    }
+
+    private void setupDaysCarouselTouchInterception() {
+        if (hsvDaysCarousel == null) {
+            return;
+        }
+
+        if (daysCarouselTouchSlop < 0) {
+            daysCarouselTouchSlop = ViewConfiguration.get(requireContext()).getScaledTouchSlop();
+        }
+
+        hsvDaysCarousel.setOnTouchListener((v, event) -> {
+            int action = event.getActionMasked();
+            switch (action) {
+                case MotionEvent.ACTION_DOWN:
+                    daysCarouselTouchDownX = event.getX();
+                    daysCarouselTouchDownY = event.getY();
+                    daysCarouselHorizontalGesture = false;
+                    lockAgendaParentsForHorizontalScroll(true);
+                    break;
+
+                case MotionEvent.ACTION_MOVE:
+                    float dx = event.getX() - daysCarouselTouchDownX;
+                    float dy = event.getY() - daysCarouselTouchDownY;
+                    if (!daysCarouselHorizontalGesture
+                            && (Math.abs(dx) > daysCarouselTouchSlop || Math.abs(dy) > daysCarouselTouchSlop)) {
+                        daysCarouselHorizontalGesture = Math.abs(dx) >= Math.abs(dy);
+                    }
+
+                    boolean lockParents = daysCarouselHorizontalGesture || Math.abs(dx) >= Math.abs(dy);
+                    lockAgendaParentsForHorizontalScroll(lockParents);
+                    break;
+
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    daysCarouselHorizontalGesture = false;
+                    lockAgendaParentsForHorizontalScroll(false);
+                    break;
+
+                default:
+                    break;
+            }
+
+            return false;
+        });
+    }
+
+    private void lockAgendaParentsForHorizontalScroll(boolean lock) {
+        if (scrollAgendaContent != null) {
+            scrollAgendaContent.requestDisallowInterceptTouchEvent(lock);
+        }
+        if (swipeAgendaRefresh != null) {
+            swipeAgendaRefresh.requestDisallowInterceptTouchEvent(lock);
+            if (!swipeAgendaRefresh.isRefreshing()) {
+                swipeAgendaRefresh.setEnabled(!lock);
+            }
+        }
     }
 
     private void setAgendaPullRefreshState(boolean refreshing) {
@@ -408,7 +438,6 @@ public class WeeklySchedulerFragment extends Fragment {
                 refreshSelectedDayTasks();
                 scheduleBackfillForIncompleteTaskMetadata(true, 0);
                 updateFabLoginState();
-                refreshSmartScheduleSuggestionState(true);
                 setAgendaPullRefreshState(false);
             });
             return;
@@ -418,55 +447,11 @@ public class WeeklySchedulerFragment extends Fragment {
         refreshSelectedDayTasks();
         scheduleBackfillForIncompleteTaskMetadata(true, 0);
         updateFabLoginState();
-        refreshSmartScheduleSuggestionState(true);
         setAgendaPullRefreshState(false);
     }
 
     private void forceRefreshIntelligentNotesOnPullRefresh() {
-        resetSmartSuggestionIfPlaceholder();
         clearFutureInsightLocksForRefresh();
-    }
-
-    private void resetSmartSuggestionIfPlaceholder() {
-        if (settingsPrefs == null) {
-            return;
-        }
-
-        String persistedMessage = settingsPrefs.getString(KEY_SCHEDULE_AI_LAST_MESSAGE, "");
-        String currentMessage = tvSmartSuggestion != null
-                ? tvSmartSuggestion.getText().toString()
-                : "";
-
-        if (!isPlaceholderSmartSuggestionText(persistedMessage)
-                && !isPlaceholderSmartSuggestionText(currentMessage)) {
-            return;
-        }
-
-        settingsPrefs.edit()
-                .remove(KEY_SCHEDULE_AI_LAST_MESSAGE)
-                .remove(KEY_SCHEDULE_AI_FEEDBACK_MESSAGE_HASH)
-                .putBoolean(KEY_SCHEDULE_AI_HIDDEN_UNTIL_NEXT, false)
-                .putBoolean(KEY_SCHEDULE_AI_ACTIONS_HIDDEN, false)
-                .putLong(KEY_SCHEDULE_AI_NEXT_AT, 0L)
-                .apply();
-
-        currentScheduleSuggestion = null;
-        if (tvSmartSuggestion != null) {
-            tvSmartSuggestion.setText("Generando sugerencia personalizada...");
-        }
-        setScheduleSuggestionActionsVisible(false);
-    }
-
-    private boolean isPlaceholderSmartSuggestionText(@Nullable String message) {
-        if (TextUtils.isEmpty(message)) {
-            return true;
-        }
-
-        String normalized = message.trim().toLowerCase(SPANISH_LOCALE);
-        return normalized.contains("generando sugerencia personalizada")
-                || normalized.contains("analizando tus patrones")
-                || normalized.contains("no se pudo generar una sugerencia")
-                || normalized.equals("horario inteligente sugerido");
     }
 
     private void clearFutureInsightLocksForRefresh() {
@@ -508,6 +493,7 @@ public class WeeklySchedulerFragment extends Fragment {
         allDayMonthLabels.clear();
         allDayDates.clear();
         allDayDateKeys.clear();
+        activeMonthLabelIndex = -1;
 
         String todayKey = dateKeyFormat.format(todayDate.getTime());
 
@@ -651,11 +637,12 @@ public class WeeklySchedulerFragment extends Fragment {
             return;
         }
 
-        daysCarouselScrollListener = this::scheduleCarouselHeaderSync;
-        ViewTreeObserver observer = hsvDaysCarousel.getViewTreeObserver();
-        if (observer.isAlive()) {
-            observer.addOnScrollChangedListener(daysCarouselScrollListener);
-        }
+        daysCarouselScrollListener = (v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
+            if (scrollX != oldScrollX) {
+                scheduleCarouselHeaderSync();
+            }
+        };
+        hsvDaysCarousel.setOnScrollChangeListener(daysCarouselScrollListener);
     }
 
     private void scheduleCarouselHeaderSync() {
@@ -663,11 +650,17 @@ public class WeeklySchedulerFragment extends Fragment {
             return;
         }
 
-        hsvDaysCarousel.removeCallbacks(syncCarouselHeaderRunnable);
-        hsvDaysCarousel.postDelayed(syncCarouselHeaderRunnable, 40L);
+        if (isCarouselHeaderSyncQueued) {
+            return;
+        }
+
+        isCarouselHeaderSyncQueued = true;
+        hsvDaysCarousel.postOnAnimation(syncCarouselHeaderRunnable);
     }
 
     private void syncWeekRangeAndActiveMonthFromCarousel() {
+        isCarouselHeaderSyncQueued = false;
+
         if (hsvDaysCarousel == null || allDayCards.isEmpty() || allDayDates.isEmpty() || allDayDateKeys.isEmpty()) {
             return;
         }
@@ -679,14 +672,24 @@ public class WeeklySchedulerFragment extends Fragment {
 
         Calendar focusedDate = allDayDates.get(focusedIndex);
         if (focusedDate != null) {
-            updateSelectedWeekRange(focusedDate);
+            int focusedWeekStartIndex = focusedIndex - (focusedIndex % 7);
+            String focusedWeekStartKey = focusedWeekStartIndex >= 0 && focusedWeekStartIndex < allDayDateKeys.size()
+                    ? allDayDateKeys.get(focusedWeekStartIndex)
+                    : "";
+            if (!TextUtils.equals(carouselFocusedWeekStartKey, focusedWeekStartKey)) {
+                carouselFocusedWeekStartKey = focusedWeekStartKey;
+                Calendar weekStartDate = focusedWeekStartIndex >= 0 && focusedWeekStartIndex < allDayDates.size()
+                        ? allDayDates.get(focusedWeekStartIndex)
+                        : focusedDate;
+                updateSelectedWeekRange(weekStartDate);
+            }
         }
 
         String focusedDateKey = allDayDateKeys.get(focusedIndex);
         if (!TextUtils.equals(carouselFocusedDateKey, focusedDateKey)) {
             carouselFocusedDateKey = focusedDateKey;
+            updateMonthLabelsForActiveDate(focusedDateKey);
         }
-        updateMonthLabelsForActiveDate(focusedDateKey);
     }
 
     private int resolveFocusedDayIndexFromCarousel() {
@@ -721,16 +724,32 @@ public class WeeklySchedulerFragment extends Fragment {
             return;
         }
 
-        for (int i = 0; i < allDayMonthLabels.size(); i++) {
-            TextView monthLabel = allDayMonthLabels.get(i);
-            if (monthLabel == null || i >= allDayDateKeys.size()) {
-                continue;
-            }
-
-            boolean isActive = TextUtils.equals(allDayDateKeys.get(i), activeDateKey);
-            monthLabel.setTextColor(isActive ? Color.parseColor("#AEC7FD") : Color.parseColor("#5B6782"));
-            monthLabel.setAlpha(isActive ? 1f : 0.55f);
+        int targetIndex = -1;
+        if (!TextUtils.isEmpty(activeDateKey)) {
+            targetIndex = allDayDateKeys.indexOf(activeDateKey);
         }
+
+        if (targetIndex == activeMonthLabelIndex) {
+            return;
+        }
+
+        if (activeMonthLabelIndex >= 0 && activeMonthLabelIndex < allDayMonthLabels.size()) {
+            TextView previous = allDayMonthLabels.get(activeMonthLabelIndex);
+            if (previous != null) {
+                previous.setTextColor(Color.parseColor("#5B6782"));
+                previous.setAlpha(0.55f);
+            }
+        }
+
+        if (targetIndex >= 0 && targetIndex < allDayMonthLabels.size()) {
+            TextView active = allDayMonthLabels.get(targetIndex);
+            if (active != null) {
+                active.setTextColor(Color.parseColor("#AEC7FD"));
+                active.setAlpha(1f);
+            }
+        }
+
+        activeMonthLabelIndex = targetIndex;
     }
 
     private void updateSelectedWeekRange(@NonNull Calendar selectedDateValue) {
@@ -744,6 +763,8 @@ public class WeeklySchedulerFragment extends Fragment {
 
         SimpleDateFormat rangeFmt = new SimpleDateFormat("d MMMM", SPANISH_LOCALE);
         tvDateRange.setText(rangeFmt.format(weekStart.getTime()) + " - " + rangeFmt.format(weekEnd.getTime()));
+
+        carouselFocusedWeekStartKey = dateKeyFormat.format(weekStart.getTime());
     }
 
     private void updateTasksRecyclerHeight() {
@@ -1463,351 +1484,6 @@ public class WeeklySchedulerFragment extends Fragment {
         Snackbar.make(root, message, Snackbar.LENGTH_SHORT).show();
     }
 
-    private void setupSuggestionActions() {
-        if (btnSuggestionApply != null) {
-            btnSuggestionApply.setOnClickListener(v -> {
-                registerSuggestionFeedback(ACTION_APPLY);
-                showScheduleSuggestionCard();
-                setScheduleSuggestionActionsVisible(false);
-                showSuggestionFeedbackThanksMessage();
-            });
-        }
-
-        if (btnSuggestionDismiss != null) {
-            btnSuggestionDismiss.setOnClickListener(v -> {
-                registerSuggestionFeedback(ACTION_DISMISS);
-                showScheduleSuggestionCard();
-                setScheduleSuggestionActionsVisible(false);
-                showSuggestionFeedbackThanksMessage();
-            });
-        }
-    }
-
-    private void showSuggestionFeedbackThanksMessage() {
-        View root = getView();
-        if (root == null) {
-            return;
-        }
-
-        Snackbar snackbar = Snackbar.make(root, "Gracias por tu apoyo, seguiremos mejorando.", Snackbar.LENGTH_SHORT);
-        View snackbarView = snackbar.getView();
-        snackbarView.setBackgroundColor(Color.WHITE);
-
-        TextView snackbarText = snackbarView.findViewById(com.google.android.material.R.id.snackbar_text);
-        if (snackbarText != null) {
-            snackbarText.setTextColor(Color.parseColor("#111319"));
-            snackbarText.setMaxLines(3);
-        }
-        snackbar.show();
-    }
-
-    private void loadStoredSuggestionIntoCard() {
-        if (tvSmartSuggestion == null || settingsPrefs == null) {
-            return;
-        }
-
-        if (!areSmartSuggestionsEnabled()) {
-            hideScheduleSuggestionCard();
-            return;
-        }
-
-        if (isScheduleSuggestionHiddenUntilNextCycle(false)) {
-            hideScheduleSuggestionCard();
-            return;
-        }
-
-        showScheduleSuggestionCard();
-
-        String lastMessage = settingsPrefs.getString(KEY_SCHEDULE_AI_LAST_MESSAGE, "");
-        if (!TextUtils.isEmpty(lastMessage)) {
-            tvSmartSuggestion.setText(lastMessage);
-        } else {
-            tvSmartSuggestion.setText("Generando sugerencia personalizada...");
-        }
-        boolean actionsHidden = settingsPrefs.getBoolean(KEY_SCHEDULE_AI_ACTIONS_HIDDEN, false)
-                || shouldHideScheduleActionsForMessage(lastMessage);
-        setScheduleSuggestionActionsVisible(!actionsHidden);
-        setSuggestionLoadingUi(false);
-    }
-
-    private void refreshSmartScheduleSuggestionState() {
-        refreshSmartScheduleSuggestionState(false);
-    }
-
-    private void refreshSmartScheduleSuggestionState(boolean forceRefresh) {
-        if (settingsPrefs == null || tvSmartSuggestion == null) {
-            return;
-        }
-
-        if (!areSmartSuggestionsEnabled()) {
-            hideScheduleSuggestionCard();
-            setSuggestionLoadingUi(false);
-            return;
-        }
-
-        if (forceRefresh) {
-            settingsPrefs.edit()
-                    .putBoolean(KEY_SCHEDULE_AI_HIDDEN_UNTIL_NEXT, false)
-                    .putBoolean(KEY_SCHEDULE_AI_ACTIONS_HIDDEN, false)
-                    .putLong(KEY_SCHEDULE_AI_NEXT_AT, 0L)
-                    .apply();
-        }
-
-        String lastMessage = settingsPrefs.getString(KEY_SCHEDULE_AI_LAST_MESSAGE, "");
-        if (!TextUtils.isEmpty(lastMessage)) {
-            tvSmartSuggestion.setText(lastMessage);
-            currentScheduleSuggestion = new GeminiIntelligenceService.ScheduleSuggestion(lastMessage, "", "");
-            boolean actionsHidden = settingsPrefs.getBoolean(KEY_SCHEDULE_AI_ACTIONS_HIDDEN, false)
-                    || shouldHideScheduleActionsForMessage(lastMessage);
-            setScheduleSuggestionActionsVisible(!actionsHidden);
-        }
-
-        boolean forceByNewSession = registerAndDetectNewScheduleProcessSession();
-        long now = System.currentTimeMillis();
-        long nextAt = settingsPrefs.getLong(KEY_SCHEDULE_AI_NEXT_AT, 0L);
-
-        if (!forceRefresh && isScheduleSuggestionHiddenUntilNextCycle(forceByNewSession)) {
-            hideScheduleSuggestionCard();
-            setSuggestionLoadingUi(false);
-            return;
-        }
-
-        showScheduleSuggestionCard();
-
-        boolean shouldGenerate = forceRefresh || TextUtils.isEmpty(lastMessage) || forceByNewSession || now >= nextAt;
-        if (shouldGenerate) {
-            requestSmartScheduleSuggestion();
-            return;
-        }
-
-        setSuggestionLoadingUi(false);
-    }
-
-    private boolean registerAndDetectNewScheduleProcessSession() {
-        if (settingsPrefs == null) {
-            return false;
-        }
-        long lastSessionId = settingsPrefs.getLong(KEY_SCHEDULE_AI_LAST_PROCESS_SESSION, Long.MIN_VALUE);
-        if (lastSessionId == PROCESS_SESSION_ID) {
-            return false;
-        }
-        settingsPrefs.edit().putLong(KEY_SCHEDULE_AI_LAST_PROCESS_SESSION, PROCESS_SESSION_ID).apply();
-        return true;
-    }
-
-    private void requestSmartScheduleSuggestion() {
-        if (scheduleSuggestionInFlight || tvSmartSuggestion == null) {
-            return;
-        }
-
-        if (!areSmartSuggestionsEnabled()) {
-            hideScheduleSuggestionCard();
-            return;
-        }
-
-        scheduleSuggestionInFlight = true;
-        setSuggestionLoadingUi(true);
-
-        String profileName = resolveProfileNameForAi();
-        String agendaSnapshot = buildAgendaSnapshotForAi();
-        String behaviorSignals = buildBehaviorSignalsForAi();
-
-        new GeminiIntelligenceService().generateScheduleSuggestion(
-                profileName,
-                agendaSnapshot,
-                behaviorSignals,
-                new GeminiIntelligenceService.ScheduleSuggestionCallback() {
-                    @Override
-                    public void onSuccess(GeminiIntelligenceService.ScheduleSuggestion suggestion) {
-                        scheduleSuggestionInFlight = false;
-                        currentScheduleSuggestion = suggestion;
-                        setSuggestionLoadingUi(false);
-                        String renderedMessage = renderScheduleSuggestion(suggestion);
-
-                        if (settingsPrefs != null) {
-                            settingsPrefs.edit()
-                                    .putString(KEY_SCHEDULE_AI_LAST_MESSAGE, renderedMessage)
-                                    .putBoolean(KEY_SCHEDULE_AI_HIDDEN_UNTIL_NEXT, false)
-                                    .putBoolean(KEY_SCHEDULE_AI_ACTIONS_HIDDEN, false)
-                                    .remove(KEY_SCHEDULE_AI_FEEDBACK_MESSAGE_HASH)
-                                    .putLong(KEY_SCHEDULE_AI_NEXT_AT, System.currentTimeMillis() + SCHEDULE_AI_SUGGESTION_INTERVAL_MS)
-                                    .apply();
-                        }
-                        setScheduleSuggestionActionsVisible(true);
-                    }
-
-                    @Override
-                    public void onError(String error) {
-                        scheduleSuggestionInFlight = false;
-                        setSuggestionLoadingUi(false);
-
-                        String lastMessage = settingsPrefs != null
-                                ? settingsPrefs.getString(KEY_SCHEDULE_AI_LAST_MESSAGE, "")
-                                : "";
-                        if (!TextUtils.isEmpty(lastMessage)) {
-                            tvSmartSuggestion.setText(lastMessage);
-                            currentScheduleSuggestion = new GeminiIntelligenceService.ScheduleSuggestion(lastMessage, "", "");
-                            setScheduleSuggestionActionsVisible(true);
-                        } else {
-                            tvSmartSuggestion.setText("No se pudo generar una sugerencia con IA en este momento.");
-                            currentScheduleSuggestion = null;
-                            setScheduleSuggestionActionsVisible(false);
-                        }
-
-                        if (settingsPrefs != null) {
-                            settingsPrefs.edit()
-                                    .putBoolean(KEY_SCHEDULE_AI_HIDDEN_UNTIL_NEXT, false)
-                                    .putBoolean(KEY_SCHEDULE_AI_ACTIONS_HIDDEN, false)
-                                    .putLong(KEY_SCHEDULE_AI_NEXT_AT, System.currentTimeMillis() + 60_000L)
-                                    .apply();
-                        }
-                    }
-                }
-        );
-    }
-
-    @NonNull
-    private String renderScheduleSuggestion(@NonNull GeminiIntelligenceService.ScheduleSuggestion suggestion) {
-        if (tvSmartSuggestion == null) {
-            return "";
-        }
-
-        String message = suggestion.message;
-        if (!TextUtils.isEmpty(suggestion.microAction)) {
-            message = message + "\n\nAccion sugerida: " + suggestion.microAction;
-        }
-        tvSmartSuggestion.setText(message);
-        return message;
-    }
-
-    private void setSuggestionLoadingUi(boolean loading) {
-        if (btnSuggestionApply != null) {
-            btnSuggestionApply.setEnabled(!loading);
-        }
-        if (btnSuggestionDismiss != null) {
-            btnSuggestionDismiss.setEnabled(!loading);
-        }
-        if (loading && tvSmartSuggestion != null) {
-            tvSmartSuggestion.setText("Analizando tus patrones para generar una sugerencia real...");
-        }
-        if (cardSmartSuggestion != null) {
-            cardSmartSuggestion.setAlpha(loading ? 0.9f : 1f);
-        }
-    }
-
-    private void registerSuggestionFeedback(@NonNull String action) {
-        if (settingsPrefs == null || currentScheduleSuggestion == null) {
-            return;
-        }
-
-        int acceptCount = settingsPrefs.getInt(KEY_SCHEDULE_AI_ACCEPT_COUNT, 0);
-        int dismissCount = settingsPrefs.getInt(KEY_SCHEDULE_AI_DISMISS_COUNT, 0);
-        if (ACTION_APPLY.equals(action)) {
-            acceptCount++;
-        } else if (ACTION_DISMISS.equals(action)) {
-            dismissCount++;
-        }
-
-        boolean hideUntilNext = false;
-        boolean hideActions = true;
-        String feedbackSource = tvSmartSuggestion != null
-                ? tvSmartSuggestion.getText().toString()
-                : currentScheduleSuggestion.message;
-        String feedbackHash = String.valueOf(feedbackSource.hashCode());
-
-        settingsPrefs.edit()
-                .putInt(KEY_SCHEDULE_AI_ACCEPT_COUNT, acceptCount)
-                .putInt(KEY_SCHEDULE_AI_DISMISS_COUNT, dismissCount)
-                .putString(KEY_SCHEDULE_AI_LAST_ACTION, action)
-                .putString(KEY_SCHEDULE_AI_LAST_MESSAGE, feedbackSource)
-                .putString(KEY_SCHEDULE_AI_FEEDBACK_MESSAGE_HASH, feedbackHash)
-            .putBoolean(KEY_SCHEDULE_AI_HIDDEN_UNTIL_NEXT, hideUntilNext)
-            .putBoolean(KEY_SCHEDULE_AI_ACTIONS_HIDDEN, hideActions)
-                .putLong(KEY_SCHEDULE_AI_NEXT_AT, System.currentTimeMillis() + SCHEDULE_AI_SUGGESTION_INTERVAL_MS)
-                .apply();
-    }
-
-    private boolean shouldHideScheduleActionsForMessage(@Nullable String message) {
-        if (settingsPrefs == null || TextUtils.isEmpty(message)) {
-            return false;
-        }
-        String storedFeedbackHash = settingsPrefs.getString(KEY_SCHEDULE_AI_FEEDBACK_MESSAGE_HASH, "");
-        if (TextUtils.isEmpty(storedFeedbackHash)) {
-            return false;
-        }
-        return TextUtils.equals(storedFeedbackHash, String.valueOf(message.hashCode()));
-    }
-
-    private boolean isScheduleSuggestionHiddenUntilNextCycle(boolean forceByNewSession) {
-        if (settingsPrefs == null) {
-            return false;
-        }
-
-        if (forceByNewSession) {
-            settingsPrefs.edit()
-                    .putBoolean(KEY_SCHEDULE_AI_HIDDEN_UNTIL_NEXT, false)
-                    .apply();
-            return false;
-        }
-
-        boolean hidden = settingsPrefs.getBoolean(KEY_SCHEDULE_AI_HIDDEN_UNTIL_NEXT, false);
-        if (!hidden) {
-            return false;
-        }
-
-        long nextAt = settingsPrefs.getLong(KEY_SCHEDULE_AI_NEXT_AT, 0L);
-        if (System.currentTimeMillis() >= nextAt) {
-            settingsPrefs.edit()
-                    .putBoolean(KEY_SCHEDULE_AI_HIDDEN_UNTIL_NEXT, false)
-                    .apply();
-            return false;
-        }
-
-        return true;
-    }
-
-    private void hideScheduleSuggestionCard() {
-        if (cardSmartSuggestion != null) {
-            cardSmartSuggestion.setVisibility(View.GONE);
-        }
-    }
-
-    private void showScheduleSuggestionCard() {
-        if (cardSmartSuggestion != null) {
-            cardSmartSuggestion.setVisibility(View.VISIBLE);
-        }
-    }
-
-    private void setScheduleSuggestionActionsVisible(boolean visible) {
-        int visibility = visible ? View.VISIBLE : View.GONE;
-        if (btnSuggestionApply != null) {
-            btnSuggestionApply.setVisibility(visibility);
-            btnSuggestionApply.setEnabled(visible);
-        }
-        if (btnSuggestionDismiss != null) {
-            btnSuggestionDismiss.setVisibility(visibility);
-            btnSuggestionDismiss.setEnabled(visible);
-        }
-    }
-
-    private boolean areSmartSuggestionsEnabled() {
-        if (settingsPrefs == null) {
-            return true;
-        }
-        return settingsPrefs.getBoolean(
-                CloudSyncManager.KEY_SMART_SUGGESTIONS_ENABLED,
-                settingsPrefs.getBoolean(CloudSyncManager.KEY_AI_SHIFT_ENABLED, true)
-        );
-    }
-
-    private void incrementScheduleOpenCount() {
-        if (settingsPrefs == null) {
-            return;
-        }
-        int openCount = settingsPrefs.getInt(KEY_SCHEDULE_AI_OPEN_COUNT, 0);
-        settingsPrefs.edit().putInt(KEY_SCHEDULE_AI_OPEN_COUNT, openCount + 1).apply();
-    }
-
     @NonNull
     private String resolveProfileNameForAi() {
         if (getActivity() instanceof MainActivity) {
@@ -1821,21 +1497,34 @@ public class WeeklySchedulerFragment extends Fragment {
 
     @NonNull
     private String buildBehaviorSignalsForAi() {
-        if (settingsPrefs == null) {
-            return "Sin feedback previo";
+        String todayKey = dateKeyFormat.format(Calendar.getInstance().getTime());
+        int upcomingDaysWithTasks = 0;
+        int tasksWithoutTime = 0;
+        int tasksWithTime = 0;
+
+        for (Map.Entry<String, List<Task>> entry : new TreeMap<>(tasksPerDay).entrySet()) {
+            if (entry.getKey().compareTo(todayKey) < 0) {
+                continue;
+            }
+
+            List<Task> dayTasks = entry.getValue();
+            if (dayTasks == null || dayTasks.isEmpty()) {
+                continue;
+            }
+
+            upcomingDaysWithTasks++;
+            for (Task task : dayTasks) {
+                if (task == null || TextUtils.isEmpty(task.time)) {
+                    tasksWithoutTime++;
+                } else {
+                    tasksWithTime++;
+                }
+            }
         }
 
-        int acceptCount = settingsPrefs.getInt(KEY_SCHEDULE_AI_ACCEPT_COUNT, 0);
-        int dismissCount = settingsPrefs.getInt(KEY_SCHEDULE_AI_DISMISS_COUNT, 0);
-        int openCount = settingsPrefs.getInt(KEY_SCHEDULE_AI_OPEN_COUNT, 0);
-        String lastAction = settingsPrefs.getString(KEY_SCHEDULE_AI_LAST_ACTION, "ninguna");
-        String lastMessage = settingsPrefs.getString(KEY_SCHEDULE_AI_LAST_MESSAGE, "");
-
-        return "aprobadas=" + acceptCount +
-                ", descartadas=" + dismissCount +
-                ", aperturas_app=" + openCount +
-                ", ultima_accion=" + lastAction +
-                ", ultimo_mensaje='" + lastMessage + "'";
+        return "dias_con_tareas=" + upcomingDaysWithTasks
+                + ", tareas_con_hora=" + tasksWithTime
+                + ", tareas_sin_hora=" + tasksWithoutTime;
     }
 
     @NonNull
@@ -2034,36 +1723,6 @@ public class WeeklySchedulerFragment extends Fragment {
             return parsed;
         }
         return parsed;
-    }
-
-    private void updateGreeting() {
-        if (tvGreeting == null) {
-            return;
-        }
-
-        String firstName = null;
-        if (getActivity() instanceof MainActivity) {
-            MainActivity mainActivity = (MainActivity) getActivity();
-            AuthManager auth = mainActivity.getAuthManager();
-            if (auth != null && auth.isSignedIn()) {
-                String displayName = auth.getDisplayName();
-                if (!TextUtils.isEmpty(displayName)) {
-                    String trimmed = displayName.trim();
-                    if (!trimmed.isEmpty()) {
-                        String[] parts = trimmed.split("\\s+");
-                        if (parts.length > 0) {
-                            firstName = parts[0];
-                        }
-                    }
-                }
-            }
-        }
-
-        if (TextUtils.isEmpty(firstName)) {
-            tvGreeting.setText("Buenos días");
-            return;
-        }
-        tvGreeting.setText("Buenos días " + firstName);
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -2832,18 +2491,19 @@ public class WeeklySchedulerFragment extends Fragment {
     @Override
     public void onDestroyView() {
         aiTaskMetadataHandler.removeCallbacksAndMessages(null);
+        lockAgendaParentsForHorizontalScroll(false);
         setAgendaPullRefreshState(false);
         if (hsvDaysCarousel != null) {
             hsvDaysCarousel.removeCallbacks(syncCarouselHeaderRunnable);
             if (daysCarouselScrollListener != null) {
-                ViewTreeObserver observer = hsvDaysCarousel.getViewTreeObserver();
-                if (observer.isAlive()) {
-                    observer.removeOnScrollChangedListener(daysCarouselScrollListener);
-                }
+                hsvDaysCarousel.setOnScrollChangeListener(null);
             }
         }
+        isCarouselHeaderSyncQueued = false;
         daysCarouselScrollListener = null;
         carouselFocusedDateKey = "";
+        carouselFocusedWeekStartKey = "";
+        activeMonthLabelIndex = -1;
         lastFutureTasksHtmlSignature = null;
         futureTasksTemplateHtml = null;
         futureInsightRequestInFlight = false;
@@ -2897,7 +2557,10 @@ public class WeeklySchedulerFragment extends Fragment {
         }
 
         String sectionsHtml = buildFutureTaskSectionsHtml();
-        String html = template.replace(FUTURE_TASKS_DYNAMIC_TOKEN, sectionsHtml);
+        String themeBodyClass = isAmoledModeEnabled() ? "amoled" : "";
+        String html = template
+            .replace(FUTURE_TASKS_DYNAMIC_TOKEN, sectionsHtml)
+            .replace(FUTURE_TASKS_THEME_BODY_CLASS_TOKEN, themeBodyClass);
         String signature = String.valueOf(html.hashCode());
         if (TextUtils.equals(signature, lastFutureTasksHtmlSignature)) {
             return;
@@ -2927,6 +2590,11 @@ public class WeeklySchedulerFragment extends Fragment {
         } catch (Exception ignored) {
             return "";
         }
+    }
+
+    private boolean isAmoledModeEnabled() {
+        return settingsPrefs != null
+                && settingsPrefs.getBoolean(CloudSyncManager.KEY_AMOLED_MODE_ENABLED, false);
     }
 
     @NonNull
@@ -3055,7 +2723,7 @@ public class WeeklySchedulerFragment extends Fragment {
     private String buildFutureInsightHtml(@NonNull FutureInsightModel insightModel) {
         String actionHref = buildFutureInsightActionHref(insightModel);
         return "<div class=\"future-insight-card\">"
-            + "<div class=\"future-insight-mark\">auto_awesome</div>"
+            + "<div class=\"future-insight-mark\"></div>"
             + "<div class=\"future-insight-head\">"
             + "<span class=\"future-insight-icon material-symbols-outlined\">insights</span>"
             + "<span class=\"future-insight-label\">Nota inteligente</span>"
@@ -3466,7 +3134,7 @@ public class WeeklySchedulerFragment extends Fragment {
     @NonNull
     private String buildFutureCycleLabel(@NonNull String baseDateKey, @NonNull String targetDateKey, boolean isCurrentCycle) {
         if (isCurrentCycle) {
-            return "Ciclo actual";
+            return "Semana actual";
         }
 
         Calendar baseDate = parseDateKeyToCalendar(baseDateKey);

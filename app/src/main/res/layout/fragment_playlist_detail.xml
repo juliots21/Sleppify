@@ -119,6 +119,30 @@
             android:thumbTint="@android:color/transparent" />
     </LinearLayout>
 
+    <FrameLayout
+        android:id="@+id/flPlaylistLoadingOverlay"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="@color/surface_dark"
+        android:clickable="true"
+        android:focusable="true"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <ProgressBar
+            android:id="@+id/pbPlaylistLoading"
+            style="?android:attr/progressBarStyleLarge"
+            android:layout_width="64dp"
+            android:layout_height="64dp"
+            android:layout_gravity="center"
+            android:indeterminate="true"
+            android:indeterminateTint="@android:color/white"
+            android:scaleX="1.35"
+            android:scaleY="1.35" />
+    </FrameLayout>
+
     </androidx.constraintlayout.widget.ConstraintLayout>
 
 </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>

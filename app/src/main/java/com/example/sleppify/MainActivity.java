@@ -1,27 +1,42 @@
 package com.example.sleppify;
 
+import android.Manifest;
+import android.app.Activity;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.graphics.Color;
 import android.graphics.Typeface;
+import android.media.projection.MediaProjectionManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
 import android.view.View;
+import android.view.Window;
 import android.widget.ImageView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.activity.EdgeToEdge;
 import androidx.activity.OnBackPressedCallback;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.app.AppCompatDelegate;
+import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.content.res.ResourcesCompat;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.fragment.app.Fragment;
+import androidx.fragment.app.FragmentManager;
 import androidx.fragment.app.FragmentTransaction;
 import androidx.lifecycle.Lifecycle;
 
@@ -39,24 +54,29 @@ public class MainActivity extends AppCompatActivity {
     private static final String TAG_PLAYLIST_DETAIL = "playlist_detail";
     private static final String TAG_SONG_PLAYER = "song_player";
     private static final String PREFS_PLAYER_STATE = "player_state";
+    private static final String PREFS_BOOTSTRAP = "sleppify_bootstrap";
+    private static final String KEY_INITIAL_OAUTH_GATE_COMPLETED = "initial_oauth_gate_completed";
     private static final String PREF_LAST_STREAM_SCREEN = "stream_last_screen";
-    private static final String PREFS_BOOT_FLOW = "boot_flow";
-    private static final String KEY_OAUTH_GATE_SHOWN_ONCE = "oauth_gate_shown_once";
     private static final String STREAM_SCREEN_LIBRARY = "library";
     private static final String STREAM_SCREEN_PLAYLIST_DETAIL = "playlist_detail";
     private static final long RESUME_WORK_DELAY_MS = 180L;
     private static final long PREFETCH_DEBOUNCE_MS = 800L;
     private static final long PREFETCH_MIN_INTERVAL_MS = 12000L;
+    private static final long MODULE_LOAD_OVERLAY_MIN_MS = 120L;
+    private static final long MODULE_CONTENT_FADE_IN_MS = 280L;
+    private static final int REQUEST_CODE_RECORD_AUDIO = 4107;
 
     private BottomNavigationView bottomNav;
     private TextView tvModuleTitle;
     private ImageView btnSettings;
     private View topAppBar;
     private View fragmentContainer;
+    private View moduleLoadingOverlay;
     private View loginGateContainer;
     private TextView tvLoginStatus;
     private MaterialButton btnLoginGoogle;
     private boolean inSettings = false;
+    private boolean forceInitialOauthGate;
     private AuthManager authManager;
     private CloudSyncManager cloudSyncManager;
     private boolean loginGateAuthInProgress;
@@ -75,6 +95,11 @@ public class MainActivity extends AppCompatActivity {
     private boolean lastEqEnabled;
     private boolean lastSpatialEnabled;
     private int lastReverbLevel;
+    @Nullable
+    private MediaProjectionManager mediaProjectionManager;
+    @Nullable
+    private ActivityResultLauncher<Intent> mediaProjectionPermissionLauncher;
+    private boolean pendingAudioProcessingAuthorization;
     private boolean hasAgendaScheduleSnapshot;
     private boolean lastSmartSuggestionsEnabled;
     private int lastSummaryTimesPerDay;
@@ -134,15 +159,18 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        applyThemeModeFromSettings();
         EdgeToEdge.enable(this);
         setContentView(R.layout.activity_main);
+        applySystemBarsStyle();
 
-        android.view.View mainRoot = findViewById(R.id.main);
+        View mainRoot = findViewById(R.id.main);
         bottomNav = findViewById(R.id.bottomNavigation);
         tvModuleTitle = findViewById(R.id.tvModuleTitle);
         btnSettings = findViewById(R.id.btnSettings);
         topAppBar = findViewById(R.id.topAppBar);
         fragmentContainer = findViewById(R.id.fragmentContainer);
+        moduleLoadingOverlay = findViewById(R.id.moduleLoadingOverlay);
         loginGateContainer = findViewById(R.id.loginGateContainer);
         tvLoginStatus = findViewById(R.id.tvLoginStatus);
         btnLoginGoogle = findViewById(R.id.btnLoginGoogle);
@@ -156,6 +184,7 @@ public class MainActivity extends AppCompatActivity {
         cloudSyncManager = CloudSyncManager.getInstance(this);
         cloudSyncManager.setSyncStateListener(syncStateListener);
         getOnBackPressedDispatcher().addCallback(this, backPressedCallback);
+        configureAudioAuthorizationFlow();
         restoreMainModuleReferences();
         syncAudioEffectsServiceFromPreferences(true);
         syncDailyAgendaNotificationSchedule(true);
@@ -189,17 +218,22 @@ public class MainActivity extends AppCompatActivity {
             return switchToMainModule(item.getItemId());
         });
 
+        forceInitialOauthGate = !isInitialOauthGateCompleted();
+        boolean shouldShowLoginGateAtStartup = shouldShowLoginGateAtStartup();
+
         // Default fragment
-        if (savedInstanceState == null) {
-            bottomNav.setSelectedItemId(R.id.nav_schedule);
-        } else {
-            int selectedId = bottomNav.getSelectedItemId();
-            if (!switchToMainModule(selectedId)) {
+        if (!shouldShowLoginGateAtStartup) {
+            if (savedInstanceState == null) {
                 bottomNav.setSelectedItemId(R.id.nav_schedule);
+            } else {
+                int selectedId = bottomNav.getSelectedItemId();
+                if (!switchToMainModule(selectedId)) {
+                    bottomNav.setSelectedItemId(R.id.nav_schedule);
+                }
             }
         }
 
-        if (shouldShowOAuthGateOnFirstInstallLaunch()) {
+        if (shouldShowLoginGateAtStartup) {
             showLoginGate();
         } else {
             showMainShell();
@@ -213,7 +247,36 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        applyThemeModeFromSettings();
+        applySystemBarsStyle();
         scheduleDeferredResumeWork(RESUME_WORK_DELAY_MS);
+    }
+
+    private void applyThemeModeFromSettings() {
+        SharedPreferences settingsPrefs = getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, MODE_PRIVATE);
+        boolean amoledEnabled = settingsPrefs.getBoolean(CloudSyncManager.KEY_AMOLED_MODE_ENABLED, false);
+        int targetMode = amoledEnabled ? AppCompatDelegate.MODE_NIGHT_YES : AppCompatDelegate.MODE_NIGHT_NO;
+        if (AppCompatDelegate.getDefaultNightMode() != targetMode) {
+            AppCompatDelegate.setDefaultNightMode(targetMode);
+        }
+    }
+
+    private void applySystemBarsStyle() {
+        Window window = getWindow();
+        window.setStatusBarColor(Color.TRANSPARENT);
+        window.setNavigationBarColor(Color.TRANSPARENT);
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            window.setStatusBarContrastEnforced(false);
+            window.setNavigationBarContrastEnforced(false);
+        }
+
+        WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(window, window.getDecorView());
+        if (controller != null) {
+            // La UI base es oscura en ambos modos, usamos iconos claros en barras del sistema.
+            controller.setAppearanceLightStatusBars(false);
+            controller.setAppearanceLightNavigationBars(false);
+        }
     }
 
     @Override
@@ -243,43 +306,62 @@ public class MainActivity extends AppCompatActivity {
         syncAudioEffectsServiceFromPreferences(false);
         syncDailyAgendaNotificationSchedule(false);
 
+        boolean signedIn = authManager.isSignedIn() && authManager.getCurrentUser() != null;
+        if (!signedIn) {
+            showLoginGate();
+            return;
+        }
+
         // If the OAuth gate is currently shown and there is still no active app session,
         // keep that screen visible instead of forcing the main shell on resume.
         if (loginGateContainer != null
                 && loginGateContainer.getVisibility() == View.VISIBLE
-                && !(authManager.isSignedIn() && authManager.getCurrentUser() != null)) {
+                && !signedIn) {
             return;
         }
 
         showMainShell();
-        if (authManager.isSignedIn() && authManager.getCurrentUser() != null) {
+        if (signedIn) {
             prefetchSmartSuggestions(false);
         }
     }
 
-    private boolean shouldShowOAuthGateOnFirstInstallLaunch() {
-        if (authManager.isSignedIn() && authManager.getCurrentUser() != null) {
-            return false;
+    private boolean shouldShowLoginGateAtStartup() {
+        if (forceInitialOauthGate) {
+            return true;
         }
+        return !(authManager.isSignedIn() && authManager.getCurrentUser() != null);
+    }
 
-        SharedPreferences bootPrefs = getSharedPreferences(PREFS_BOOT_FLOW, MODE_PRIVATE);
-        boolean alreadyShown = bootPrefs.getBoolean(KEY_OAUTH_GATE_SHOWN_ONCE, false);
-        if (alreadyShown) {
-            return false;
-        }
+    private boolean isInitialOauthGateCompleted() {
+        SharedPreferences bootstrapPrefs = getSharedPreferences(PREFS_BOOTSTRAP, MODE_PRIVATE);
+        return bootstrapPrefs.getBoolean(KEY_INITIAL_OAUTH_GATE_COMPLETED, false);
+    }
 
-        bootPrefs.edit().putBoolean(KEY_OAUTH_GATE_SHOWN_ONCE, true).apply();
-        return true;
+    private void markInitialOauthGateCompleted() {
+        forceInitialOauthGate = false;
+        SharedPreferences bootstrapPrefs = getSharedPreferences(PREFS_BOOTSTRAP, MODE_PRIVATE);
+        bootstrapPrefs.edit().putBoolean(KEY_INITIAL_OAUTH_GATE_COMPLETED, true).apply();
     }
 
     private void syncAudioEffectsServiceFromPreferences(boolean forceSync) {
+        syncAudioEffectsServiceFromPreferences(forceSync, false);
+    }
+
+    public void requestAudioEffectsApplyFromUi() {
+        syncAudioEffectsServiceFromPreferences(true, true);
+    }
+
+    public void requestAudioEffectsStopFromUi() {
+        hasAudioServiceStateSnapshot = false;
+        sendAudioEffectsStopIntent();
+    }
+
+    private void syncAudioEffectsServiceFromPreferences(boolean forceSync, boolean allowAuthorizationPrompt) {
         SharedPreferences audioPrefs = getSharedPreferences(AudioEffectsService.PREFS_NAME, MODE_PRIVATE);
         boolean eqEnabled = audioPrefs.getBoolean(AudioEffectsService.KEY_ENABLED, false);
         boolean spatialEnabled = audioPrefs.getBoolean(AudioEffectsService.KEY_SPATIAL_ENABLED, false);
         int reverbLevel = audioPrefs.getInt(AudioEffectsService.KEY_REVERB_LEVEL, AudioEffectsService.REVERB_LEVEL_OFF);
-        boolean reverbEnabled = reverbLevel == AudioEffectsService.REVERB_LEVEL_LIGHT
-                || reverbLevel == AudioEffectsService.REVERB_LEVEL_MEDIUM
-                || reverbLevel == AudioEffectsService.REVERB_LEVEL_STRONG;
 
         if (!forceSync
                 && hasAudioServiceStateSnapshot
@@ -294,15 +376,111 @@ public class MainActivity extends AppCompatActivity {
         lastSpatialEnabled = spatialEnabled;
         lastReverbLevel = reverbLevel;
 
-        Intent intent = new Intent(getApplicationContext(), AudioEffectsService.class);
-        if (eqEnabled || spatialEnabled || reverbEnabled) {
-            intent.setAction(AudioEffectsService.ACTION_APPLY);
-            ContextCompat.startForegroundService(getApplicationContext(), intent);
+        // Backend de ecualizacion desactivado por configuracion del producto.
+        // Conservamos solo la sincronizacion de estado de UI/prefs.
+    }
+
+    private void sendAudioEffectsApplyIntent() {
+        // No-op: sin motor de ecualizacion activo.
+    }
+
+    private void sendAudioEffectsStopIntent() {
+        // No-op: sin motor de ecualizacion activo.
+    }
+
+    private void configureAudioAuthorizationFlow() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            mediaProjectionManager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+                mediaProjectionPermissionLauncher = registerForActivityResult(
+                    new ActivityResultContracts.StartActivityForResult(),
+                    result -> onMediaProjectionPermissionResult(result.getResultCode(), result.getData())
+            );
+        }
+    }
+
+    private void onMediaProjectionPermissionResult(int resultCode, @Nullable Intent data) {
+        pendingAudioProcessingAuthorization = false;
+        if (resultCode == Activity.RESULT_OK && data != null) {
+            SleppifyApp app = resolveSleppifyApp();
+            if (app != null) {
+                app.setMediaProjectionPermissionData(data);
+            }
+            syncAudioEffectsServiceFromPreferences(true);
             return;
         }
 
-        intent.setAction(AudioEffectsService.ACTION_STOP);
-        startService(intent);
+        sendAudioEffectsStopIntent();
+        Toast.makeText(this, "Permiso de captura denegado. El EQ system-wide no se puede iniciar.", Toast.LENGTH_LONG).show();
+    }
+
+    private boolean ensureAudioProcessingAuthorization(boolean allowPrompt) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            return true;
+        }
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+            if (!allowPrompt) {
+                return false;
+            }
+            pendingAudioProcessingAuthorization = true;
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.RECORD_AUDIO}, REQUEST_CODE_RECORD_AUDIO);
+            return false;
+        }
+
+        if (resolveStoredMediaProjectionData() != null) {
+            return true;
+        }
+
+        if (!allowPrompt || mediaProjectionManager == null || mediaProjectionPermissionLauncher == null) {
+            return false;
+        }
+
+        pendingAudioProcessingAuthorization = true;
+        mediaProjectionPermissionLauncher.launch(mediaProjectionManager.createScreenCaptureIntent());
+        return false;
+    }
+
+    @Nullable
+    private Intent resolveStoredMediaProjectionData() {
+        SleppifyApp app = resolveSleppifyApp();
+        if (app == null) {
+            return null;
+        }
+        return app.getMediaProjectionPermissionData();
+    }
+
+    @Nullable
+    private SleppifyApp resolveSleppifyApp() {
+        if (getApplication() instanceof SleppifyApp) {
+            return (SleppifyApp) getApplication();
+        }
+        return null;
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != REQUEST_CODE_RECORD_AUDIO) {
+            return;
+        }
+
+        boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+        if (!granted) {
+            pendingAudioProcessingAuthorization = false;
+            sendAudioEffectsStopIntent();
+            Toast.makeText(this, "Se requiere permiso de microfono para procesar audio system-wide.", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        if (!pendingAudioProcessingAuthorization) {
+            return;
+        }
+
+        if (ensureAudioProcessingAuthorization(true)) {
+            pendingAudioProcessingAuthorization = false;
+            syncAudioEffectsServiceFromPreferences(true);
+        }
     }
 
     public void requireAuth(Runnable onSuccess) {
@@ -380,7 +558,11 @@ public class MainActivity extends AppCompatActivity {
             bottomNav.setVisibility(View.GONE);
         }
         if (tvLoginStatus != null) {
-            tvLoginStatus.setText("Inicia sesion para cargar tu agenda.");
+            if (forceInitialOauthGate) {
+                tvLoginStatus.setText("Inicia sesion para completar la configuracion inicial.");
+            } else {
+                tvLoginStatus.setText("Inicia sesion para sincronizar toda tu cuenta.");
+            }
         }
         if (!loginGateAuthInProgress) {
             setLoginGateButtonState(false, "Sign in with Google");
@@ -407,18 +589,55 @@ public class MainActivity extends AppCompatActivity {
             @Nullable Runnable onSuccess
     ) {
         cloudSyncManager.onUserSignedIn(user.getUid(), (ok, message) -> {
-            if (!ok && message != null) {
-                
+            if (!ok) {
+                if (tvLoginStatus != null) {
+                    tvLoginStatus.setText(TextUtils.isEmpty(message)
+                            ? "No se pudo sincronizar la cuenta. Intenta de nuevo."
+                            : message);
+                }
+                setLoginGateButtonState(false, "Sign in with Google");
+                return;
+            }
+
+            markInitialOauthGateCompleted();
+            applyHydratedUserStateAndContinue(onSuccess);
+        });
+    }
+
+    private void applyHydratedUserStateAndContinue(@Nullable Runnable onSuccess) {
+        if (tvLoginStatus != null) {
+            tvLoginStatus.setText("Sincronizando todo (agenda, EQ, ajustes y favoritos)...");
+        }
+
+        int previousNightMode = AppCompatDelegate.getDefaultNightMode();
+        applyThemeModeFromSettings();
+        int updatedNightMode = AppCompatDelegate.getDefaultNightMode();
+        boolean amoledModeChanged = previousNightMode != updatedNightMode;
+
+        if (amoledModeChanged && tvLoginStatus != null) {
+            tvLoginStatus.setText("Aplicando modo AMOLED...");
+        }
+
+        Runnable finalizeSync = () -> {
+            if (isFinishing() || isDestroyed()) {
+                return;
             }
             notifyScheduleHydrationCompleted();
             syncAudioEffectsServiceFromPreferences(true);
             notifyEqualizerHydrationCompleted();
+            syncDailyAgendaNotificationSchedule(true);
             prefetchSmartSuggestions(true);
 
             if (onSuccess != null) {
                 onSuccess.run();
             }
-        });
+        };
+
+        if (amoledModeChanged) {
+            mainHandler.postDelayed(finalizeSync, 700L);
+        } else {
+            finalizeSync.run();
+        }
     }
 
     public AuthManager getAuthManager() {
@@ -430,6 +649,11 @@ public class MainActivity extends AppCompatActivity {
     }
 
     public void refreshSessionUi() {
+        if (!(authManager.isSignedIn() && authManager.getCurrentUser() != null)) {
+            showLoginGate();
+            return;
+        }
+
         showMainShell();
         syncDailyAgendaNotificationSchedule(false);
         if (authManager.isSignedIn() && authManager.getCurrentUser() != null) {
@@ -543,7 +767,13 @@ public class MainActivity extends AppCompatActivity {
 
         inSettings = true;
 
+        showModuleLoadingOverlay();
+        if (fragmentContainer != null) {
+            fragmentContainer.setAlpha(0f);
+        }
+
         Fragment target = getOrCreateSettingsFragment();
+        boolean isNew = !target.isAdded();
         FragmentTransaction transaction = getSupportFragmentManager()
                 .beginTransaction()
                 .setReorderingAllowed(true);
@@ -567,6 +797,9 @@ public class MainActivity extends AppCompatActivity {
         // Update header in settings
         configureHeaderActionForSettings();
         bottomNav.setVisibility(android.view.View.GONE);
+
+        long delay = isNew ? MODULE_LOAD_OVERLAY_MIN_MS + 80L : MODULE_LOAD_OVERLAY_MIN_MS;
+        mainHandler.postDelayed(() -> revealModuleContent(), delay);
     }
 
     private void exitSettings() {
@@ -576,12 +809,19 @@ public class MainActivity extends AppCompatActivity {
 
         inSettings = false;
 
+        showModuleLoadingOverlay();
+        if (fragmentContainer != null) {
+            fragmentContainer.setAlpha(0f);
+        }
+
         int selectedId = bottomNav.getSelectedItemId();
         Fragment target = getMainModuleFragment(selectedId);
         String targetTag = moduleTagForItem(selectedId);
         if (target == null) {
             target = getOrCreateMainModuleFragment(selectedId);
         }
+
+        boolean isNew = target != null && !target.isAdded();
 
         FragmentTransaction transaction = getSupportFragmentManager()
                 .beginTransaction()
@@ -608,6 +848,9 @@ public class MainActivity extends AppCompatActivity {
 
         // Restore title based on current nav selection
         updateHeaderTitleForModule(selectedId);
+
+        long delay = isNew ? MODULE_LOAD_OVERLAY_MIN_MS + 80L : MODULE_LOAD_OVERLAY_MIN_MS;
+        mainHandler.postDelayed(() -> revealModuleContent(), delay);
     }
 
     private void prefetchSmartSuggestions(boolean force) {
@@ -769,12 +1012,58 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private boolean switchToMainModule(int itemId) {
+    private void setMainModuleFragmentReference(int itemId, @NonNull Fragment fragment) {
+        if (itemId == R.id.nav_schedule) {
+            scheduleFragment = fragment;
+            return;
+        }
+        if (itemId == R.id.nav_music) {
+            musicFragment = fragment;
+            return;
+        }
+        if (itemId == R.id.nav_scanner) {
+            scannerFragment = fragment;
+            return;
+        }
+        if (itemId == R.id.nav_equalizer) {
+            equalizerFragment = fragment;
+            return;
+        }
+        if (itemId == R.id.nav_apps) {
+            appsFragment = fragment;
+        }
+    }
+
+    @NonNull
+    private Fragment resolveMainModuleTarget(@NonNull FragmentManager fragmentManager, int itemId, @NonNull String targetTag) {
+        Fragment existingByTag = fragmentManager.findFragmentByTag(targetTag);
+        if (existingByTag != null) {
+            setMainModuleFragmentReference(itemId, existingByTag);
+            return existingByTag;
+        }
+
         Fragment target = getOrCreateMainModuleFragment(itemId);
+        if (target != null) {
+            setMainModuleFragmentReference(itemId, target);
+            return target;
+        }
+
+        // Fallback defensivo: no deberia ocurrir para IDs validos del bottom nav.
+        throw new IllegalStateException("No se pudo resolver el modulo principal para itemId=" + itemId);
+    }
+
+    private boolean switchToMainModule(int itemId) {
+        FragmentManager fragmentManager = getSupportFragmentManager();
+        if (!fragmentManager.isStateSaved()) {
+            fragmentManager.executePendingTransactions();
+        }
+
         String targetTag = moduleTagForItem(itemId);
-        if (target == null || targetTag == null) {
+        if (targetTag == null) {
             return false;
         }
+
+        Fragment target = resolveMainModuleTarget(fragmentManager, itemId, targetTag);
 
         if (currentMainNavItemId == R.id.nav_music && itemId != R.id.nav_music) {
             markStreamingEntryAsLibrary();
@@ -785,12 +1074,22 @@ public class MainActivity extends AppCompatActivity {
             return true;
         }
 
-        FragmentTransaction transaction = getSupportFragmentManager()
+        boolean isNewFragment = !target.isAdded();
+
+        // Show loading overlay instantly so the UI responds immediately
+        showModuleLoadingOverlay();
+
+        // Hide the fragment container content to avoid rendering the old module
+        if (fragmentContainer != null) {
+            fragmentContainer.setAlpha(0f);
+        }
+
+        FragmentTransaction transaction = fragmentManager
                 .beginTransaction()
                 .setReorderingAllowed(true);
 
-        playlistDetailFragment = getSupportFragmentManager().findFragmentByTag(TAG_PLAYLIST_DETAIL);
-        songPlayerFragment = getSupportFragmentManager().findFragmentByTag(TAG_SONG_PLAYER);
+        playlistDetailFragment = fragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL);
+        songPlayerFragment = fragmentManager.findFragmentByTag(TAG_SONG_PLAYER);
         Fragment currentMainFragment = getMainModuleFragment(currentMainNavItemId);
 
         hideIfVisible(transaction, currentMainFragment, target);
@@ -811,7 +1110,43 @@ public class MainActivity extends AppCompatActivity {
             markStreamingEntryAsLibrary();
         }
         updateHeaderTitleForModule(itemId);
+
+        // Fade in the content after the fragment has had time to inflate
+        long delay = isNewFragment ? MODULE_LOAD_OVERLAY_MIN_MS + 80L : MODULE_LOAD_OVERLAY_MIN_MS;
+        mainHandler.postDelayed(() -> revealModuleContent(), delay);
+
         return true;
+    }
+
+    private void showModuleLoadingOverlay() {
+        if (moduleLoadingOverlay == null) return;
+        moduleLoadingOverlay.setAlpha(1f);
+        moduleLoadingOverlay.setVisibility(View.VISIBLE);
+    }
+
+    private void revealModuleContent() {
+        if (isFinishing() || isDestroyed()) return;
+
+        // Fade in the fragment container
+        if (fragmentContainer != null) {
+            fragmentContainer.animate()
+                    .alpha(1f)
+                    .setDuration(MODULE_CONTENT_FADE_IN_MS)
+                    .start();
+        }
+
+        // Fade out the loading overlay
+        if (moduleLoadingOverlay != null) {
+            moduleLoadingOverlay.animate()
+                    .alpha(0f)
+                    .setDuration(MODULE_CONTENT_FADE_IN_MS)
+                    .withEndAction(() -> {
+                        if (moduleLoadingOverlay != null) {
+                            moduleLoadingOverlay.setVisibility(View.GONE);
+                        }
+                    })
+                    .start();
+        }
     }
 
     private void markStreamingEntryAsLibrary() {
@@ -929,7 +1264,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         SongPlayerFragment player = (SongPlayerFragment) songPlayerFragment;
-        snapshotStreamingScreenBeforeNavigation();
+
         if (player.externalTryEnterMiniMode()) {
             return true;
         }
@@ -938,20 +1273,34 @@ public class MainActivity extends AppCompatActivity {
             return true;
         }
 
-        Fragment fallbackTarget = resolveSongPlayerReturnTarget(player.externalGetReturnTargetTag());
-        FragmentTransaction transaction = getSupportFragmentManager()
-                .beginTransaction()
-                .setReorderingAllowed(true)
-                .setCustomAnimations(0, R.anim.player_screen_exit);
-
-        if (fallbackTarget != null
-                && fallbackTarget.isAdded()
-                && fallbackTarget != songPlayerFragment) {
-            transaction.hide(songPlayerFragment).show(fallbackTarget);
-        } else {
-            transaction.remove(songPlayerFragment);
+        // Show overlay instantly so back press feels immediate
+        showModuleLoadingOverlay();
+        if (fragmentContainer != null) {
+            fragmentContainer.setAlpha(0f);
         }
-        transaction.commit();
+
+        // Defer heavy snapshot work off the UI thread critical path
+        mainHandler.post(() -> {
+            if (isFinishing() || isDestroyed()) return;
+            snapshotStreamingScreenBeforeNavigation();
+
+            Fragment fallbackTarget = resolveSongPlayerReturnTarget(player.externalGetReturnTargetTag());
+            FragmentTransaction transaction = getSupportFragmentManager()
+                    .beginTransaction()
+                    .setReorderingAllowed(true)
+                    .setCustomAnimations(0, R.anim.player_screen_exit);
+
+            if (fallbackTarget != null
+                    && fallbackTarget.isAdded()
+                    && fallbackTarget != songPlayerFragment) {
+                transaction.hide(songPlayerFragment).show(fallbackTarget);
+            } else {
+                transaction.remove(songPlayerFragment);
+            }
+            transaction.commit();
+
+            mainHandler.postDelayed(() -> revealModuleContent(), MODULE_LOAD_OVERLAY_MIN_MS);
+        });
         return true;
     }
 
@@ -990,14 +1339,25 @@ public class MainActivity extends AppCompatActivity {
             return false;
         }
 
-        markStreamingEntryAsLibrary();
-        dismissPlaylistDetailIfPresent();
-
-        if (bottomNav != null && bottomNav.getSelectedItemId() != R.id.nav_music) {
-            bottomNav.setSelectedItemId(R.id.nav_music);
+        // Show overlay instantly so back press feels immediate
+        showModuleLoadingOverlay();
+        if (fragmentContainer != null) {
+            fragmentContainer.setAlpha(0f);
         }
-        currentMainNavItemId = R.id.nav_music;
-        updateHeaderTitleForModule(R.id.nav_music);
+
+        mainHandler.post(() -> {
+            if (isFinishing() || isDestroyed()) return;
+            markStreamingEntryAsLibrary();
+            dismissPlaylistDetailIfPresent();
+
+            if (bottomNav != null && bottomNav.getSelectedItemId() != R.id.nav_music) {
+                bottomNav.setSelectedItemId(R.id.nav_music);
+            }
+            currentMainNavItemId = R.id.nav_music;
+            updateHeaderTitleForModule(R.id.nav_music);
+
+            mainHandler.postDelayed(() -> revealModuleContent(), MODULE_LOAD_OVERLAY_MIN_MS);
+        });
         return true;
     }
 

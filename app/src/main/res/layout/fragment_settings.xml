@@ -90,6 +90,210 @@
             <ImageView
                 android:layout_width="20dp"
                 android:layout_height="20dp"
+                android:src="@drawable/ic_music"
+                app:tint="@color/stitch_blue_light" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:text="AJUSTES DE STREAMING"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.15" />
+        </LinearLayout>
+
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            app:cardBackgroundColor="@color/surface_low"
+            app:cardCornerRadius="12dp"
+            app:strokeWidth="0dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <LinearLayout
+                    android:id="@+id/rowDownloadQuality"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="16dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/settings_stream_download_quality_title"
+                            android:textColor="@color/text_primary"
+                            android:textSize="14sp" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="@string/settings_stream_download_quality_subtitle"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/tvDownloadQualityValue"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/settings_stream_download_quality_medium"
+                        android:textColor="@color/stitch_blue_light"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_marginStart="10dp"
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="@color/text_secondary" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginHorizontal="16dp"
+                    android:background="#0AFFFFFF" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="16dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/settings_stream_mobile_data_title"
+                            android:textColor="@color/text_primary"
+                            android:textSize="14sp" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="@string/settings_stream_mobile_data_subtitle"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/swDownloadOnMobileData"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:checked="false" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginHorizontal="16dp"
+                    android:background="#0AFFFFFF" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="@string/settings_stream_crossfade_title"
+                                android:textColor="@color/text_primary"
+                                android:textSize="14sp" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/settings_stream_crossfade_subtitle"
+                                android:textColor="@color/text_secondary"
+                                android:textSize="11sp" />
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <SeekBar
+                            android:id="@+id/sbOfflineCrossfade"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:max="12"
+                            android:progress="0" />
+                    </LinearLayout>
+
+                    <FrameLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp">
+
+                        <TextView
+                            android:id="@+id/tvOfflineCrossfadeThumbValue"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0"
+                            android:textColor="@color/stitch_blue_light"
+                            android:textSize="12sp"
+                            android:textStyle="bold" />
+                    </FrameLayout>
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="34dp"
+            android:layout_marginStart="4dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
                 android:src="@drawable/ic_apps"
                 app:tint="@color/stitch_blue_light" />
 
@@ -133,7 +337,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Modo turbo de Detener aplicaciones"
+                            android:text="@string/settings_amoled_mode_title"
                             android:textColor="@color/text_primary"
                             android:textSize="14sp" />
 
@@ -141,13 +345,13 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="2dp"
-                            android:text="Automatizacion mas rapida para cerrar aplicaciones"
+                            android:text="@string/settings_amoled_mode_subtitle"
                             android:textColor="@color/text_secondary"
                             android:textSize="11sp" />
                     </LinearLayout>
 
                     <com.google.android.material.materialswitch.MaterialSwitch
-                        android:id="@+id/swAppsTurboMode"
+                        android:id="@+id/swAmoledMode"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:checked="false" />
@@ -321,7 +525,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Sugerencias inteligentes IA"
+                            android:text="Generacion inteligente de descripcion y categorias"
                             android:textColor="@color/text_primary"
                             android:textSize="14sp" />
 
@@ -329,7 +533,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="2dp"
-                            android:text="Activa sugerencias en Agenda, EQ y Aplicaciones"
+                            android:text="Activa la generacion inteligente para la Agenda"
                             android:textColor="@color/text_secondary"
                             android:textSize="11sp" />
                     </LinearLayout>
@@ -354,146 +558,193 @@
             <ImageView
                 android:layout_width="20dp"
                 android:layout_height="20dp"
-                android:src="@drawable/ic_equalizer"
+                android:src="@android:drawable/ic_menu_manage"
                 app:tint="@color/stitch_blue_light" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="12dp"
-                android:text="AUDIO Y ECUALIZADOR"
+                android:text="@string/settings_storage_section_title"
                 android:textColor="@color/text_secondary"
                 android:textSize="11sp"
                 android:textStyle="bold"
                 android:letterSpacing="0.15" />
         </LinearLayout>
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
-            android:orientation="horizontal">
-
-            <com.google.android.material.card.MaterialCardView
-                android:id="@+id/cardSpatialAudio"
-                android:layout_width="match_parent"
-                android:layout_height="140dp"
-                android:clickable="true"
-                android:focusable="true"
-                android:foreground="?attr/selectableItemBackground"
-                app:cardBackgroundColor="@color/surface_low"
-                app:cardCornerRadius="12dp"
-                app:strokeWidth="0dp">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:orientation="vertical"
-                    android:padding="16dp">
-
-                    <ImageView
-                        android:layout_width="28dp"
-                        android:layout_height="28dp"
-                        android:src="@drawable/ic_music"
-                        app:tint="@color/text_secondary" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="16dp"
-                        android:text="Audio espacial"
-                        android:textColor="@color/text_primary"
-                        android:textSize="14sp"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="Efecto envolvente virtual"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="11sp" />
-
-                    <TextView
-                        android:id="@+id/tvSpatialAudioBadge"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:background="@drawable/bg_status_badge_off"
-                        android:paddingHorizontal="8dp"
-                        android:paddingVertical="2dp"
-                        android:text="OFF"
-                        android:textColor="#FFBA9A"
-                        android:textSize="10sp"
-                        android:textStyle="bold"
-                        android:letterSpacing="0.15" />
-                </LinearLayout>
-            </com.google.android.material.card.MaterialCardView>
-        </LinearLayout>
-
         <com.google.android.material.card.MaterialCardView
-            android:id="@+id/cardReverbControl"
+            android:id="@+id/cardStorageBreakdown"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="14dp"
-            android:clickable="true"
-            android:focusable="true"
-            android:foreground="?attr/selectableItemBackground"
             app:cardBackgroundColor="@color/surface_low"
-            app:cardCornerRadius="16dp"
-            app:strokeColor="#140047AB"
-            app:strokeWidth="1dp">
+            app:cardCornerRadius="12dp"
+            app:strokeWidth="0dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
+                android:orientation="vertical"
                 android:padding="16dp">
 
-                <ImageView
-                    android:layout_width="26dp"
-                    android:layout_height="26dp"
-                    android:src="@drawable/ic_music"
-                    app:tint="@color/stitch_blue_light" />
+                <FrameLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="10dp"
+                    android:background="#2E3642">
+
+                    <LinearLayout
+                        android:id="@+id/layoutStorageSegments"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:orientation="horizontal">
+
+                        <View
+                            android:id="@+id/vStorageOtherApps"
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:layout_weight="0"
+                            android:background="@color/stitch_blue" />
+
+                        <View
+                            android:id="@+id/vStorageDownloads"
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:layout_weight="0"
+                            android:background="@color/settings_storage_primary_green" />
+
+                        <View
+                            android:id="@+id/vStorageCache"
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:layout_weight="0"
+                            android:background="#C9CED8" />
+
+                        <View
+                            android:id="@+id/vStorageFree"
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:layout_weight="0"
+                            android:background="#666E7B" />
+                    </LinearLayout>
+                </FrameLayout>
 
                 <LinearLayout
-                    android:layout_width="0dp"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="12dp"
-                    android:layout_weight="1"
+                    android:layout_marginTop="14dp"
                     android:orientation="vertical">
 
-                    <TextView
-                        android:layout_width="wrap_content"
+                    <LinearLayout
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="@string/settings_audio_reverb_title"
-                        android:textColor="@color/text_primary"
-                        android:textSize="14sp"
-                        android:textStyle="bold" />
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingVertical="3dp">
 
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="3dp"
-                        android:text="@string/settings_audio_reverb_subtitle"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="11sp" />
+                        <View
+                            android:layout_width="12dp"
+                            android:layout_height="12dp"
+                            android:background="@drawable/bg_storage_dot_other_apps" />
 
-                    <TextView
-                        android:id="@+id/tvReverbStatus"
-                        android:layout_width="wrap_content"
+                        <TextView
+                            android:id="@+id/tvStorageOtherAppsValue"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="10dp"
+                            android:textColor="@color/text_primary"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:background="@drawable/bg_status_badge_off"
-                        android:paddingHorizontal="8dp"
-                        android:paddingVertical="2dp"
-                        android:text="@string/settings_audio_reverb_disabled"
-                        android:textColor="#FFBA9A"
-                        android:textSize="10sp"
-                        android:textStyle="bold"
-                        android:letterSpacing="0.15" />
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingVertical="3dp">
+
+                        <View
+                            android:layout_width="12dp"
+                            android:layout_height="12dp"
+                            android:background="@drawable/bg_storage_dot_downloads" />
+
+                        <TextView
+                            android:id="@+id/tvStorageDownloadsValue"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="10dp"
+                            android:textColor="@color/text_primary"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingVertical="3dp">
+
+                        <View
+                            android:layout_width="12dp"
+                            android:layout_height="12dp"
+                            android:background="@drawable/bg_storage_dot_cache" />
+
+                        <TextView
+                            android:id="@+id/tvStorageCacheValue"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="10dp"
+                            android:textColor="@color/text_primary"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingVertical="3dp">
+
+                        <View
+                            android:layout_width="12dp"
+                            android:layout_height="12dp"
+                            android:background="@drawable/bg_storage_dot_free" />
+
+                        <TextView
+                            android:id="@+id/tvStorageFreeValue"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="10dp"
+                            android:textColor="@color/text_primary"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
                 </LinearLayout>
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnDeleteSettingsCache"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:layout_marginTop="14dp"
+                    android:backgroundTint="@android:color/white"
+                    android:text="@string/settings_storage_delete_cache"
+                    android:textAllCaps="true"
+                    android:textColor="#1A1F29"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    app:cornerRadius="28dp" />
+
+                <TextView
+                    android:id="@+id/tvStorageCacheHint"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:lineSpacingExtra="2dp"
+                    android:text="@string/settings_storage_hint"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="13sp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
@@ -503,7 +754,7 @@
             android:layout_marginTop="24dp"
             android:layout_marginBottom="14dp"
             android:gravity="center"
-            android:text="Sleppify v2.4.0"
+            android:text="Sleppify v1.0.0"
             android:textColor="@color/text_secondary"
             android:textSize="10sp"
             android:letterSpacing="0.15"

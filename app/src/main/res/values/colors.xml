@@ -6,6 +6,7 @@
     <!-- Stitch Theme Colors -->
     <color name="stitch_blue">#AEC7FD</color>
     <color name="stitch_blue_light">#AEC7FD</color>
+    <color name="settings_storage_primary_green">#20A99B</color>
     
     <color name="surface_dark">#111319</color>
     <color name="surface_dark_overlay">#CC111319</color>

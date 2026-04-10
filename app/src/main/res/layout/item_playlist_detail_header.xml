@@ -27,15 +27,25 @@
                 android:src="@drawable/ic_music" />
 
             <View
+                android:id="@+id/vPlaylistBackdropScrim"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:background="@drawable/bg_playlist_backdrop_scrim" />
 
             <View
+                android:id="@+id/vPlaylistBackdropBottomFade"
                 android:layout_width="match_parent"
                 android:layout_height="190dp"
                 android:layout_gravity="bottom"
                 android:background="@drawable/bg_playlist_backdrop_bottom_fade" />
+
+            <View
+                android:id="@+id/vPlaylistBackdropAmoledFade"
+                android:layout_width="match_parent"
+                android:layout_height="236dp"
+                android:layout_gravity="bottom"
+                android:background="@drawable/bg_playlist_backdrop_amoled_fade"
+                android:visibility="gone" />
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -167,7 +177,7 @@
                             android:layout_height="6dp"
                             android:layout_marginTop="3dp"
                             android:background="@drawable/bg_mode_indicator_dot"
-                            android:visibility="invisible" />
+                            android:visibility="gone" />
                     </LinearLayout>
 
                     <ImageButton

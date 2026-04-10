@@ -12,9 +12,10 @@
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:alpha="0.68"
+        android:background="@android:color/black"
         android:scaleType="centerCrop"
-        android:src="@drawable/ic_music"
-        android:translationY="-48dp"
+        android:src="@android:color/transparent"
+        android:translationY="8dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
@@ -57,10 +58,11 @@
                     android:id="@+id/ivPlayerCover"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
+                    android:background="@android:color/black"
                     android:clickable="false"
                     android:focusable="false"
                     android:scaleType="centerCrop"
-                    android:src="@drawable/ic_music" />
+                    android:src="@android:color/transparent" />
             </FrameLayout>
 
             <LinearLayout
@@ -199,6 +201,38 @@
                             android:layout_marginStart="5dp"
                             android:fontFamily="@font/inter_variable"
                             android:text="0"
+                            android:textColor="@color/text_primary"
+                            android:textSize="13sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/actionFavorite"
+                        android:layout_width="wrap_content"
+                        android:layout_height="34dp"
+                        android:layout_marginStart="12dp"
+                        android:background="@drawable/bg_player_social_chip"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:foreground="?attr/selectableItemBackground"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingHorizontal="10dp">
+
+                        <ImageView
+                            android:id="@+id/ivActionFavoriteIcon"
+                            android:layout_width="16dp"
+                            android:layout_height="16dp"
+                            android:src="@drawable/ic_favorite_star"
+                            app:tint="@color/text_primary" />
+
+                        <TextView
+                            android:id="@+id/tvActionFavoriteLabel"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="6dp"
+                            android:fontFamily="@font/inter_variable"
+                            android:text="Guardar en favoritos"
                             android:textColor="@color/text_primary"
                             android:textSize="13sp"
                             android:textStyle="bold" />
@@ -380,9 +414,9 @@
                 <androidx.recyclerview.widget.RecyclerView
                     android:id="@+id/rvNextUp"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
+                    android:layout_height="320dp"
                     android:layout_marginTop="12dp"
-                    android:nestedScrollingEnabled="false"
+                    android:nestedScrollingEnabled="true"
                     tools:itemCount="10"
                     tools:listitem="@layout/item_song_next_up" />
             </LinearLayout>
