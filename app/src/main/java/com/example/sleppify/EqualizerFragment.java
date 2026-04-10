@@ -71,8 +71,7 @@ public class EqualizerFragment extends Fragment {
     private static final float BASS_GAIN_MAX_DB = AudioEffectsService.BASS_DB_MAX;
     private static final float BASS_GAIN_MIN_DB = 0f;
     private static final float BASS_GAIN_TOGGLE_THRESHOLD_DB = BASS_GAIN_MAX_DB * 0.5f;
-    private static final float DEBUG_AUTOGAIN_EDITOR_MIN_DB = -24f;
-    private static final float DEBUG_AUTOGAIN_EDITOR_MAX_DB = 24f;
+
     private static final float BASS_DEFAULT_FREQUENCY_HZ = AudioEffectsService.BASS_FREQUENCY_DEFAULT_HZ;
     private static final int BASS_TYPE_DEFAULT = AudioEffectsService.BASS_TYPE_NATURAL;
     private static final int REVERB_LEVEL_DEFAULT = AudioEffectsService.REVERB_LEVEL_OFF;
@@ -115,7 +114,7 @@ public class EqualizerFragment extends Fragment {
     private View cardPresetSelector;
     private View cardGraphicEq;
     private View cardBassTuner;
-    private View cardAutoGainDebug;
+
     private EqCurveEditorView eqCurveView;
     private SwitchMaterial switchEqEnabled;
     @Nullable
@@ -128,15 +127,7 @@ public class EqualizerFragment extends Fragment {
     private View cardReverbSelector;
     private Slider sliderBassFrequency;
     private TextView tvBassFrequencyValue;
-    private LinearLayout layoutAutoGainEqRows;
-    private LinearLayout layoutAutoGainBassRows;
-    private MaterialButton btnSaveAutoGainDebug;
-    private MaterialButton btnResetAutoGainDebug;
-    @Nullable
-    private EditText[] autoGainEqInputs;
-    @Nullable
-    private EditText[] autoGainBassRangeInputs;
-    private boolean autoGainInlineEditorReady;
+
     private boolean restoringUi;
     private boolean hasLoadedUi;
     @Nullable
@@ -189,7 +180,7 @@ public class EqualizerFragment extends Fragment {
         cardPresetSelector = view.findViewById(R.id.cardPresetSelector);
         cardGraphicEq = view.findViewById(R.id.cardGraphicEq);
         cardBassTuner = view.findViewById(R.id.cardBassTuner);
-        cardAutoGainDebug = view.findViewById(R.id.cardAutoGainDebug);
+
         eqCurveView = view.findViewById(R.id.eqCurveView);
         switchEqEnabled = view.findViewById(R.id.switchEqEnabled);
 
@@ -201,16 +192,12 @@ public class EqualizerFragment extends Fragment {
         cardReverbSelector = view.findViewById(R.id.cardReverbSelector);
         sliderBassFrequency = view.findViewById(R.id.sliderBassFrequency);
         tvBassFrequencyValue = view.findViewById(R.id.tvBassFrequencyValue);
-        layoutAutoGainEqRows = view.findViewById(R.id.layoutAutoGainEqRows);
-        layoutAutoGainBassRows = view.findViewById(R.id.layoutAutoGainBassRows);
-        btnSaveAutoGainDebug = view.findViewById(R.id.btnSaveAutoGainDebug);
-        btnResetAutoGainDebug = view.findViewById(R.id.btnResetAutoGainDebug);
+
 
         sliderBassFrequency.setValueFrom(AudioEffectsService.BASS_FREQUENCY_MIN_HZ);
         sliderBassFrequency.setValueTo(AudioEffectsService.BASS_FREQUENCY_MAX_HZ);
 
-        clearLegacyAutoGainDebugOverrides();
-        setupInlineAutoGainDebugEditor();
+
         setupListeners();
         refreshOutputDeviceAndProfile(false, true);
         refreshEqModuleState();
@@ -310,7 +297,7 @@ public class EqualizerFragment extends Fragment {
         String selectedPreset = preferences.getString(KEY_SELECTED_PRESET, PRESET_DEFAULT);
         tvSelectedPreset.setText(presetLabelFromId(selectedPreset));
 
-        refreshInlineAutoGainEditorValues();
+
 
         restoringUi = false;
     }
@@ -363,12 +350,7 @@ public class EqualizerFragment extends Fragment {
             cardGraphicEq.setOnClickListener(v -> showGraphicEqEditorDialog());
         }
 
-        if (btnSaveAutoGainDebug != null) {
-            btnSaveAutoGainDebug.setOnClickListener(v -> saveInlineAutoGainDebugValues());
-        }
-        if (btnResetAutoGainDebug != null) {
-            btnResetAutoGainDebug.setOnClickListener(v -> resetInlineAutoGainDebugValues());
-        }
+
 
         cardPresetSelector.setOnClickListener(v -> showPresetPopup());
 
@@ -456,38 +438,7 @@ public class EqualizerFragment extends Fragment {
             cardBassTuner.setAlpha(eqEnabled ? 1f : 0.45f);
         }
 
-        if (cardAutoGainDebug != null) {
-            cardAutoGainDebug.setEnabled(eqEnabled);
-            cardAutoGainDebug.setClickable(eqEnabled);
-            cardAutoGainDebug.setFocusable(eqEnabled);
-            cardAutoGainDebug.setAlpha(eqEnabled ? 1f : 0.45f);
-        }
 
-        if (btnSaveAutoGainDebug != null) {
-            btnSaveAutoGainDebug.setEnabled(eqEnabled);
-        }
-
-        if (btnResetAutoGainDebug != null) {
-            btnResetAutoGainDebug.setEnabled(eqEnabled);
-        }
-
-        if (autoGainEqInputs != null) {
-            for (EditText input : autoGainEqInputs) {
-                if (input != null) {
-                    input.setEnabled(eqEnabled);
-                    input.setAlpha(eqEnabled ? 1f : 0.55f);
-                }
-            }
-        }
-
-        if (autoGainBassRangeInputs != null) {
-            for (EditText input : autoGainBassRangeInputs) {
-                if (input != null) {
-                    input.setEnabled(eqEnabled);
-                    input.setAlpha(eqEnabled ? 1f : 0.55f);
-                }
-            }
-        }
 
         if (eqCurveView != null) {
             eqCurveView.setEnabled(eqEnabled);
@@ -782,176 +733,7 @@ public class EqualizerFragment extends Fragment {
         popupWindow.showAsDropDown(cardReverbSelector, xOffset, dp(8));
     }
 
-    private void setupInlineAutoGainDebugEditor() {
-        if (layoutAutoGainEqRows == null || layoutAutoGainBassRows == null || autoGainInlineEditorReady) {
-            return;
-        }
 
-        layoutAutoGainEqRows.removeAllViews();
-        EditText[] eqInputs = new EditText[EQ_BAND_COUNT];
-        for (int i = 0; i < EQ_BAND_COUNT; i++) {
-            float frequencyHz = i < GRAPHIC_EQ_DIALOG_FREQUENCIES_HZ.length
-                    ? GRAPHIC_EQ_DIALOG_FREQUENCIES_HZ[i]
-                    : AudioEffectsService.WAVELET_9_BAND_FREQUENCIES_HZ[i];
-            String label = formatGraphicEqDialogFrequency(frequencyHz) + " Hz";
-            eqInputs[i] = addAutoGainEditorRow(
-                    layoutAutoGainEqRows,
-                    label,
-                    AudioEffectsService.defaultEqBandAutoGainDb(i)
-            );
-        }
-
-        layoutAutoGainBassRows.removeAllViews();
-        int rangeCount = AudioEffectsService.bassAutoGainRangeCount();
-        EditText[] bassRangeInputs = new EditText[rangeCount];
-        for (int i = 0; i < rangeCount; i++) {
-            String label = String.format(
-                    Locale.US,
-                    "%d-%d Hz",
-                    Math.round(AudioEffectsService.bassAutoGainRangeMinHz(i)),
-                    Math.round(AudioEffectsService.bassAutoGainRangeMaxHz(i))
-            );
-            bassRangeInputs[i] = addAutoGainEditorRow(
-                    layoutAutoGainBassRows,
-                    label,
-                    AudioEffectsService.defaultBassAutoGainRangeDb(i)
-            );
-        }
-
-        autoGainEqInputs = eqInputs;
-        autoGainBassRangeInputs = bassRangeInputs;
-        autoGainInlineEditorReady = true;
-        refreshInlineAutoGainEditorValues();
-    }
-
-    private void refreshInlineAutoGainEditorValues() {
-        if (!autoGainInlineEditorReady || preferences == null) {
-            return;
-        }
-
-        if (autoGainEqInputs != null) {
-            for (int i = 0; i < autoGainEqInputs.length; i++) {
-                EditText input = autoGainEqInputs[i];
-                if (input == null) {
-                    continue;
-                }
-                float value = AudioEffectsService.defaultEqBandAutoGainDb(i);
-                input.setText(formatAutoGainEditorDb(value));
-            }
-        }
-
-        if (autoGainBassRangeInputs != null) {
-            for (int i = 0; i < autoGainBassRangeInputs.length; i++) {
-                EditText input = autoGainBassRangeInputs[i];
-                if (input == null) {
-                    continue;
-                }
-                float value = AudioEffectsService.defaultBassAutoGainRangeDb(i);
-                input.setText(formatAutoGainEditorDb(value));
-            }
-        }
-    }
-
-    private void saveInlineAutoGainDebugValues() {
-        if (!isAdded() || preferences == null || !isEqEnabled()) {
-            return;
-        }
-
-        clearLegacyAutoGainDebugOverrides();
-        refreshInlineAutoGainEditorValues();
-        applyIfEnabled();
-    }
-
-    private void resetInlineAutoGainDebugValues() {
-        if (!isAdded() || preferences == null) {
-            return;
-        }
-
-        clearLegacyAutoGainDebugOverrides();
-        refreshInlineAutoGainEditorValues();
-        applyIfEnabled();
-    }
-
-    private void clearLegacyAutoGainDebugOverrides() {
-        if (preferences == null) {
-            return;
-        }
-
-        SharedPreferences.Editor editor = preferences.edit();
-        for (int i = 0; i < EQ_BAND_COUNT; i++) {
-            editor.remove(AudioEffectsService.debugEqBandAutoGainKey(i));
-        }
-
-        int bassRangeCount = AudioEffectsService.bassAutoGainRangeCount();
-        for (int i = 0; i < bassRangeCount; i++) {
-            editor.remove(AudioEffectsService.debugBassRangeAutoGainKey(i));
-        }
-        editor.apply();
-    }
-
-    @NonNull
-    private EditText addAutoGainEditorRow(
-            @NonNull LinearLayout parent,
-            @NonNull String label,
-            float value
-    ) {
-        Context context = requireContext();
-
-        LinearLayout row = new LinearLayout(context);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(0, dp(6), 0, dp(6));
-
-        TextView labelView = new TextView(context);
-        labelView.setText(label);
-        labelView.setTextColor(ContextCompat.getColor(context, R.color.text_secondary));
-        labelView.setTextSize(12f);
-        row.addView(labelView, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-        EditText input = new EditText(context);
-        input.setSingleLine(true);
-        input.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL | InputType.TYPE_NUMBER_FLAG_SIGNED);
-        input.setText(formatAutoGainEditorDb(value));
-        input.setTextColor(ContextCompat.getColor(context, R.color.text_primary));
-        input.setHintTextColor(ContextCompat.getColor(context, R.color.text_secondary));
-        input.setGravity(Gravity.END);
-        row.addView(input, new LinearLayout.LayoutParams(dp(88), ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        TextView unitView = new TextView(context);
-        unitView.setText(" dB");
-        unitView.setTextColor(ContextCompat.getColor(context, R.color.text_secondary));
-        unitView.setTextSize(12f);
-        row.addView(unitView);
-
-        parent.addView(row, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        ));
-        return input;
-    }
-
-    private float parseAutoGainEditorValue(@Nullable EditText input, float fallbackValue) {
-        if (input == null || input.getText() == null) {
-            return clamp(fallbackValue, DEBUG_AUTOGAIN_EDITOR_MIN_DB, DEBUG_AUTOGAIN_EDITOR_MAX_DB);
-        }
-
-        String raw = input.getText().toString().trim();
-        if (TextUtils.isEmpty(raw)) {
-            return clamp(fallbackValue, DEBUG_AUTOGAIN_EDITOR_MIN_DB, DEBUG_AUTOGAIN_EDITOR_MAX_DB);
-        }
-
-        try {
-            float parsed = Float.parseFloat(raw.replace(',', '.'));
-            return clamp(parsed, DEBUG_AUTOGAIN_EDITOR_MIN_DB, DEBUG_AUTOGAIN_EDITOR_MAX_DB);
-        } catch (Exception ignored) {
-            return clamp(fallbackValue, DEBUG_AUTOGAIN_EDITOR_MIN_DB, DEBUG_AUTOGAIN_EDITOR_MAX_DB);
-        }
-    }
-
-    @NonNull
-    private String formatAutoGainEditorDb(float value) {
-        return String.format(Locale.US, "%.2f", value);
-    }
 
     @NonNull
     private TextView createPresetRow(

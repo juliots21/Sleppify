@@ -376,16 +376,19 @@ public class MainActivity extends AppCompatActivity {
         lastSpatialEnabled = spatialEnabled;
         lastReverbLevel = reverbLevel;
 
-        // Backend de ecualizacion desactivado por configuracion del producto.
-        // Conservamos solo la sincronizacion de estado de UI/prefs.
+        if (eqEnabled) {
+            sendAudioEffectsApplyIntent();
+        } else {
+            sendAudioEffectsStopIntent();
+        }
     }
 
     private void sendAudioEffectsApplyIntent() {
-        // No-op: sin motor de ecualizacion activo.
+        AudioEffectsService.sendApply(getApplicationContext());
     }
 
     private void sendAudioEffectsStopIntent() {
-        // No-op: sin motor de ecualizacion activo.
+        AudioEffectsService.sendStop(getApplicationContext());
     }
 
     private void configureAudioAuthorizationFlow() {

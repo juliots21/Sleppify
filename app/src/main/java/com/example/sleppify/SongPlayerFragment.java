@@ -2044,6 +2044,16 @@ public class SongPlayerFragment extends Fragment {
                 .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                 .build());
 
+        // Publish audio session to DSP engine for EQ processing
+        try {
+            int sessionId = player.getAudioSessionId();
+            if (sessionId > 0 && isAdded()) {
+                AudioEffectsService.sendApply(requireContext().getApplicationContext(), sessionId);
+            }
+        } catch (Exception ignored) {
+        }
+
+
         player.setOnPreparedListener(mp -> {
             cancelSourcePrepareTimeout();
             localSourcePreparing = false;

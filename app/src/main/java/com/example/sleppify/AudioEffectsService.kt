@@ -1,24 +1,334 @@
 package com.example.sleppify
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
+import android.media.audiofx.DynamicsProcessing
+import android.os.Build
 import android.os.IBinder
+import android.util.Log
+import androidx.core.app.NotificationCompat
 
 /**
- * Stub sin procesamiento DSP real.
- * Mantiene claves y utilidades para que frontend/presets/dispositivos sigan funcionando.
+ * Motor DSP avanzado basado en DynamicsProcessing (API 28+).
+ *
+ * Proporciona un ecualizador parametrico de 9 bandas con filtros biquad IIR,
+ * ajuste de graves independiente (low-shelf), y cero limitador/compresor/auto-ganancia.
+ *
+ * Al subir las bandas el volumen general NO se reduce.
+ * Se aplica globalmente (session 0) para afectar todo el audio del sistema.
  */
 class AudioEffectsService : Service() {
 
+    private var dynamicsProcessing: DynamicsProcessing? = null
+    private var currentAudioSessionId: Int = GLOBAL_SESSION_ID
+    private var isEngineActive = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // El backend de ecualizacion fue desactivado; no ejecutamos audio processing.
-        stopSelfResult(startId)
-        return START_NOT_STICKY
+    override fun onCreate() {
+        super.onCreate()
+        createNotificationChannel()
     }
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val action = intent?.action
+        Log.d(TAG, "onStartCommand action=$action")
+
+        when (action) {
+            ACTION_APPLY -> {
+                val sessionId = intent.getIntExtra(EXTRA_AUDIO_SESSION_ID, GLOBAL_SESSION_ID)
+                applyEffects(sessionId)
+            }
+            ACTION_STOP -> {
+                releaseEngine()
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
+            else -> {
+                applyEffects(GLOBAL_SESSION_ID)
+            }
+        }
+
+        return START_STICKY
+    }
+
+    override fun onDestroy() {
+        releaseEngine()
+        super.onDestroy()
+    }
+
+    // ───────────────────────────────────────────────────────────────────
+    // Core DSP Engine
+    // ───────────────────────────────────────────────────────────────────
+
+    private fun applyEffects(sessionId: Int) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+            Log.w(TAG, "DynamicsProcessing requires API 28+, current=${Build.VERSION.SDK_INT}")
+            stopSelfResult(0)
+            return
+        }
+
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val enabled = prefs.getBoolean(KEY_ENABLED, false)
+
+        if (!enabled) {
+            releaseEngine()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
+
+        startForeground(NOTIFICATION_ID, buildForegroundNotification())
+
+        val targetSession = if (sessionId != GLOBAL_SESSION_ID) sessionId else GLOBAL_SESSION_ID
+
+        try {
+            // Rebuild engine if session changed or not active
+            if (dynamicsProcessing == null || currentAudioSessionId != targetSession) {
+                releaseEngine()
+                dynamicsProcessing = createDynamicsProcessingEngine(targetSession)
+                currentAudioSessionId = targetSession
+                isEngineActive = true
+                Log.d(TAG, "engine:created session=$targetSession")
+            }
+
+            applyParametersFromPrefs(prefs)
+            dynamicsProcessing?.enabled = true
+            Log.d(TAG, "engine:applied session=$targetSession enabled=true")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "engine:error session=$targetSession", e)
+
+            // If global session failed, try with session 0 as absolute fallback
+            if (targetSession != GLOBAL_SESSION_ID) {
+                try {
+                    releaseEngine()
+                    dynamicsProcessing = createDynamicsProcessingEngine(GLOBAL_SESSION_ID)
+                    currentAudioSessionId = GLOBAL_SESSION_ID
+                    isEngineActive = true
+                    applyParametersFromPrefs(prefs)
+                    dynamicsProcessing?.enabled = true
+                    Log.d(TAG, "engine:fallback_to_global success")
+                } catch (fallbackError: Exception) {
+                    Log.e(TAG, "engine:fallback_failed", fallbackError)
+                    releaseEngine()
+                }
+            }
+        }
+    }
+
+    /**
+     * Creates a DynamicsProcessing engine with:
+     * - 9-band pre-EQ (biquad parametric)
+     * - NO multi-band compressor
+     * - NO post-EQ
+     * - NO limiter
+     *
+     * This ensures ZERO volume reduction when boosting bands.
+     */
+    private fun createDynamicsProcessingEngine(sessionId: Int): DynamicsProcessing {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+            throw UnsupportedOperationException("DynamicsProcessing requires API 28+")
+        }
+
+        val config = DynamicsProcessing.Config.Builder(
+            DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION,
+            /* channelCount */ 2,
+            /* preEqInUse */ true,
+            /* preEqBandCount */ EQ_BAND_COUNT,
+            /* mbcInUse */ false,       // NO compressor
+            /* mbcBandCount */ 0,
+            /* postEqInUse */ false,     // NO post-EQ
+            /* postEqBandCount */ 0,
+            /* limiterInUse */ false     // NO limiter
+        )
+
+        // Configure pre-EQ channel 0
+        val preEqChannel0 = DynamicsProcessing.EqBand(true, 1000f, 0f)
+        val eqConfig = DynamicsProcessing.Eq(
+            true,  // inUse
+            true,  // enabled
+            EQ_BAND_COUNT
+        )
+        for (i in 0 until EQ_BAND_COUNT) {
+            val freq = WAVELET_9_BAND_FREQUENCIES_HZ[i].toFloat()
+            eqConfig.setBand(i, DynamicsProcessing.EqBand(true, freq, 0f))
+        }
+        config.setPreEqByChannelIndex(0, eqConfig)
+        config.setPreEqByChannelIndex(1, eqConfig)
+
+        // Build and configure
+        val dp = DynamicsProcessing(0, sessionId, config.build())
+
+        // Explicitly disable limiter on each channel
+        for (ch in 0..1) {
+            try {
+                val limiter = dp.getLimiterByChannelIndex(ch)
+                limiter.isEnabled = false
+                dp.setLimiterByChannelIndex(ch, limiter)
+            } catch (ignored: Exception) {
+                // Some devices may not support limiter configuration
+            }
+        }
+
+        // Set input gain to 0 dB (no pre-attenuation)
+        try {
+            dp.setInputGainAllChannelsTo(0f)
+        } catch (ignored: Exception) {
+        }
+
+
+        return dp
+    }
+
+    /**
+     * Reads all EQ band values, bass settings from SharedPreferences
+     * and applies them to the DynamicsProcessing engine.
+     *
+     * NO auto-gain compensation is applied — bands boost freely.
+     */
+    private fun applyParametersFromPrefs(prefs: SharedPreferences) {
+        val dp = dynamicsProcessing ?: return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
+
+        // Apply 9-band EQ values
+        for (bandIndex in 0 until EQ_BAND_COUNT) {
+            val gainDb = prefs.getFloat(bandDbKey(bandIndex), 0f)
+                .coerceIn(EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB)
+            val freq = WAVELET_9_BAND_FREQUENCIES_HZ[bandIndex].toFloat()
+
+            for (ch in 0..1) {
+                try {
+                    val band = dp.getPreEqBandByChannelIndex(ch, bandIndex)
+                    band.cutoffFrequency = freq
+                    band.gain = gainDb
+                    band.isEnabled = true
+                    dp.setPreEqBandByChannelIndex(ch, bandIndex, band)
+                } catch (e: Exception) {
+                    Log.w(TAG, "eq:set_band_failed ch=$ch band=$bandIndex", e)
+                }
+            }
+        }
+
+        // Apply bass boost via input gain (low-shelf simulation)
+        // DynamicsProcessing doesn't have a dedicated bass shelf, so we use the
+        // lowest EQ band (62.5 Hz) with additional gain from the bass tuner
+        val bassDb = prefs.getFloat(KEY_BASS_DB, 0f).coerceIn(0f, BASS_DB_MAX)
+        if (bassDb > 0.1f) {
+            // Add bass gain to the lowest frequency bands
+            val bassCutoffHz = prefs.getFloat(KEY_BASS_FREQUENCY_HZ, BASS_FREQUENCY_DEFAULT_HZ)
+                .coerceIn(BASS_FREQUENCY_MIN_HZ, BASS_FREQUENCY_MAX_HZ)
+
+            for (bandIndex in 0 until EQ_BAND_COUNT) {
+                val bandFreq = WAVELET_9_BAND_FREQUENCIES_HZ[bandIndex].toFloat()
+                if (bandFreq > bassCutoffHz * 2f) break
+
+                // Scale bass contribution by how far the band is below cutoff
+                val ratio = if (bandFreq <= bassCutoffHz) {
+                    1.0f
+                } else {
+                    val logRatio = Math.log10((bassCutoffHz * 2f / bandFreq).toDouble()).toFloat()
+                    logRatio.coerceIn(0f, 1f)
+                }
+
+                val additionalBassGain = bassDb * ratio
+                val currentBandGain = prefs.getFloat(bandDbKey(bandIndex), 0f)
+                    .coerceIn(EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB)
+                val totalGain = (currentBandGain + additionalBassGain)
+                    .coerceIn(EQ_GAIN_MIN_DB * 2f, EQ_GAIN_MAX_DB * 2f) // Extended range for bass
+
+                for (ch in 0..1) {
+                    try {
+                        val band = dp.getPreEqBandByChannelIndex(ch, bandIndex)
+                        band.gain = totalGain
+                        dp.setPreEqBandByChannelIndex(ch, bandIndex, band)
+                    } catch (ignored: Exception) {
+                    }
+                }
+            }
+        }
+
+        // Ensure NO input gain reduction — keep at 0 dB
+        try {
+            dp.setInputGainAllChannelsTo(0f)
+        } catch (ignored: Exception) {
+        }
+
+
+        Log.d(TAG, "params:applied bands=9 bassDb=$bassDb")
+    }
+
+    private fun releaseEngine() {
+        try {
+            dynamicsProcessing?.enabled = false
+            dynamicsProcessing?.release()
+        } catch (e: Exception) {
+            Log.w(TAG, "engine:release_error", e)
+        }
+        dynamicsProcessing = null
+        isEngineActive = false
+        currentAudioSessionId = GLOBAL_SESSION_ID
+        Log.d(TAG, "engine:released")
+    }
+
+    // ───────────────────────────────────────────────────────────────────
+    // Foreground notification
+    // ───────────────────────────────────────────────────────────────────
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Ecualizador",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Motor DSP de ecualizacion activo"
+                setShowBadge(false)
+            }
+            val nm = getSystemService(NotificationManager::class.java)
+            nm?.createNotificationChannel(channel)
+        }
+    }
+
+    private fun buildForegroundNotification(): Notification {
+        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+        val pendingIntent = if (launchIntent != null) {
+            PendingIntent.getActivity(
+                this, 0, launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        } else null
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_equalizer)
+            .setContentTitle("Ecualizador activo")
+            .setContentText("Motor DSP procesando audio")
+            .setOngoing(true)
+            .setSilent(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .apply {
+                if (pendingIntent != null) setContentIntent(pendingIntent)
+            }
+            .build()
+    }
+
+    // ───────────────────────────────────────────────────────────────────
+    // Companion: Constants, keys, and utilities
+    // ───────────────────────────────────────────────────────────────────
+
     companion object {
+        private const val TAG = "AudioEffectsService"
+        private const val CHANNEL_ID = "eq_service_channel"
+        private const val NOTIFICATION_ID = 9201
+        private const val GLOBAL_SESSION_ID = 0
+
         const val EQ_GAIN_MIN_DB = -10f
         const val EQ_GAIN_MAX_DB = 10f
         const val BASS_DB_MAX = 5f
@@ -34,6 +344,7 @@ class AudioEffectsService : Service() {
 
         const val ACTION_APPLY = "com.example.sleppify.action.APPLY_EFFECTS"
         const val ACTION_STOP = "com.example.sleppify.action.STOP_EFFECTS"
+        const val EXTRA_AUDIO_SESSION_ID = "extra_audio_session_id"
 
         const val PREFS_NAME = "global_eq_prefs"
 
@@ -57,20 +368,6 @@ class AudioEffectsService : Service() {
         const val BASS_TYPE_SUSTAIN_COMPRESSOR = 2
 
         private const val KEY_BAND_DB_PREFIX = "band_db_"
-        private const val KEY_DEBUG_EQ_BAND_AUTO_GAIN_PREFIX = "debug_eq_band_auto_gain_"
-        private const val KEY_DEBUG_BASS_RANGE_AUTO_GAIN_PREFIX = "debug_bass_range_auto_gain_"
-
-        @JvmField
-        val EQ_AUTO_GAIN_DEFAULT_DB = floatArrayOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f)
-
-        @JvmField
-        val BASS_AUTO_GAIN_RANGE_MIN_HZ = floatArrayOf(20f, 40f, 63f, 100f, 160f)
-
-        @JvmField
-        val BASS_AUTO_GAIN_RANGE_MAX_HZ = floatArrayOf(40f, 63f, 100f, 160f, 250f)
-
-        @JvmField
-        val BASS_AUTO_GAIN_RANGE_DEFAULT_DB = floatArrayOf(0f, 0f, 0f, 0f, 0f)
 
         @JvmStatic
         fun bandDbKey(bandIndex: Int): String = KEY_BAND_DB_PREFIX + bandIndex
@@ -85,41 +382,40 @@ class AudioEffectsService : Service() {
             return cutoffHz.coerceIn(BASS_FREQUENCY_MIN_HZ, BASS_FREQUENCY_MAX_HZ)
         }
 
+        /**
+         * Sends an apply intent to the service, optionally with a specific audio session.
+         */
         @JvmStatic
-        fun defaultEqBandAutoGainDb(bandIndex: Int): Float {
-            return if (bandIndex in EQ_AUTO_GAIN_DEFAULT_DB.indices) {
-                EQ_AUTO_GAIN_DEFAULT_DB[bandIndex]
-            } else {
-                0f
+        @JvmOverloads
+        fun sendApply(context: Context, audioSessionId: Int = GLOBAL_SESSION_ID) {
+            val intent = Intent(context, AudioEffectsService::class.java).apply {
+                action = ACTION_APPLY
+                putExtra(EXTRA_AUDIO_SESSION_ID, audioSessionId)
+            }
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "sendApply:failed", e)
             }
         }
 
+        /**
+         * Sends a stop intent to the service.
+         */
         @JvmStatic
-        fun debugEqBandAutoGainKey(bandIndex: Int): String {
-            return KEY_DEBUG_EQ_BAND_AUTO_GAIN_PREFIX + bandIndex
-        }
-
-        @JvmStatic
-        fun bassAutoGainRangeCount(): Int = BASS_AUTO_GAIN_RANGE_MIN_HZ.size
-
-        @JvmStatic
-        fun bassAutoGainRangeMinHz(rangeIndex: Int): Float {
-            return BASS_AUTO_GAIN_RANGE_MIN_HZ[rangeIndex.coerceIn(0, BASS_AUTO_GAIN_RANGE_MIN_HZ.lastIndex)]
-        }
-
-        @JvmStatic
-        fun bassAutoGainRangeMaxHz(rangeIndex: Int): Float {
-            return BASS_AUTO_GAIN_RANGE_MAX_HZ[rangeIndex.coerceIn(0, BASS_AUTO_GAIN_RANGE_MAX_HZ.lastIndex)]
-        }
-
-        @JvmStatic
-        fun defaultBassAutoGainRangeDb(rangeIndex: Int): Float {
-            return BASS_AUTO_GAIN_RANGE_DEFAULT_DB[rangeIndex.coerceIn(0, BASS_AUTO_GAIN_RANGE_DEFAULT_DB.lastIndex)]
-        }
-
-        @JvmStatic
-        fun debugBassRangeAutoGainKey(rangeIndex: Int): String {
-            return KEY_DEBUG_BASS_RANGE_AUTO_GAIN_PREFIX + rangeIndex
+        fun sendStop(context: Context) {
+            val intent = Intent(context, AudioEffectsService::class.java).apply {
+                action = ACTION_STOP
+            }
+            try {
+                context.startService(intent)
+            } catch (e: Exception) {
+                Log.w(TAG, "sendStop:failed", e)
+            }
         }
     }
 }
