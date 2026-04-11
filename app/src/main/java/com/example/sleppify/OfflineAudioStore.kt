@@ -122,6 +122,7 @@ object OfflineAudioStore {
 
         val matchesExpectedDuration = actualDurationSeconds >= minimumAllowedDurationSeconds
         if (!matchesExpectedDuration) {
+            android.util.Log.w("OfflineAudioStore", "validation:fail id=$normalized actual=$actualDurationSeconds expected=$expectedDurationLabel (min=$minimumAllowedDurationSeconds)")
             deleteOfflineAudio(context, normalized)
             return false
         }

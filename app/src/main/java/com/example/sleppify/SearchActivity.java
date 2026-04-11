@@ -76,9 +76,7 @@ public class SearchActivity extends AppCompatActivity {
             "deep sleep music"
     };
 
-    private enum ChipFilter {
-        ALL, SONGS, VIDEOS, PLAYLISTS
-    }
+
 
     private final YouTubeMusicService youTubeMusicService = new YouTubeMusicService();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -98,10 +96,7 @@ public class SearchActivity extends AppCompatActivity {
     private TextView tvFeaturedTitle;
     private TextView tvFeaturedSubtitle;
 
-    private TextView chipAll, chipSongs, chipVideos, chipPlaylists;
-
     private SearchResultsAdapter adapter;
-    private ChipFilter activeFilter = ChipFilter.SONGS;
     private YouTubeMusicService.TrackResult featuredTrack;
 
     private boolean searching;
@@ -110,6 +105,7 @@ public class SearchActivity extends AppCompatActivity {
     private String nextSearchPageToken = "";
     private String activeSearchQuery = "";
     private long latestSearchRequestId;
+    private View moduleLoadingOverlay;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -129,15 +125,12 @@ public class SearchActivity extends AppCompatActivity {
         ivFeaturedThumb = findViewById(R.id.ivFeaturedThumb);
         tvFeaturedTitle = findViewById(R.id.tvFeaturedTitle);
         tvFeaturedSubtitle = findViewById(R.id.tvFeaturedSubtitle);
+        moduleLoadingOverlay = findViewById(R.id.moduleLoadingOverlay);
 
-        chipAll = findViewById(R.id.chipAll);
-        chipSongs = findViewById(R.id.chipSongs);
-        chipVideos = findViewById(R.id.chipVideos);
-        chipPlaylists = findViewById(R.id.chipPlaylists);
+
 
         setupRecyclerView();
         setupSearchInput();
-        setupChips();
         setupBackButton();
 
         restoreRecentSearchQueries();
@@ -145,12 +138,17 @@ public class SearchActivity extends AppCompatActivity {
 
         // Auto-focus and show keyboard
         etSearchQuery.requestFocus();
-        mainHandler.postDelayed(() -> {
-            InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
-            if (imm != null) {
-                imm.showSoftInput(etSearchQuery, InputMethodManager.SHOW_IMPLICIT);
+        getWindow().getDecorView().postDelayed(() -> {
+            if (!isDestroyed() && !isFinishing()) {
+                InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+                if (imm != null) {
+                    etSearchQuery.requestFocus();
+                    imm.showSoftInput(etSearchQuery, InputMethodManager.SHOW_IMPLICIT);
+                }
             }
-        }, 200);
+        }, 350);
+
+        overridePendingTransition(R.anim.fade_in, R.anim.fade_out);
     }
 
     private void setupRecyclerView() {
@@ -207,40 +205,33 @@ public class SearchActivity extends AppCompatActivity {
             featuredTrack = null;
             llFeaturedResult.setVisibility(View.GONE);
             adapter.submitResults(new ArrayList<>());
-            tvSearchState.setText("Escribe y presiona buscar.");
+            tvSearchState.setText("");
             activeSearchQuery = "";
+            cgSearchSuggestions.setVisibility(View.VISIBLE);
             refreshSearchSuggestions("");
+            InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+            if (imm != null) {
+                imm.showSoftInput(etSearchQuery, InputMethodManager.SHOW_IMPLICIT);
+            }
         });
     }
 
-    private void setupChips() {
-        chipAll.setOnClickListener(v -> { activeFilter = ChipFilter.ALL; applyChipStyles(); applyActiveFilter(activeSearchQuery); });
-        chipSongs.setOnClickListener(v -> { activeFilter = ChipFilter.SONGS; applyChipStyles(); applyActiveFilter(activeSearchQuery); });
-        chipVideos.setOnClickListener(v -> { activeFilter = ChipFilter.VIDEOS; applyChipStyles(); applyActiveFilter(activeSearchQuery); });
-        chipPlaylists.setOnClickListener(v -> { activeFilter = ChipFilter.PLAYLISTS; applyChipStyles(); applyActiveFilter(activeSearchQuery); });
-        applyChipStyles();
-    }
+
 
     private void setupBackButton() {
         findViewById(R.id.btnSearchBack).setOnClickListener(v -> {
-            hideKeyboard();
-            finish();
+            showModuleLoadingOverlay();
+            onBackPressed();
         });
     }
 
-    private void applyChipStyles() {
-        styleChip(chipAll, activeFilter == ChipFilter.ALL);
-        styleChip(chipSongs, activeFilter == ChipFilter.SONGS);
-        styleChip(chipVideos, activeFilter == ChipFilter.VIDEOS);
-        styleChip(chipPlaylists, activeFilter == ChipFilter.PLAYLISTS);
+    @Override
+    public void onBackPressed() {
+        showModuleLoadingOverlay();
+        super.onBackPressed();
     }
 
-    private void styleChip(@NonNull TextView chip, boolean selected) {
-        chip.setBackgroundResource(selected ? R.drawable.bg_music_chip_active : R.drawable.bg_music_chip_inactive);
-        chip.setTextColor(selected
-                ? 0xFF13254A
-                : ContextCompat.getColor(this, R.color.text_secondary));
-    }
+
 
     // ── Search ──────────────────────────────────────────
 
@@ -249,11 +240,6 @@ public class SearchActivity extends AppCompatActivity {
 
         String query = etSearchQuery.getText() != null ? etSearchQuery.getText().toString().trim() : "";
         if (TextUtils.isEmpty(query)) return;
-
-        if (activeFilter != ChipFilter.SONGS) {
-            activeFilter = ChipFilter.SONGS;
-            applyChipStyles();
-        }
 
         startPagedSearch(query);
     }
@@ -308,6 +294,12 @@ public class SearchActivity extends AppCompatActivity {
                             searchPaginationInFlight = false;
                         } else {
                             setSearchLoadingState(false, "");
+                            revealModuleContent();
+                            
+                            // Fade in results
+                            rvSearchResults.setAlpha(0f);
+                            rvSearchResults.animate().alpha(1f).setDuration(250).start();
+                            hideKeyboard();
                         }
 
                         List<YouTubeMusicService.TrackResult> incoming = pageResult.tracks;
@@ -374,11 +366,7 @@ public class SearchActivity extends AppCompatActivity {
     private void applyActiveFilter(@Nullable String query) {
         String normalizedQuery = query == null ? "" : query.trim();
 
-        List<YouTubeMusicService.TrackResult> filtered = new ArrayList<>();
-        for (YouTubeMusicService.TrackResult track : allTracks) {
-            if (!matchesFilter(track, activeFilter)) continue;
-            filtered.add(track);
-        }
+        List<YouTubeMusicService.TrackResult> filtered = new ArrayList<>(allTracks);
 
         if (!TextUtils.isEmpty(normalizedQuery) && filtered.size() > 1) {
             sortSearchResultsByBestMatch(filtered, normalizedQuery);
@@ -390,43 +378,25 @@ public class SearchActivity extends AppCompatActivity {
             llFeaturedResult.setVisibility(View.GONE);
         } else {
             featuredTrack = filtered.get(0);
-            bindFeaturedTrack(featuredTrack);
-            llFeaturedResult.setVisibility(View.VISIBLE);
-            if (filtered.size() > 1) {
-                tracks.addAll(filtered.subList(1, filtered.size()));
+            if (featuredTrack != null) {
+                bindFeaturedTrack(featuredTrack);
+                llFeaturedResult.setVisibility(View.VISIBLE);
+                if (filtered.size() > 1) {
+                    tracks.addAll(filtered.subList(1, filtered.size()));
+                }
+            } else {
+                llFeaturedResult.setVisibility(View.GONE);
             }
         }
         adapter.submitResults(new ArrayList<>(tracks));
 
         if (!TextUtils.isEmpty(normalizedQuery)) {
-            tvSearchState.setText(String.format(Locale.getDefault(), "%d resultados (%s).", filtered.size(), filterLabel(activeFilter)));
+            tvSearchState.setText(String.format(Locale.getDefault(), "%d resultados encontrados.", filtered.size()));
         }
     }
 
-    private boolean matchesFilter(@NonNull YouTubeMusicService.TrackResult track, @NonNull ChipFilter filter) {
-        String title = normalizeForFilter(track.title);
-        String type = normalizeForFilter(track.resultType);
-
-        boolean looksLikeVideoClip = containsAny(title,
-                "official video", "music video", " videoclip", " clip", " mv", "visualizer");
-        boolean looksLikeShort = containsAny(title,
-                "#shorts", " shorts", "shorts ");
-        boolean looksLikeNonMusic = containsAny(title,
-                "podcast", "interview", "entrevista", "explica", "explains",
-                "trailer", "teaser", "reaction", "news", "documental");
-
-        switch (filter) {
-            case ALL:
-                return true;
-            case VIDEOS:
-                return "video".equals(type) && looksLikeVideoClip;
-            case SONGS:
-                return "video".equals(type) && !looksLikeShort && !looksLikeNonMusic;
-            case PLAYLISTS:
-                return "playlist".equals(type);
-            default:
-                return true;
-        }
+    private boolean matchesFilter(@NonNull YouTubeMusicService.TrackResult track) {
+        return true;
     }
 
     // ── Featured result ─────────────────────────────────
@@ -446,8 +416,21 @@ public class SearchActivity extends AppCompatActivity {
     }
 
     // ── Track click ─────────────────────────────────────
+    
+    public void showModuleLoadingOverlay() {
+        if (moduleLoadingOverlay != null) {
+            moduleLoadingOverlay.setVisibility(View.VISIBLE);
+        }
+    }
+
+    public void revealModuleContent() {
+        if (moduleLoadingOverlay != null) {
+            moduleLoadingOverlay.setVisibility(View.GONE);
+        }
+    }
 
     private void onTrackClicked(@NonNull YouTubeMusicService.TrackResult track) {
+        showModuleLoadingOverlay();
         Intent resultIntent = new Intent();
         resultIntent.putExtra(EXTRA_RESULT_TYPE, track.resultType == null ? "" : track.resultType);
         resultIntent.putExtra(EXTRA_RESULT_VIDEO_ID, track.videoId == null ? "" : track.videoId);
@@ -487,16 +470,14 @@ public class SearchActivity extends AppCompatActivity {
         etSearchQuery.setEnabled(!loading);
 
         if (loading) {
-            progressSearch.setAlpha(0f);
-            progressSearch.setVisibility(View.VISIBLE);
-            progressSearch.animate().alpha(1f).setDuration(160).start();
+            showModuleLoadingOverlay();
+            cgSearchSuggestions.setVisibility(View.GONE);
+            tvSearchState.setText("");
         } else {
-            progressSearch.animate().alpha(0f).setDuration(140).withEndAction(() ->
-                    progressSearch.setVisibility(View.GONE)).start();
-        }
-
-        if (!stateMessage.isEmpty()) {
-            tvSearchState.setText(stateMessage);
+            // Hide is usually handled by revealModuleContent in the result success
+            if (!stateMessage.isEmpty()) {
+                tvSearchState.setText(stateMessage);
+            }
         }
     }
 
@@ -628,15 +609,7 @@ public class SearchActivity extends AppCompatActivity {
         }
     }
 
-    @NonNull
-    private String filterLabel(@NonNull ChipFilter filter) {
-        switch (filter) {
-            case VIDEOS: return "Videos";
-            case SONGS: return "Canciones";
-            case PLAYLISTS: return "Playlists";
-            default: return "Todos";
-        }
-    }
+
 
     @NonNull
     private String normalizeForFilter(@Nullable String value) {

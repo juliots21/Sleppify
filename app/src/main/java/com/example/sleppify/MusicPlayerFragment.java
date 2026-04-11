@@ -138,6 +138,8 @@ public class MusicPlayerFragment extends Fragment {
     private static final String OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME = "offline_playlist_queue";
     private static final String OFFLINE_DOWNLOAD_MANUAL_TRACK_QUEUE_UNIQUE_NAME = "offline_manual_track_queue";
     private static final int OFFLINE_AUTO_BATCH_TARGET_TRACKS = 3;
+    private static final Set<String> offlineSyncRecentlyProcessedPlaylistIds = Collections.synchronizedSet(new HashSet<>());
+    private static boolean isOfflineSyncInFlight = false;
     private static final long OFFLINE_TRACKS_PREFETCH_STALE_MS = 7L * 24 * 60 * 60 * 1000L;
     private static final int OFFLINE_TRACKS_PREFETCH_LIMIT = 12;
     private static final int OFFLINE_TRACKS_PREFETCH_PER_PLAYLIST_LIMIT = 250;
@@ -813,6 +815,10 @@ public class MusicPlayerFragment extends Fragment {
         maybeRestoreHiddenMiniPlayerFromPausedSnapshot();
         maybeAutoLaunchWebSessionIfNeeded();
         updateMiniPlayerUi();
+        
+        if (getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).revealModuleContent();
+        }
     }
 
     @Override
@@ -1804,6 +1810,22 @@ public class MusicPlayerFragment extends Fragment {
         }
 
         maybeEnqueueNextOfflineAutoPlaylist();
+    }
+
+
+
+    private void syncLibraryWithCache() {
+        if (!isAdded()) return;
+        if (LIBRARY_CACHE.isEmpty()) return;
+
+        allTracks.clear();
+        allTracks.addAll(LIBRARY_CACHE);
+        
+        String query = "";
+        if (etLibraryQuickSearch != null && etLibraryQuickSearch.getText() != null) {
+            query = etLibraryQuickSearch.getText().toString();
+        }
+        applyActiveFilter(query);
     }
 
     private void showLibraryEmptyState() {
@@ -3683,6 +3705,7 @@ public class MusicPlayerFragment extends Fragment {
                 .into(target);
     }
 
+
     private void bindFeaturedTrack(@NonNull YouTubeMusicService.TrackResult track) {
         tvFeaturedTitle.setText(track.title);
         String typeLabel = searchTypeLabel(track);
@@ -4737,6 +4760,10 @@ public class MusicPlayerFragment extends Fragment {
         }
         offlineQueueHadActiveWork = false;
 
+        synchronized (MusicPlayerFragment.class) {
+            isOfflineSyncInFlight = false;
+        }
+        
         maybeEnqueueNextOfflineAutoPlaylist();
     }
 
@@ -4794,8 +4821,12 @@ public class MusicPlayerFragment extends Fragment {
     }
 
     private void maybeEnqueueNextOfflineAutoPlaylist() {
-        if (!isAdded() || offlineAutoQueueScanInFlight) {
-            return;
+        if (!isAdded()) return;
+        
+        synchronized (MusicPlayerFragment.class) {
+            if (isOfflineSyncInFlight || offlineAutoQueueScanInFlight) {
+                return;
+            }
         }
 
         Context appContext = requireContext().getApplicationContext();
@@ -4809,6 +4840,20 @@ public class MusicPlayerFragment extends Fragment {
                 if (!isAdded() || candidate == null) {
                     return;
                 }
+
+                if (offlineSyncRecentlyProcessedPlaylistIds.contains(candidate.primaryPlaylistId)) {
+                    return;
+                }
+
+                synchronized (MusicPlayerFragment.class) {
+                    isOfflineSyncInFlight = true;
+                }
+                
+                final String primaryId = candidate.primaryPlaylistId;
+                offlineSyncRecentlyProcessedPlaylistIds.add(primaryId);
+                new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                    offlineSyncRecentlyProcessedPlaylistIds.remove(primaryId);
+                }, 60000);
 
                 boolean enqueued = enqueueOfflineAutoBatchDownloadInternal(candidate);
                 if (enqueued && adapter != null) {
@@ -5194,8 +5239,18 @@ public class MusicPlayerFragment extends Fragment {
     }
 
     private void launchSearchActivity() {
+        if (getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).showModuleLoadingOverlay();
+        }
+
         Intent intent = new Intent(requireContext(), SearchActivity.class);
-        searchActivityLauncher.launch(intent);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION);
+        
+        androidx.core.app.ActivityOptionsCompat options = 
+            androidx.core.app.ActivityOptionsCompat.makeCustomAnimation(
+                requireContext(), R.anim.fade_in, R.anim.fade_out);
+        
+        searchActivityLauncher.launch(intent, options);
     }
 
     private void handleSearchActivityResult(int resultCode, @NonNull Intent data) {

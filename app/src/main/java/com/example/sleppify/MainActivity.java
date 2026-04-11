@@ -1121,13 +1121,13 @@ public class MainActivity extends AppCompatActivity {
         return true;
     }
 
-    private void showModuleLoadingOverlay() {
+    public void showModuleLoadingOverlay() {
         if (moduleLoadingOverlay == null) return;
         moduleLoadingOverlay.setAlpha(1f);
         moduleLoadingOverlay.setVisibility(View.VISIBLE);
     }
 
-    private void revealModuleContent() {
+    public void revealModuleContent() {
         if (isFinishing() || isDestroyed()) return;
 
         // Fade in the fragment container

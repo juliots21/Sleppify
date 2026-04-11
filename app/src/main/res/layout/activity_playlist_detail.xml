@@ -212,7 +212,7 @@
                         android:layout_marginStart="10dp"
                         android:background="@drawable/bg_playlist_round_outline"
                         android:padding="14dp"
-                        android:src="@android:drawable/ic_menu_rotate"
+                        android:src="@drawable/ic_shuffle_custom"
                         app:tint="@color/text_primary" />
 
                     <ImageButton
@@ -222,7 +222,7 @@
                         android:layout_marginStart="10dp"
                         android:background="@drawable/bg_playlist_round_outline"
                         android:padding="14dp"
-                        android:src="@android:drawable/stat_sys_download_done"
+                        android:src="@drawable/ic_download_bold"
                         app:tint="@color/text_primary" />
                 </LinearLayout>
             </LinearLayout>
