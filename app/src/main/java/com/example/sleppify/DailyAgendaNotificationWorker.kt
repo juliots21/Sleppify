@@ -64,6 +64,13 @@ class DailyAgendaNotificationWorker(context: Context, workerParams: WorkerParame
 
         val profileName = resolveProfileName(context)
         val todaySnapshot = buildTodaySnapshot(todayTasks)
+
+        if (GeminiIntelligenceService.isSuspended()) {
+            val fallback = buildFallbackSummary(todayTasks)
+            notifyTodaySummary(context, fallback, todayTasks.size)
+            return Result.success()
+        }
+
         val aiMessageRef = AtomicReference<String?>(null)
         val latch = CountDownLatch(1)
 

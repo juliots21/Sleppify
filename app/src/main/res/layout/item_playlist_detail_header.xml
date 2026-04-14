@@ -13,7 +13,7 @@
 
         <FrameLayout
             android:layout_width="match_parent"
-            android:layout_height="592dp"
+            android:layout_height="480dp"
             android:layout_marginBottom="0dp"
             android:clipChildren="false"
             android:clipToPadding="false">
@@ -22,7 +22,7 @@
                 android:id="@+id/ivPlaylistBackdrop"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:alpha="0.68"
+                android:alpha="1.0"
                 android:scaleType="centerCrop"
                 android:src="@drawable/ic_music" />
 
@@ -35,14 +35,14 @@
             <View
                 android:id="@+id/vPlaylistBackdropBottomFade"
                 android:layout_width="match_parent"
-                android:layout_height="190dp"
+                android:layout_height="340dp"
                 android:layout_gravity="bottom"
                 android:background="@drawable/bg_playlist_backdrop_bottom_fade" />
 
             <View
                 android:id="@+id/vPlaylistBackdropAmoledFade"
                 android:layout_width="match_parent"
-                android:layout_height="236dp"
+                android:layout_height="340dp"
                 android:layout_gravity="bottom"
                 android:background="@drawable/bg_playlist_backdrop_amoled_fade"
                 android:visibility="gone" />
@@ -52,7 +52,7 @@
                 android:layout_height="match_parent"
                 android:gravity="center_horizontal"
                 android:orientation="vertical"
-                android:paddingTop="104dp"
+                android:paddingTop="34dp"
                 android:paddingBottom="16dp">
 
                 <FrameLayout
@@ -66,14 +66,13 @@
                         android:scaleX="1.06"
                         android:scaleY="1.06" />
 
-                    <com.google.android.material.imageview.ShapeableImageView
+                    <ImageView
                         android:id="@+id/ivPlaylistCover"
                         android:layout_width="match_parent"
                         android:layout_height="match_parent"
                         android:background="@color/surface_high"
                         android:scaleType="centerCrop"
-                        android:src="@drawable/ic_music"
-                        app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Medium" />
+                        android:src="@drawable/ic_music" />
                 </FrameLayout>
 
                 <TextView
@@ -190,21 +189,22 @@
                         android:src="@drawable/ic_download_bold"
                         app:tint="#101010" />
                 </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvTracksState"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginStart="24dp"
+                    android:layout_marginEnd="24dp"
+                    android:fontFamily="@font/inter_variable"
+                    android:text="Cargando canciones..."
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
             </LinearLayout>
         </FrameLayout>
     </LinearLayout>
 
-    <TextView
-        android:id="@+id/tvTracksState"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="0dp"
-        android:layout_marginStart="24dp"
-        android:layout_marginEnd="24dp"
-        android:fontFamily="@font/inter_variable"
-        android:text="Cargando canciones..."
-        android:textColor="@color/text_secondary"
-        android:textSize="12sp" />
 
     <LinearLayout
         android:id="@+id/llOfflineLoadingIndicator"

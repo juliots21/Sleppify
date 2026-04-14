@@ -8,7 +8,9 @@
     android:background="@drawable/bg_playlist_track_default"
     android:minHeight="74dp"
     android:orientation="vertical"
-    android:padding="10dp">
+    android:paddingStart="12dp"
+    android:paddingEnd="2dp"
+    android:paddingVertical="10dp">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -17,17 +19,16 @@
         android:orientation="horizontal">
 
         <FrameLayout
-            android:layout_width="48dp"
-            android:layout_height="48dp">
+            android:layout_width="44dp"
+            android:layout_height="44dp">
 
-            <com.google.android.material.imageview.ShapeableImageView
+            <ImageView
                 android:id="@+id/ivTrackArt"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:background="@color/surface_high"
                 android:scaleType="centerCrop"
-                android:src="@drawable/ic_music"
-                app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Small" />
+                android:src="@drawable/ic_music" />
 
             <LinearLayout
                 android:id="@+id/llNowPlayingOverlay"
@@ -39,8 +40,8 @@
                 android:visibility="gone">
 
                 <ImageView
-                    android:layout_width="22dp"
-                    android:layout_height="22dp"
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
                     android:src="@drawable/ic_equalizer"
                     app:tint="@color/stitch_blue" />
             </LinearLayout>
@@ -49,7 +50,7 @@
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginStart="10dp"
+            android:layout_marginStart="8dp"
             android:layout_weight="1"
             android:orientation="vertical">
 
@@ -69,8 +70,7 @@
                     android:maxLines="1"
                     android:text="Canción"
                     android:textColor="@color/text_primary"
-                    android:textSize="15sp"
-                    android:textStyle="bold" />
+                    android:textSize="15sp" />
             </LinearLayout>
 
             <TextView
@@ -96,7 +96,7 @@
                 android:id="@+id/ivOfflineState"
                 android:layout_width="20dp"
                 android:layout_height="20dp"
-                android:layout_marginEnd="10dp"
+                android:layout_marginEnd="2dp"
                 android:background="@drawable/bg_offline_state_outline_muted"
                 android:padding="4dp"
                 android:src="@drawable/ic_check_small"
@@ -122,6 +122,7 @@
         android:layout_marginTop="6dp"
         android:background="@color/surface_high"
         android:visibility="gone">
+
 
         <View
             android:id="@+id/vOfflineProgressFill"

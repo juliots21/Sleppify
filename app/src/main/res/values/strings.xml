@@ -90,6 +90,7 @@
     <string name="header_action_settings">Abrir ajustes</string>
     <string name="header_action_go_agenda">Ir a Agenda</string>
     <string name="header_action_back">Volver</string>
+    <string name="header_title_search">Búsqueda</string>
     <string name="agenda_task_not_found_toast">La tarea seleccionada ya no esta disponible.</string>
     <string name="agenda_task_menu_delete">Eliminar tarea</string>
     <string name="agenda_task_menu_set_time">Establecer hora</string>
@@ -100,4 +101,12 @@
     <string name="agenda_task_deleted_toast">Tarea eliminada: %1$s</string>
     <string name="agenda_empty_label">Sin tareas</string>
     <string name="agenda_empty_title">No hay tareas para este dia.</string>
+    <string name="scan_result_web_address">Dirección web</string>
+    <string name="scan_result_text_label">Texto escaneado</string>
+    <string name="scan_result_view_options">Ver opciones</string>
+    <string name="scan_result_open_browser">Ir a la página</string>
+    <string name="scan_result_open_in_browser">Abrir en el navegador</string>
+    <string name="scan_result_copy">Copiar</string>
+    <string name="scan_result_copied">Copiado</string>
+    <string name="scan_result_more_items">+%1$d más</string>
 </resources>

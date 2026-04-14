@@ -37,14 +37,12 @@
                 android:visibility="gone"
                 app:tint="@android:color/white" />
 
-            <com.google.android.material.imageview.ShapeableImageView
+            <ImageView
                 android:id="@+id/ivTrackThumb"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:background="@color/surface_high"
                 android:scaleType="centerCrop"
-                android:src="@drawable/ic_music"
-                app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Small" />
+                android:src="@drawable/ic_music" />
 
             <LinearLayout
                 android:id="@+id/llNowPlayingOverlay"
@@ -78,8 +76,7 @@
                 android:maxLines="2"
                 android:text="Track"
                 android:textColor="@color/text_primary"
-                android:textSize="18sp"
-                android:textStyle="bold" />
+                android:textSize="18sp" />
 
             <TextView
                 android:id="@+id/tvTrackSubtitle"

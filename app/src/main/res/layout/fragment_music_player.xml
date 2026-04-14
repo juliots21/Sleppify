@@ -290,8 +290,7 @@
                     android:text="CORA DE HIELO"
                     android:textAllCaps="true"
                     android:textColor="@color/text_primary"
-                    android:textSize="20sp"
-                    android:textStyle="bold" />
+                    android:textSize="20sp" />
 
                 <TextView
                     android:id="@+id/tvFeaturedSubtitle"
@@ -426,8 +425,7 @@
                     android:maxLines="1"
                     android:text="Selecciona una canción"
                     android:textColor="@color/text_primary"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
+                    android:textSize="13sp" />
 
                 <TextView
                     android:id="@+id/tvMiniPlayerSubtitle"

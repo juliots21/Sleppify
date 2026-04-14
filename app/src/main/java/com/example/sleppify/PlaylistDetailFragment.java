@@ -19,6 +19,8 @@ import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
 import android.net.Uri;
 import android.os.Build;
+import com.example.sleppify.utils.YouTubeCropTransformation;
+import com.example.sleppify.utils.YouTubeImageProcessor;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -65,6 +67,8 @@ import androidx.work.WorkManager;
 
 import com.bumptech.glide.Glide;
 import com.bumptech.glide.load.engine.DiskCacheStrategy;
+import com.bumptech.glide.load.DecodeFormat;
+import com.bumptech.glide.request.RequestOptions;
 import com.google.android.gms.auth.api.signin.GoogleSignIn;
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount;
 import com.google.android.material.button.MaterialButton;
@@ -285,7 +289,9 @@ public class PlaylistDetailFragment extends Fragment {
     @Override
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
-        setHostTopBarOverlayMode(true);
+        if (getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).setContainerOverlayMode(false);
+        }
         headerAmoledModeEnabled = isAmoledModeEnabled();
 
         rvPlaylistContent = view.findViewById(R.id.rvPlaylistContent);
@@ -328,7 +334,7 @@ public class PlaylistDetailFragment extends Fragment {
         showInitialLoadingOverlay();
 
         headerAdapter = new PlaylistHeaderAdapter();
-        trackAdapter = new PlaylistTrackAdapter(new ArrayList<>(), new PlaylistTrackAdapter.OnTrackTap() {
+        trackAdapter = new PlaylistTrackAdapter(new ArrayList<>(), new OnTrackTap() {
             @Override
             public void onTap(int position) {
                 onTrackSelected(position);
@@ -408,7 +414,9 @@ public class PlaylistDetailFragment extends Fragment {
     @Override
     public void onHiddenChanged(boolean hidden) {
         super.onHiddenChanged(hidden);
-        setHostTopBarOverlayMode(!hidden);
+        if (getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).setContainerOverlayMode(false);
+        }
         if (hidden) {
             stopMiniProgressTicker();
             return;
@@ -458,7 +466,9 @@ public class PlaylistDetailFragment extends Fragment {
         invalidateMiniSnapshotCache();
         offlineReadyStateGeneration.incrementAndGet();
         restoringHiddenPlayerFromSnapshot = false;
-        setHostTopBarOverlayMode(false);
+        if (getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).setContainerOverlayMode(false);
+        }
         playlistLoadingOverlay = null;
         pbPlaylistLoading = null;
         awaitingInitialPlaylistRender = true;
@@ -857,40 +867,6 @@ public class PlaylistDetailFragment extends Fragment {
         startOfflinePlaylistDownload(false);
     }
 
-    private void setHostTopBarOverlayMode(boolean enabled) {
-        Activity activity = getActivity();
-        if (activity == null) {
-            return;
-        }
-
-        View topBar = activity.findViewById(R.id.topAppBar);
-        if (topBar != null) {
-            topBar.setVisibility(View.VISIBLE);
-            topBar.setBackgroundColor(ContextCompat.getColor(
-                    activity,
-                    R.color.surface_dark
-            ));
-            float zOffset = enabled ? 24f * activity.getResources().getDisplayMetrics().density : 0f;
-            topBar.setTranslationZ(zOffset);
-            topBar.bringToFront();
-        }
-
-        View fragmentContainer = activity.findViewById(R.id.fragmentContainer);
-        if (fragmentContainer != null && fragmentContainer.getLayoutParams() instanceof ConstraintLayout.LayoutParams) {
-            ConstraintLayout.LayoutParams params = (ConstraintLayout.LayoutParams) fragmentContainer.getLayoutParams();
-            if (enabled) {
-                params.topToTop = ConstraintLayout.LayoutParams.PARENT_ID;
-                params.topToBottom = ConstraintLayout.LayoutParams.UNSET;
-            } else {
-                params.topToTop = ConstraintLayout.LayoutParams.UNSET;
-                params.topToBottom = R.id.topAppBar;
-            }
-            fragmentContainer.setLayoutParams(params);
-            if (fragmentContainer.getParent() instanceof View) {
-                ((View) fragmentContainer.getParent()).requestLayout();
-            }
-        }
-    }
 
     @NonNull
     private String safeArg(@NonNull String key) {
@@ -1062,6 +1038,10 @@ public class PlaylistDetailFragment extends Fragment {
     }
 
     private static void loadArtworkInto(@NonNull ImageView target, @Nullable String imageUrl) {
+        loadArtworkInto(target, imageUrl, 0);
+    }
+
+    private static void loadArtworkInto(@NonNull ImageView target, @Nullable String imageUrl, int fixedSizeDp) {
         if (TextUtils.isEmpty(imageUrl)) {
             target.setTag(R.id.tag_artwork_signature, null);
             target.setImageResource(R.drawable.ic_music);
@@ -1070,57 +1050,67 @@ public class PlaylistDetailFragment extends Fragment {
 
         String safeUrl = imageUrl.trim();
         Context context = target.getContext();
-        ViewGroup.LayoutParams params = target.getLayoutParams();
-        int rawWidth = resolveTargetDimension(target.getWidth(), params == null ? 0 : params.width);
-        int rawHeight = resolveTargetDimension(target.getHeight(), params == null ? 0 : params.height);
-        boolean hasTargetSize = rawWidth > 0 && rawHeight > 0;
-
+        float density = context.getResources().getDisplayMetrics().density;
+        
         int targetWidth;
         int targetHeight;
-        if (hasTargetSize) {
-            targetWidth = bucketArtworkDimension(rawWidth);
-            targetHeight = bucketArtworkDimension(rawHeight);
+        boolean hasTargetSize = false;
+        int rawWidth = 0;
+        int rawHeight = 0;
+
+        if (fixedSizeDp > 0) {
+            targetWidth = Math.round(fixedSizeDp * density);
+            targetHeight = targetWidth;
         } else {
-            int fallbackWidth = Math.max(1, context.getResources().getDisplayMetrics().widthPixels);
-            int fallbackHeight = Math.max(1, Math.round(context.getResources().getDisplayMetrics().heightPixels * 0.58f));
-            targetWidth = bucketArtworkDimension(fallbackWidth);
-            targetHeight = bucketArtworkDimension(fallbackHeight);
+            ViewGroup.LayoutParams params = target.getLayoutParams();
+            rawWidth = resolveTargetDimension(target.getWidth(), params == null ? 0 : params.width);
+            rawHeight = resolveTargetDimension(target.getHeight(), params == null ? 0 : params.height);
+            hasTargetSize = rawWidth > 0 && rawHeight > 0;
+
+            if (hasTargetSize) {
+                targetWidth = bucketArtworkDimension(rawWidth);
+                targetHeight = bucketArtworkDimension(rawHeight);
+            } else {
+                // If not measured, use a sensible default for unmeasured views 
+                // instead of full-screen to avoid memory spikes during initialization.
+                targetWidth = Math.round(160 * density); 
+                targetHeight = targetWidth;
+            }
         }
-        String signature = hasTargetSize
-            ? safeUrl + "|" + targetWidth + "x" + targetHeight
-            : safeUrl + "|auto";
+
+        if (YouTubeImageProcessor.shouldProcess(safeUrl)) {
+            if (fixedSizeDp > 0) {
+                int displayPx = Math.round(fixedSizeDp * density);
+                int side = YouTubeImageProcessor.decodeDimensionForSmartCrop(displayPx);
+                targetWidth = side;
+                targetHeight = side;
+            } else if (hasTargetSize) {
+                targetWidth = YouTubeImageProcessor.decodeDimensionForSmartCrop(rawWidth);
+                targetHeight = YouTubeImageProcessor.decodeDimensionForSmartCrop(rawHeight);
+            } else {
+                int side = YouTubeImageProcessor.decodeDimensionForSmartCrop(targetWidth);
+                targetWidth = side;
+                targetHeight = side;
+            }
+        }
+
+        String signature = safeUrl + "|" + targetWidth + "x" + targetHeight;
         Object previousSignature = target.getTag(R.id.tag_artwork_signature);
         if (previousSignature instanceof String && signature.equals(previousSignature)) {
             return;
         }
         target.setTag(R.id.tag_artwork_signature, signature);
 
-        if (hasTargetSize) {
-            Glide.with(target)
-                .load(safeUrl)
-                .diskCacheStrategy(DiskCacheStrategy.ALL)
-                .skipMemoryCache(false)
-                .onlyRetrieveFromCache(!hasValidatedInternet(context))
-                .centerCrop()
-                .override(targetWidth, targetHeight)
-                .thumbnail(0.25f)
-                .dontAnimate()
-                .placeholder(R.drawable.ic_music)
-                .error(R.drawable.ic_music)
-                .into(target);
-            return;
-        }
-
         Glide.with(target)
             .load(safeUrl)
+            .transform(new YouTubeCropTransformation())
+            .format(DecodeFormat.PREFER_RGB_565)
             .diskCacheStrategy(DiskCacheStrategy.ALL)
-            .skipMemoryCache(false)
-            .onlyRetrieveFromCache(!hasValidatedInternet(context))
-            .centerCrop()
-            .thumbnail(0.25f)
-            .dontAnimate()
             .placeholder(R.drawable.ic_music)
             .error(R.drawable.ic_music)
+            .override(targetWidth, targetHeight)
+            .thumbnail(0.15f)
+            .dontAnimate()
             .into(target);
     }
 
@@ -4345,7 +4335,7 @@ public class PlaylistDetailFragment extends Fragment {
         }
 
         final class HeaderViewHolder extends RecyclerView.ViewHolder {
-            final ShapeableImageView ivPlaylistCover;
+            final ImageView ivPlaylistCover;
             final ImageView ivPlaylistBackdrop;
             final View vPlaylistBackdropScrim;
             final View vPlaylistBackdropBottomFade;
@@ -4445,14 +4435,12 @@ public class PlaylistDetailFragment extends Fragment {
         }
     }
 
-    private static final class PlaylistTrackAdapter extends RecyclerView.Adapter<PlaylistTrackAdapter.TrackViewHolder> {
+    private interface OnTrackTap {
+        void onTap(int position);
+        void onMoreTap(int position, @NonNull View anchor);
+    }
 
-        interface OnTrackTap {
-            void onTap(int position);
-
-            void onMoreTap(int position, @NonNull View anchor);
-        }
-
+    private final class PlaylistTrackAdapter extends RecyclerView.Adapter<PlaylistTrackAdapter.TrackViewHolder> {
         private final List<PlaylistTrack> items;
         private final OnTrackTap onTrackTap;
         private final Map<String, Boolean> offlineAvailabilityCache = new HashMap<>();
@@ -4471,48 +4459,55 @@ public class PlaylistDetailFragment extends Fragment {
         }
 
         void submitTracks(@NonNull List<PlaylistTrack> newItems) {
-            List<PlaylistTrack> previous = new ArrayList<>(items);
-            List<PlaylistTrack> incoming = new ArrayList<>(newItems);
+            final List<PlaylistTrack> previous = new ArrayList<>(items);
+            final List<PlaylistTrack> incoming = new ArrayList<>(newItems);
 
-            DiffUtil.DiffResult diffResult = DiffUtil.calculateDiff(new DiffUtil.Callback() {
-                @Override
-                public int getOldListSize() {
-                    return previous.size();
-                }
+            // Offload DiffUtil to background thread to avoid UI stutter on large lists during playback
+            new Thread(() -> {
+                final DiffUtil.DiffResult diffResult = DiffUtil.calculateDiff(new DiffUtil.Callback() {
+                    @Override
+                    public int getOldListSize() {
+                        return previous.size();
+                    }
 
-                @Override
-                public int getNewListSize() {
-                    return incoming.size();
-                }
+                    @Override
+                    public int getNewListSize() {
+                        return incoming.size();
+                    }
 
-                @Override
-                public boolean areItemsTheSame(int oldItemPosition, int newItemPosition) {
-                    PlaylistTrack oldItem = previous.get(oldItemPosition);
-                    PlaylistTrack newItem = incoming.get(newItemPosition);
-                    return TextUtils.equals(oldItem.videoId, newItem.videoId);
-                }
+                    @Override
+                    public boolean areItemsTheSame(int oldItemPosition, int newItemPosition) {
+                        PlaylistTrack oldItem = previous.get(oldItemPosition);
+                        PlaylistTrack newItem = incoming.get(newItemPosition);
+                        return TextUtils.equals(oldItem.videoId, newItem.videoId);
+                    }
 
-                @Override
-                public boolean areContentsTheSame(int oldItemPosition, int newItemPosition) {
-                    PlaylistTrack oldItem = previous.get(oldItemPosition);
-                    PlaylistTrack newItem = incoming.get(newItemPosition);
-                    return TextUtils.equals(oldItem.videoId, newItem.videoId)
-                            && TextUtils.equals(oldItem.title, newItem.title)
-                            && TextUtils.equals(oldItem.artist, newItem.artist)
-                            && TextUtils.equals(oldItem.duration, newItem.duration)
-                            && TextUtils.equals(oldItem.imageUrl, newItem.imageUrl);
-                }
-            });
+                    @Override
+                    public boolean areContentsTheSame(int oldItemPosition, int newItemPosition) {
+                        PlaylistTrack oldItem = previous.get(oldItemPosition);
+                        PlaylistTrack newItem = incoming.get(newItemPosition);
+                        return TextUtils.equals(oldItem.videoId, newItem.videoId)
+                                && TextUtils.equals(oldItem.title, newItem.title)
+                                && TextUtils.equals(oldItem.artist, newItem.artist)
+                                && TextUtils.equals(oldItem.duration, newItem.duration)
+                                && TextUtils.equals(oldItem.imageUrl, newItem.imageUrl);
+                    }
+                });
 
-            items.clear();
-            items.addAll(incoming);
-            invalidateTrackStateCache();
+                new Handler(Looper.getMainLooper()).post(() -> {
+                    if (!isAdded()) return;
 
-            if (activeIndex >= items.size()) {
-                activeIndex = -1;
-            }
+                    items.clear();
+                    items.addAll(incoming);
+                    invalidateTrackStateCache();
 
-            diffResult.dispatchUpdatesTo(this);
+                    if (activeIndex >= items.size()) {
+                        activeIndex = -1;
+                    }
+
+                    diffResult.dispatchUpdatesTo(this);
+                });
+            }).start();
         }
 
         void setActiveIndex(int activeIndex) {
@@ -4690,7 +4685,7 @@ public class PlaylistDetailFragment extends Fragment {
         public TrackViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
             View view = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_playlist_track, parent, false);
             RecyclerView.LayoutParams params = (RecyclerView.LayoutParams) view.getLayoutParams();
-            int side = Math.round(parent.getResources().getDisplayMetrics().density * 24f);
+            int side = Math.round(parent.getResources().getDisplayMetrics().density * 12f);
             params.leftMargin = side;
             params.rightMargin = side;
             view.setLayoutParams(params);
@@ -4756,7 +4751,7 @@ public class PlaylistDetailFragment extends Fragment {
             }
 
             if (!TextUtils.isEmpty(track.imageUrl)) {
-                loadArtworkInto(holder.ivTrackArt, track.imageUrl);
+                loadArtworkInto(holder.ivTrackArt, track.imageUrl, 48);
             } else {
                 holder.ivTrackArt.setImageResource(R.drawable.ic_music);
             }
@@ -4801,9 +4796,9 @@ public class PlaylistDetailFragment extends Fragment {
             return items.size();
         }
 
-        static final class TrackViewHolder extends RecyclerView.ViewHolder {
+        final class TrackViewHolder extends RecyclerView.ViewHolder {
             final LinearLayout rootTrackRow;
-            final ShapeableImageView ivTrackArt;
+            final ImageView ivTrackArt;
             final LinearLayout llNowPlayingOverlay;
             final TextView tvTrackTitle;
             final TextView tvTrackSubtitle;

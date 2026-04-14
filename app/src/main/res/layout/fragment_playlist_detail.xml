@@ -119,7 +119,7 @@
             android:thumbTint="@android:color/transparent" />
     </LinearLayout>
 
-    <FrameLayout
+    <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/flPlaylistLoadingOverlay"
         android:layout_width="0dp"
         android:layout_height="0dp"
@@ -135,10 +135,14 @@
             android:id="@+id/pbPlaylistLoading"
             android:layout_width="32dp"
             android:layout_height="32dp"
-            android:layout_gravity="center"
             android:indeterminate="true"
-            android:indeterminateTint="@android:color/white" />
-    </FrameLayout>
+            android:indeterminateTint="@android:color/white"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintVertical_bias="0.56" />
+    </androidx.constraintlayout.widget.ConstraintLayout>
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 

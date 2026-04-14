@@ -94,9 +94,9 @@ public class WeeklySchedulerFragment extends Fragment {
     private static final String DEFAULT_TASK_CATEGORY = "";
     private static final String PENDING_TASK_CATEGORY = "Generando categoria con IA...";
     private static final String FALLBACK_TASK_CATEGORY = "Otros";
-    private static final String TASK_METADATA_ERROR_DESCRIPTION = "Sin desscripcion";
-    private static final String TASK_METADATA_ERROR_CATEGORY = "NONE";
-    private static final int TASK_METADATA_MAX_RETRIES = 4;
+    private static final String TASK_METADATA_ERROR_DESCRIPTION = "Sin descripción";
+    private static final String TASK_METADATA_ERROR_CATEGORY = "Fallback";
+    private static final int TASK_METADATA_MAX_RETRIES = 2;
     private static final int TASK_METADATA_BACKFILL_LIMIT = 6;
     private static final int TASK_METADATA_PULL_REFRESH_LIMIT = 24;
     private static final long TASK_METADATA_BACKFILL_INTERVAL_MS = 2L * 60L * 1000L;
@@ -1022,6 +1022,18 @@ public class WeeklySchedulerFragment extends Fragment {
             int retryAttempt,
             @NonNull String requestKey
     ) {
+        if (GeminiIntelligenceService.isSuspended()) {
+            Task targetTask = findTaskInDateBucket(dateKey, task);
+            if (targetTask != null) {
+                applyLocalMetadataFallback(targetTask, allowDescriptionOverride);
+                persistAgenda();
+                renderFutureTasksLayer();
+                refreshSelectedDayTasks();
+            }
+            markTaskMetadataRequestFinished(requestKey);
+            return;
+        }
+
         new GeminiIntelligenceService().generateTaskMetadataWithCategory(task.title, new GeminiIntelligenceService.TaskMetadataCallback() {
             @Override
             public void onSuccess(GeminiIntelligenceService.TaskMetadata metadata) {
@@ -1035,7 +1047,7 @@ public class WeeklySchedulerFragment extends Fragment {
                 boolean shouldOverrideCategory = isPlaceholderCategory(targetTask.category);
 
                 if (shouldOverrideCategory) {
-                    String normalizedCategory = normalizeTaskCategory(metadata.category);
+                    String normalizedCategory = normalizeTaskCategory(metadata.getCategory());
                     if (!TextUtils.isEmpty(normalizedCategory)
                             && !TextUtils.equals(targetTask.category, normalizedCategory)) {
                         targetTask.category = normalizedCategory;
@@ -1045,8 +1057,8 @@ public class WeeklySchedulerFragment extends Fragment {
 
                 boolean shouldOverrideDescription = allowDescriptionOverride
                         && isPlaceholderDescription(targetTask.desc);
-                if (shouldOverrideDescription && !TextUtils.isEmpty(metadata.description)) {
-                    String cleanDescription = metadata.description.trim();
+                if (shouldOverrideDescription && !TextUtils.isEmpty(metadata.getDescription())) {
+                    String cleanDescription = metadata.getDescription().trim();
                     if (!TextUtils.isEmpty(cleanDescription) && !TextUtils.equals(targetTask.desc, cleanDescription)) {
                         targetTask.desc = cleanDescription;
                         changed = true;
@@ -1073,22 +1085,15 @@ public class WeeklySchedulerFragment extends Fragment {
                 }
 
                 boolean retryable = isRetryableTaskMetadataError(error);
-                if (!retryable || retryAttempt >= (TASK_METADATA_MAX_RETRIES - 1)) {
-                    boolean changed = applyLocalMetadataFallback(targetTask, allowDescriptionOverride);
-                    if (changed) {
-                        persistAgenda();
-                        renderFutureTasksLayer();
-                        refreshSelectedDayTasks();
-                    }
-                    markTaskMetadataRequestFinished(requestKey);
-                    return;
+                // Removed automatic retry loop to respect user request for 'Pull to Refresh only' logic.
+                // Every failure now immediately applies the local fallback.
+                boolean changed = applyLocalMetadataFallback(targetTask, allowDescriptionOverride);
+                if (changed) {
+                    persistAgenda();
+                    renderFutureTasksLayer();
+                    refreshSelectedDayTasks();
                 }
-
-                long delayMs = computeTaskMetadataRetryDelayMs(retryAttempt);
-                aiTaskMetadataHandler.postDelayed(
-                        () -> enrichTaskWithAiMetadataInBackground(dateKey, task, allowDescriptionOverride, retryAttempt + 1, requestKey),
-                        delayMs
-                );
+                markTaskMetadataRequestFinished(requestKey);
             }
         });
     }
@@ -1233,6 +1238,7 @@ public class WeeklySchedulerFragment extends Fragment {
         return normalized.isEmpty()
                 || DEFAULT_TASK_DESCRIPTION.equalsIgnoreCase(normalized)
                 || PENDING_TASK_DESCRIPTION.equalsIgnoreCase(normalized)
+                || TASK_METADATA_ERROR_DESCRIPTION.equalsIgnoreCase(normalized)
                 || isLocalFallbackDescription(normalized);
     }
 
@@ -1264,6 +1270,7 @@ public class WeeklySchedulerFragment extends Fragment {
         String lowerRaw = raw.toLowerCase(SPANISH_LOCALE);
         if (PENDING_TASK_CATEGORY.equalsIgnoreCase(raw)
                 || FALLBACK_TASK_CATEGORY.equalsIgnoreCase(raw)
+                || TASK_METADATA_ERROR_CATEGORY.equalsIgnoreCase(raw)
                 || lowerRaw.startsWith("generando")) {
             return true;
         }
@@ -1394,10 +1401,8 @@ public class WeeklySchedulerFragment extends Fragment {
             boolean sameAgendaPayload,
             long now
     ) {
-        boolean shouldRun = forceRefresh
-                || !sameAgendaPayload
-                || (now - lastTaskMetadataBackfillAtMs) >= TASK_METADATA_BACKFILL_INTERVAL_MS;
-        if (!shouldRun) {
+        // AI enrichment only runs if manually triggered via forceRefresh (Pull to Refresh)
+        if (cloudSyncManager == null || !cloudSyncManager.isCloudEnabledForCurrentUser() || !forceRefresh) {
             return;
         }
         lastTaskMetadataBackfillAtMs = now;
@@ -2888,12 +2893,12 @@ public class WeeklySchedulerFragment extends Fragment {
         String title = noTimeSelection != null ? "Horario inteligente sugerido" : "Optimizacion de carga cognitiva";
         String actionLabel = noTimeSelection != null ? "Elegir horario" : "Iniciar enfoque";
 
-        String message = suggestion.message;
-        if (noTimeSelection != null && !TextUtils.isEmpty(suggestion.focusWindow)) {
-            message = message + " Te conviene hacerlo entre " + suggestion.focusWindow + ".";
+        String message = suggestion.getMessage();
+        if (noTimeSelection != null && !TextUtils.isEmpty(suggestion.getFocusWindow())) {
+            message = message + " Te conviene hacerlo entre " + suggestion.getFocusWindow() + ".";
         }
 
-        String microAction = suggestion.microAction;
+        String microAction = suggestion.getMicroAction();
         if (TextUtils.isEmpty(microAction)) {
             microAction = noTimeSelection != null
                     ? "Abre Elegir horario para programar la tarea ahora."

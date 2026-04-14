@@ -16,6 +16,8 @@ import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
+import com.example.sleppify.utils.YouTubeCropTransformation
+import com.example.sleppify.utils.YouTubeImageProcessor
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.imageview.ShapeableImageView
 import java.util.Locale
@@ -398,11 +400,19 @@ class PlaylistDetailActivity : AppCompatActivity() {
             holder.tvTrackSubtitle.text = subtitle
 
             if (!TextUtils.isEmpty(track.imageUrl)) {
-                Glide.with(holder.itemView)
-                    .load(track.imageUrl)
+                val url = track.imageUrl.trim()
+                val density = holder.itemView.resources.displayMetrics.density
+                val displayPx = (44 * density).toInt().coerceAtLeast(1)
+                val base = Glide.with(holder.itemView)
+                    .load(url)
                     .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL)
-                    .centerCrop()
-                    .override(128, 128)
+                val sized = if (YouTubeImageProcessor.shouldProcess(url)) {
+                    val side = YouTubeImageProcessor.decodeDimensionForSmartCrop(displayPx)
+                    base.transform(YouTubeCropTransformation()).override(side, side)
+                } else {
+                    base.centerCrop().override(128, 128)
+                }
+                sized
                     .thumbnail(0.25f)
                     .placeholder(R.drawable.ic_music)
                     .error(R.drawable.ic_music)

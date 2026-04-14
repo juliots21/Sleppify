@@ -98,11 +98,11 @@ class PlaybackHistoryStore private constructor() {
             val safeIndex = currentIndex.coerceIn(0, queue.size - 1)
             val safeCurrentSeconds = currentSeconds.coerceAtLeast(0)
             val safeTotalSeconds = totalSeconds.coerceAtLeast(1)
-            val queueCopy = copyQueue(queue)
             val updatedAtMs = System.currentTimeMillis()
 
             IO_EXECUTOR.execute {
                 try {
+                    val queueCopy = copyQueue(queue)
                     val snapshot = Snapshot(
                         queueCopy,
                         safeIndex,

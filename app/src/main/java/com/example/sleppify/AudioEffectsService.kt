@@ -1,9 +1,5 @@
 package com.example.sleppify
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -12,7 +8,6 @@ import android.media.audiofx.DynamicsProcessing
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
-import androidx.core.app.NotificationCompat
 
 /**
  * Motor DSP avanzado basado en DynamicsProcessing (API 28+).
@@ -33,7 +28,6 @@ class AudioEffectsService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -47,7 +41,6 @@ class AudioEffectsService : Service() {
             }
             ACTION_STOP -> {
                 releaseEngine()
-                stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
             else -> {
@@ -79,12 +72,9 @@ class AudioEffectsService : Service() {
 
         if (!enabled) {
             releaseEngine()
-            stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return
         }
-
-        startForeground(NOTIFICATION_ID, buildForegroundNotification())
 
         val targetSession = if (sessionId != GLOBAL_SESSION_ID) sessionId else GLOBAL_SESSION_ID
 
@@ -278,55 +268,11 @@ class AudioEffectsService : Service() {
     }
 
     // ───────────────────────────────────────────────────────────────────
-    // Foreground notification
-    // ───────────────────────────────────────────────────────────────────
-
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Ecualizador",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Motor DSP de ecualizacion activo"
-                setShowBadge(false)
-            }
-            val nm = getSystemService(NotificationManager::class.java)
-            nm?.createNotificationChannel(channel)
-        }
-    }
-
-    private fun buildForegroundNotification(): Notification {
-        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
-        val pendingIntent = if (launchIntent != null) {
-            PendingIntent.getActivity(
-                this, 0, launchIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-        } else null
-
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_equalizer)
-            .setContentTitle("Ecualizador activo")
-            .setContentText("Motor DSP procesando audio")
-            .setOngoing(true)
-            .setSilent(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .apply {
-                if (pendingIntent != null) setContentIntent(pendingIntent)
-            }
-            .build()
-    }
-
-    // ───────────────────────────────────────────────────────────────────
     // Companion: Constants, keys, and utilities
     // ───────────────────────────────────────────────────────────────────
 
     companion object {
         private const val TAG = "AudioEffectsService"
-        private const val CHANNEL_ID = "eq_service_channel"
-        private const val NOTIFICATION_ID = 9201
         private const val GLOBAL_SESSION_ID = 0
 
         const val EQ_GAIN_MIN_DB = -10f
@@ -388,16 +334,22 @@ class AudioEffectsService : Service() {
         @JvmStatic
         @JvmOverloads
         fun sendApply(context: Context, audioSessionId: Int = GLOBAL_SESSION_ID) {
+            val prefs = context.getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            val enabled = prefs.getBoolean(KEY_ENABLED, false)
+
+            if (!enabled) {
+                // Do not attempt to start foreground service if EQ is disabled.
+                // Just send a stop signal to clean up if it was running.
+                sendStop(context)
+                return
+            }
+
             val intent = Intent(context, AudioEffectsService::class.java).apply {
                 action = ACTION_APPLY
                 putExtra(EXTRA_AUDIO_SESSION_ID, audioSessionId)
             }
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    context.startForegroundService(intent)
-                } else {
-                    context.startService(intent)
-                }
+                context.startService(intent)
             } catch (e: Exception) {
                 Log.w(TAG, "sendApply:failed", e)
             }

@@ -296,7 +296,7 @@ public final class CloudSyncManager {
             if (editor == null) {
                 editor = settingsPrefs.edit();
             }
-            editor.putString(KEY_OFFLINE_DOWNLOAD_QUALITY, DOWNLOAD_QUALITY_MEDIUM);
+            editor.putString(KEY_OFFLINE_DOWNLOAD_QUALITY, DOWNLOAD_QUALITY_VERY_HIGH);
         }
         if (!settingsPrefs.contains(KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA)) {
             if (editor == null) {

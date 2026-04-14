@@ -673,7 +673,7 @@ public final class OfflinePlaylistDownloadWorker extends Worker {
         SharedPreferences prefs = context.getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE);
         String configured = prefs.getString(
                 CloudSyncManager.KEY_OFFLINE_DOWNLOAD_QUALITY,
-                CloudSyncManager.DOWNLOAD_QUALITY_MEDIUM
+                CloudSyncManager.DOWNLOAD_QUALITY_VERY_HIGH
         );
         if (CloudSyncManager.DOWNLOAD_QUALITY_LOW.equals(configured)) {
             return TARGET_M4A_BITRATE_LOW;
@@ -684,8 +684,9 @@ public final class OfflinePlaylistDownloadWorker extends Worker {
         if (CloudSyncManager.DOWNLOAD_QUALITY_VERY_HIGH.equals(configured)) {
             return TARGET_M4A_BITRATE_VERY_HIGH;
         }
-        return TARGET_M4A_BITRATE_MEDIUM;
+        return TARGET_M4A_BITRATE_VERY_HIGH;
     }
+
 
     private boolean ensureNewPipeInitialized() {
         if (newPipeInitialized) {

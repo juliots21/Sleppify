@@ -8,6 +8,8 @@ import android.os.Bundle;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import com.example.sleppify.utils.YouTubeCropTransformation;
+import com.example.sleppify.utils.YouTubeImageProcessor;
 import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
 import android.net.Uri;
@@ -57,7 +59,10 @@ import androidx.work.WorkInfo;
 import androidx.work.WorkManager;
 
 import com.bumptech.glide.Glide;
+import com.bumptech.glide.RequestBuilder;
 import com.bumptech.glide.load.engine.DiskCacheStrategy;
+
+import android.graphics.drawable.Drawable;
 import com.google.android.gms.auth.GoogleAuthException;
 import com.google.android.gms.auth.GoogleAuthUtil;
 import com.google.android.gms.auth.UserRecoverableAuthException;
@@ -3666,8 +3671,15 @@ public class MusicPlayerFragment extends Fragment {
 
         String signature;
         if (rawWidth > 0 && rawHeight > 0) {
-            int targetWidth = bucketArtworkDimension(rawWidth);
-            int targetHeight = bucketArtworkDimension(rawHeight);
+            int targetWidth;
+            int targetHeight;
+            if (YouTubeImageProcessor.shouldProcess(safeUrl)) {
+                targetWidth = YouTubeImageProcessor.decodeDimensionForSmartCrop(rawWidth);
+                targetHeight = YouTubeImageProcessor.decodeDimensionForSmartCrop(rawHeight);
+            } else {
+                targetWidth = bucketArtworkDimension(rawWidth);
+                targetHeight = bucketArtworkDimension(rawHeight);
+            }
             signature = safeUrl + "|" + targetWidth + "x" + targetHeight;
             Object previousSignature = target.getTag(R.id.tag_artwork_signature);
             if (previousSignature instanceof String && signature.equals(previousSignature)) {
@@ -3676,10 +3688,8 @@ public class MusicPlayerFragment extends Fragment {
             target.setTag(R.id.tag_artwork_signature, signature);
             Glide.with(target)
                     .load(safeUrl)
+                    .transform(new YouTubeCropTransformation())
                     .diskCacheStrategy(DiskCacheStrategy.ALL)
-                    .skipMemoryCache(false)
-                    .dontAnimate()
-                    .centerCrop()
                     .override(targetWidth, targetHeight)
                     .placeholder(R.drawable.ic_music)
                     .error(R.drawable.ic_music)
@@ -3694,15 +3704,17 @@ public class MusicPlayerFragment extends Fragment {
         }
         target.setTag(R.id.tag_artwork_signature, signature);
 
-        Glide.with(target)
+        RequestBuilder<Drawable> request = Glide.with(target)
                 .load(safeUrl)
+                .transform(new YouTubeCropTransformation())
                 .diskCacheStrategy(DiskCacheStrategy.ALL)
-                .skipMemoryCache(false)
-                .dontAnimate()
-                .centerCrop()
                 .placeholder(R.drawable.ic_music)
-                .error(R.drawable.ic_music)
-                .into(target);
+                .error(R.drawable.ic_music);
+        if (YouTubeImageProcessor.shouldProcess(safeUrl)) {
+            int side = YouTubeImageProcessor.decodeDimensionForSmartCrop(64);
+            request = request.override(side, side);
+        }
+        request.into(target);
     }
 
 
@@ -5255,41 +5267,51 @@ public class MusicPlayerFragment extends Fragment {
 
     private void handleSearchActivityResult(int resultCode, @NonNull Intent data) {
         if (resultCode == SearchActivity.RESULT_TRACK_SELECTED || resultCode == SearchActivity.RESULT_PLAYLIST_SELECTED) {
-            String resultType = data.getStringExtra(SearchActivity.EXTRA_RESULT_TYPE);
-            String videoId = data.getStringExtra(SearchActivity.EXTRA_RESULT_VIDEO_ID);
-            String contentId = data.getStringExtra(SearchActivity.EXTRA_RESULT_CONTENT_ID);
-            String title = data.getStringExtra(SearchActivity.EXTRA_RESULT_TITLE);
-            String subtitle = data.getStringExtra(SearchActivity.EXTRA_RESULT_SUBTITLE);
-            String thumbnailUrl = data.getStringExtra(SearchActivity.EXTRA_RESULT_THUMBNAIL);
-            String queueJson = data.getStringExtra(SearchActivity.EXTRA_RESULT_TRACKS_JSON);
-
-            YouTubeMusicService.TrackResult track = new YouTubeMusicService.TrackResult(
-                    resultType, contentId, title, subtitle, thumbnailUrl);
-            
-            // Populate tracks for queue finding
-            tracks.clear();
-            featuredTrack = track;
-            try {
-                if (queueJson != null) {
-                    org.json.JSONArray array = new org.json.JSONArray(queueJson);
-                    for (int i = 0; i < array.length(); i++) {
-                        org.json.JSONObject obj = array.getJSONObject(i);
-                        YouTubeMusicService.TrackResult qTrack = new YouTubeMusicService.TrackResult(
-                                obj.optString("resultType", ""),
-                                obj.optString("contentId", ""),
-                                obj.optString("title", ""),
-                                obj.optString("subtitle", ""),
-                                obj.optString("thumbnailUrl", "")
-                        );
-                        tracks.add(qTrack);
-                    }
-                }
-            } catch (Exception ignored) {
-            }
-
-            openTrack(track);
+            playTrackFromSearchInternal(data);
         }
     }
+
+    public void playTrackFromSearch(@NonNull Intent data) {
+        if (!isAdded()) return;
+        playTrackFromSearchInternal(data);
+    }
+
+    private void playTrackFromSearchInternal(@NonNull Intent data) {
+        String resultType = data.getStringExtra(SearchActivity.EXTRA_RESULT_TYPE);
+        String videoId = data.getStringExtra(SearchActivity.EXTRA_RESULT_VIDEO_ID);
+        String contentId = data.getStringExtra(SearchActivity.EXTRA_RESULT_CONTENT_ID);
+        String title = data.getStringExtra(SearchActivity.EXTRA_RESULT_TITLE);
+        String subtitle = data.getStringExtra(SearchActivity.EXTRA_RESULT_SUBTITLE);
+        String thumbnailUrl = data.getStringExtra(SearchActivity.EXTRA_RESULT_THUMBNAIL);
+        String queueJson = data.getStringExtra(SearchActivity.EXTRA_RESULT_TRACKS_JSON);
+
+        YouTubeMusicService.TrackResult track = new YouTubeMusicService.TrackResult(
+                resultType, contentId, title, subtitle, thumbnailUrl);
+        
+        // Populate tracks for queue finding
+        tracks.clear();
+        featuredTrack = track;
+        try {
+            if (queueJson != null) {
+                org.json.JSONArray array = new org.json.JSONArray(queueJson);
+                for (int i = 0; i < array.length(); i++) {
+                    org.json.JSONObject obj = array.getJSONObject(i);
+                    YouTubeMusicService.TrackResult qTrack = new YouTubeMusicService.TrackResult(
+                            obj.optString("resultType", ""),
+                            obj.optString("contentId", ""),
+                            obj.optString("title", ""),
+                            obj.optString("subtitle", ""),
+                            obj.optString("thumbnailUrl", "")
+                    );
+                    tracks.add(qTrack);
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
+        openTrack(track);
+    }
+
 
     private void openTrack(@NonNull YouTubeMusicService.TrackResult track) {
         if ("playlist".equals(track.resultType)) {

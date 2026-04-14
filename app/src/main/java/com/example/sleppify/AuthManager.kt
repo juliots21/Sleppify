@@ -28,7 +28,7 @@ class AuthManager private constructor(context: Context) {
         fun onError(message: String)
     }
 
-    interface SimpleCallback {
+    fun interface SimpleCallback {
         fun onComplete(success: Boolean, message: String?)
     }
 

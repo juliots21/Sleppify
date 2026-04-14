@@ -18,6 +18,10 @@ object FavoritesPlaylistStore {
     private const val PREF_PLAYLIST_OFFLINE_COMPLETE_PREFIX = "playlist_offline_complete_"
     private const val MAX_TRACKS = 5000
 
+    private var favoritesCache: List<FavoriteTrack>? = null
+    private var favoritesIdSet: Set<String>? = null
+    private val CACHE_LOCK = Any()
+
     @JvmStatic
     fun buildSubtitle(count: Int): String {
         val safeCount = count.coerceAtLeast(0)
@@ -36,7 +40,12 @@ object FavoritesPlaylistStore {
             return false
         }
 
-        return loadFavorites(context).any { it.videoId == target }
+        synchronized(CACHE_LOCK) {
+            if (favoritesIdSet == null) {
+                loadFavorites(context)
+            }
+            return favoritesIdSet?.contains(target) ?: false
+        }
     }
 
     @JvmStatic
@@ -53,26 +62,29 @@ object FavoritesPlaylistStore {
             return false
         }
 
-        val tracks = loadFavorites(context).toMutableList()
-        val existed = tracks.removeAll { it.videoId == safeVideoId }
+        synchronized(CACHE_LOCK) {
+            val tracks = loadFavorites(context).toMutableList()
+            val existed = tracks.removeAll { it.videoId == safeVideoId }
 
-        tracks.add(
-            0,
-            FavoriteTrack(
-                safeVideoId,
-                fallback(title, "Tema"),
-                safe(artist),
-                fallback(duration, "--:--"),
-                safe(imageUrl)
+            tracks.add(
+                0,
+                FavoriteTrack(
+                    safeVideoId,
+                    fallback(title, "Tema"),
+                    safe(artist),
+                    fallback(duration, "--:--"),
+                    safe(imageUrl)
+                )
             )
-        )
 
-        if (tracks.size > MAX_TRACKS) {
-            tracks.subList(MAX_TRACKS, tracks.size).clear()
+            if (tracks.size > MAX_TRACKS) {
+                tracks.subList(MAX_TRACKS, tracks.size).clear()
+            }
+
+            updateCache(tracks)
+            saveFavorites(context, tracks)
+            return !existed
         }
-
-        saveFavorites(context, tracks)
-        return !existed
     }
 
     @JvmStatic
@@ -82,26 +94,37 @@ object FavoritesPlaylistStore {
             return false
         }
 
-        val tracks = loadFavorites(context).toMutableList()
-        val removed = tracks.removeAll { it.videoId == safeVideoId }
-        if (!removed) {
-            return false
-        }
+        synchronized(CACHE_LOCK) {
+            val tracks = loadFavorites(context).toMutableList()
+            val removed = tracks.removeAll { it.videoId == safeVideoId }
+            if (!removed) {
+                return false
+            }
 
-        saveFavorites(context, tracks)
-        return true
+            updateCache(tracks)
+            saveFavorites(context, tracks)
+            return true
+        }
     }
 
     @JvmStatic
     fun loadFavorites(context: Context): List<FavoriteTrack> {
+        synchronized(CACHE_LOCK) {
+            favoritesCache?.let { return it }
+        }
+
         val appContext = context.applicationContext
         val prefs = getPrefs(appContext)
         val raw = prefs.getString(PREF_TRACKS_DATA_PREFIX + PLAYLIST_ID, "").orEmpty()
         if (raw.isBlank()) {
-            return emptyList()
+            val empty = emptyList<FavoriteTrack>()
+            synchronized(CACHE_LOCK) {
+                updateCache(empty)
+            }
+            return empty
         }
 
-        return try {
+        val parsed = try {
             val array = JSONArray(raw)
             val dedup = LinkedHashMap<String, FavoriteTrack>()
             for (i in 0 until array.length()) {
@@ -122,8 +145,18 @@ object FavoritesPlaylistStore {
             }
             ArrayList(dedup.values)
         } catch (_: Exception) {
-            emptyList()
+            emptyList<FavoriteTrack>()
         }
+
+        synchronized(CACHE_LOCK) {
+            updateCache(parsed)
+        }
+        return parsed
+    }
+
+    private fun updateCache(tracks: List<FavoriteTrack>) {
+        favoritesCache = tracks
+        favoritesIdSet = HashSet(tracks.map { it.videoId })
     }
 
     private fun saveFavorites(context: Context, tracks: List<FavoriteTrack>) {

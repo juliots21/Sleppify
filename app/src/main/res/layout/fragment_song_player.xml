@@ -7,7 +7,7 @@
     android:background="@color/surface_dark"
     tools:context=".SongPlayerFragment">
 
-    <ImageView
+    <com.google.android.material.imageview.ShapeableImageView
         android:id="@+id/ivPlayerBackdrop"
         android:layout_width="0dp"
         android:layout_height="0dp"
@@ -32,19 +32,24 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent">
 
-        <LinearLayout
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/clPlayerContent"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
             android:paddingHorizontal="24dp"
             android:paddingTop="104dp"
             android:paddingBottom="24dp">
 
             <FrameLayout
                 android:id="@+id/flPlayerHero"
-                android:layout_width="match_parent"
-                android:layout_height="370dp"
-                android:layout_marginTop="10dp">
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:layout_marginTop="20dp"
+                android:layout_marginHorizontal="34dp"
+                app:layout_constraintDimensionRatio="1:1"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent">
 
                 <com.pierfrancescosoffritti.androidyoutubeplayer.core.player.views.YouTubePlayerView
                     android:id="@+id/youtubePlayerView"
@@ -58,30 +63,38 @@
                     android:id="@+id/ivPlayerCover"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
-                    android:background="@android:color/black"
+                    android:background="@android:color/transparent"
                     android:clickable="false"
                     android:focusable="false"
-                    android:scaleType="centerCrop"
+                    android:scaleType="fitCenter"
                     android:src="@android:color/transparent" />
             </FrameLayout>
 
             <LinearLayout
-                android:layout_width="match_parent"
+                android:id="@+id/llPlayerInfo"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="18dp"
-                android:orientation="vertical">
+                android:orientation="vertical"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/flPlayerHero">
 
                 <TextView
                     android:id="@+id/tvPlayerTitle"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:ellipsize="end"
+                    android:ellipsize="marquee"
+                    android:fadingEdge="horizontal"
+                    android:focusable="true"
+                    android:focusableInTouchMode="true"
                     android:fontFamily="@font/manrope_variable"
-                    android:lineSpacingExtra="1dp"
-                    android:maxLines="2"
-                    android:text="Vuelve"
+                    android:marqueeRepeatLimit="marquee_forever"
+                    android:scrollHorizontally="true"
+                    android:singleLine="true"
+                    android:text="Cargando..."
                     android:textColor="@color/text_primary"
-                    android:textSize="42sp"
+                    android:textSize="26sp"
                     android:textStyle="bold" />
 
                 <TextView
@@ -92,28 +105,30 @@
                     android:ellipsize="end"
                     android:fontFamily="@font/manrope_variable"
                     android:maxLines="1"
-                    android:text="Daddy Yankee"
+                    android:text="Artista"
                     android:textColor="@color/text_secondary"
                     android:textSize="16sp" />
             </LinearLayout>
 
             <HorizontalScrollView
                 android:id="@+id/hsSocialActions"
-                android:layout_width="match_parent"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
                 android:clipToPadding="false"
                 android:overScrollMode="never"
                 android:paddingHorizontal="6dp"
-                android:scrollbars="none">
+                android:scrollbars="none"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/llPlayerInfo">
 
                 <LinearLayout
                     android:id="@+id/llSocialActionsRow"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:padding="0dp">
+                    android:orientation="horizontal">
 
                     <LinearLayout
                         android:id="@+id/actionLike"
@@ -126,22 +141,8 @@
                         android:gravity="center_vertical"
                         android:orientation="horizontal"
                         android:paddingHorizontal="10dp">
-
-                        <ImageView
-                            android:layout_width="16dp"
-                            android:layout_height="16dp"
-                            android:src="@drawable/ic_thumb_up_liked" />
-
-                        <TextView
-                            android:id="@+id/tvActionLikeCount"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginStart="5dp"
-                            android:fontFamily="@font/inter_variable"
-                            android:text="0"
-                            android:textColor="@color/text_primary"
-                            android:textSize="13sp"
-                            android:textStyle="bold" />
+                        <ImageView android:layout_width="16dp" android:layout_height="16dp" android:src="@drawable/ic_thumb_up_liked" />
+                        <TextView android:id="@+id/tvActionLikeCount" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="5dp" android:fontFamily="@font/inter_variable" android:text="0" android:textColor="@color/text_primary" android:textSize="13sp" android:textStyle="bold" />
                     </LinearLayout>
 
                     <LinearLayout
@@ -156,23 +157,8 @@
                         android:gravity="center_vertical"
                         android:orientation="horizontal"
                         android:paddingHorizontal="10dp">
-
-                        <ImageView
-                            android:layout_width="16dp"
-                            android:layout_height="16dp"
-                            android:src="@drawable/ic_social_thumb_down"
-                            app:tint="@color/text_primary" />
-
-                        <TextView
-                            android:id="@+id/tvActionDislikeCount"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginStart="5dp"
-                            android:fontFamily="@font/inter_variable"
-                            android:text="0"
-                            android:textColor="@color/text_primary"
-                            android:textSize="13sp"
-                            android:textStyle="bold" />
+                        <ImageView android:layout_width="16dp" android:layout_height="16dp" android:src="@drawable/ic_social_thumb_down" app:tint="@color/text_primary" />
+                        <TextView android:id="@+id/tvActionDislikeCount" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="5dp" android:fontFamily="@font/inter_variable" android:text="0" android:textColor="@color/text_primary" android:textSize="13sp" android:textStyle="bold" />
                     </LinearLayout>
 
                     <LinearLayout
@@ -187,23 +173,8 @@
                         android:gravity="center_vertical"
                         android:orientation="horizontal"
                         android:paddingHorizontal="10dp">
-
-                        <ImageView
-                            android:layout_width="16dp"
-                            android:layout_height="16dp"
-                            android:src="@drawable/ic_social_comment"
-                            app:tint="@color/text_primary" />
-
-                        <TextView
-                            android:id="@+id/tvActionCommentCount"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginStart="5dp"
-                            android:fontFamily="@font/inter_variable"
-                            android:text="0"
-                            android:textColor="@color/text_primary"
-                            android:textSize="13sp"
-                            android:textStyle="bold" />
+                        <ImageView android:layout_width="16dp" android:layout_height="16dp" android:src="@drawable/ic_social_comment" app:tint="@color/text_primary" />
+                        <TextView android:id="@+id/tvActionCommentCount" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="5dp" android:fontFamily="@font/inter_variable" android:text="0" android:textColor="@color/text_primary" android:textSize="13sp" android:textStyle="bold" />
                     </LinearLayout>
 
                     <LinearLayout
@@ -218,209 +189,103 @@
                         android:gravity="center_vertical"
                         android:orientation="horizontal"
                         android:paddingHorizontal="10dp">
-
-                        <ImageView
-                            android:id="@+id/ivActionFavoriteIcon"
-                            android:layout_width="16dp"
-                            android:layout_height="16dp"
-                            android:src="@drawable/ic_favorite_star"
-                            app:tint="@color/text_primary" />
-
-                        <TextView
-                            android:id="@+id/tvActionFavoriteLabel"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginStart="6dp"
-                            android:fontFamily="@font/inter_variable"
-                            android:text="Guardar en favoritos"
-                            android:textColor="@color/text_primary"
-                            android:textSize="13sp"
-                            android:textStyle="bold" />
+                        <ImageView android:id="@+id/ivActionFavoriteIcon" android:layout_width="16dp" android:layout_height="16dp" android:src="@drawable/ic_favorite_star" app:tint="@color/text_primary" />
+                        <TextView android:id="@+id/tvActionFavoriteLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:fontFamily="@font/inter_variable" android:text="Guardar en favoritos" android:textColor="@color/text_primary" android:textSize="13sp" android:textStyle="bold" />
                     </LinearLayout>
                 </LinearLayout>
             </HorizontalScrollView>
 
-            <LinearLayout
-                android:layout_width="match_parent"
+            <SeekBar
+                android:id="@+id/sbPlaybackProgress"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="18dp"
-                android:orientation="vertical">
+                android:max="1000"
+                android:progress="0"
+                android:thumbTint="@color/stitch_blue"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/hsSocialActions" />
 
-                <SeekBar
-                    android:id="@+id/sbPlaybackProgress"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:max="1000"
-                    android:progress="650"
-                    android:thumbTint="@color/stitch_blue" />
+            <TextView
+                android:id="@+id/tvCurrentTime"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:fontFamily="@font/inter_variable"
+                android:text="00:00"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                app:layout_constraintStart_toStartOf="@id/sbPlaybackProgress"
+                app:layout_constraintTop_toBottomOf="@id/sbPlaybackProgress" />
 
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:orientation="horizontal">
-
-                    <TextView
-                        android:id="@+id/tvCurrentTime"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:fontFamily="@font/inter_variable"
-                        android:text="00:00"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="11sp"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:id="@+id/tvTotalTime"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:fontFamily="@font/inter_variable"
-                        android:text="00:00"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="11sp"
-                        android:textStyle="bold" />
-                </LinearLayout>
-            </LinearLayout>
+            <TextView
+                android:id="@+id/tvTotalTime"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:fontFamily="@font/inter_variable"
+                android:text="00:00"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                app:layout_constraintEnd_toEndOf="@id/sbPlaybackProgress"
+                app:layout_constraintTop_toBottomOf="@id/sbPlaybackProgress" />
 
             <LinearLayout
-                android:layout_width="match_parent"
+                android:id="@+id/llPlayerControls"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="14dp"
                 android:gravity="center"
-                android:orientation="horizontal">
+                android:orientation="horizontal"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/tvCurrentTime">
 
-                <LinearLayout
-                    android:layout_width="44dp"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_horizontal"
-                    android:orientation="vertical">
-
-                    <ImageButton
-                        android:id="@+id/btnShuffle"
-                        android:layout_width="44dp"
-                        android:layout_height="44dp"
-                        android:background="?attr/selectableItemBackgroundBorderless"
-                        android:padding="10dp"
-                        android:src="@drawable/ic_shuffle_custom"
-                        app:tint="@color/text_primary" />
-
-                    <View
-                        android:id="@+id/vPlayerShuffleIndicator"
-                        android:layout_width="6dp"
-                        android:layout_height="6dp"
-                        android:layout_marginTop="2dp"
-                        android:background="@drawable/bg_mode_indicator_dot"
-                        android:visibility="gone" />
+                <LinearLayout android:layout_width="44dp" android:layout_height="wrap_content" android:gravity="center_horizontal" android:orientation="vertical">
+                    <ImageButton android:id="@+id/btnShuffle" android:layout_width="44dp" android:layout_height="44dp" android:background="?attr/selectableItemBackgroundBorderless" android:padding="10dp" android:src="@drawable/ic_shuffle_custom" app:tint="@color/text_primary" />
+                    <View android:id="@+id/vPlayerShuffleIndicator" android:layout_width="6dp" android:layout_height="6dp" android:layout_marginTop="2dp" android:background="@drawable/bg_mode_indicator_dot" android:visibility="gone" />
                 </LinearLayout>
 
-                <ImageButton
-                    android:id="@+id/btnPrev"
-                    android:layout_width="52dp"
-                    android:layout_height="52dp"
-                    android:layout_marginStart="8dp"
-                    android:background="?attr/selectableItemBackgroundBorderless"
-                    android:padding="10dp"
-                    android:src="@drawable/ic_player_skip_previous"
-                    app:tint="@color/text_primary" />
+                <ImageButton android:id="@+id/btnPrev" android:layout_width="52dp" android:layout_height="52dp" android:layout_marginStart="8dp" android:background="?attr/selectableItemBackgroundBorderless" android:padding="10dp" android:src="@drawable/ic_player_skip_previous" app:tint="@color/text_primary" />
+                <ImageButton android:id="@+id/btnPlayPause" android:layout_width="72dp" android:layout_height="72dp" android:layout_marginHorizontal="8dp" android:background="@drawable/bg_player_center_button" android:padding="16dp" android:src="@drawable/ic_player_pause" app:tint="#0C0C0C" />
+                <ImageButton android:id="@+id/btnNext" android:layout_width="52dp" android:layout_height="52dp" android:layout_marginEnd="8dp" android:background="?attr/selectableItemBackgroundBorderless" android:padding="10dp" android:src="@drawable/ic_player_skip_next" app:tint="@color/text_primary" />
 
-                <ImageButton
-                    android:id="@+id/btnPlayPause"
-                    android:layout_width="72dp"
-                    android:layout_height="72dp"
-                    android:layout_marginHorizontal="8dp"
-                    android:background="@drawable/bg_player_center_button"
-                    android:padding="16dp"
-                    android:src="@drawable/ic_player_pause"
-                    app:tint="#0C0C0C" />
-
-                <ImageButton
-                    android:id="@+id/btnNext"
-                    android:layout_width="52dp"
-                    android:layout_height="52dp"
-                    android:layout_marginEnd="8dp"
-                    android:background="?attr/selectableItemBackgroundBorderless"
-                    android:padding="10dp"
-                    android:src="@drawable/ic_player_skip_next"
-                    app:tint="@color/text_primary" />
-
-                <LinearLayout
-                    android:layout_width="52dp"
-                    android:layout_height="52dp"
-                    android:gravity="center_horizontal"
-                    android:orientation="vertical">
-
-                    <ImageButton
-                        android:id="@+id/btnRepeat"
-                        android:layout_width="44dp"
-                        android:layout_height="44dp"
-                        android:layout_marginTop="3dp"
-                        android:background="?attr/selectableItemBackgroundBorderless"
-                        android:padding="10dp"
-                        android:src="@drawable/ic_player_repeat"
-                        app:tint="@color/text_primary" />
-
-                    <View
-                        android:id="@+id/vPlayerRepeatIndicator"
-                        android:layout_width="6dp"
-                        android:layout_height="6dp"
-                        android:layout_marginTop="-4dp"
-                        android:background="@drawable/bg_mode_indicator_dot"
-                        android:visibility="invisible" />
+                <LinearLayout android:layout_width="52dp" android:layout_height="52dp" android:gravity="center_horizontal" android:orientation="vertical">
+                    <ImageButton android:id="@+id/btnRepeat" android:layout_width="44dp" android:layout_height="44dp" android:layout_marginTop="3dp" android:background="?attr/selectableItemBackgroundBorderless" android:padding="10dp" android:src="@drawable/ic_player_repeat" app:tint="@color/text_primary" />
+                    <View android:id="@+id/vPlayerRepeatIndicator" android:layout_width="6dp" android:layout_height="6dp" android:layout_marginTop="-4dp" android:background="@drawable/bg_mode_indicator_dot" android:visibility="invisible" />
                 </LinearLayout>
             </LinearLayout>
 
             <LinearLayout
-                android:layout_width="match_parent"
+                android:id="@+id/llNextUpContainer"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="24dp"
                 android:background="@drawable/bg_playlist_glass"
                 android:orientation="vertical"
-                android:padding="16dp">
+                android:padding="16dp"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/llPlayerControls">
 
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:fontFamily="@font/manrope_variable"
-                        android:text="Siguiente en cola"
-                        android:textColor="@color/text_primary"
-                        android:textSize="20sp"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:id="@+id/tvViewAllQueue"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:background="?attr/selectableItemBackgroundBorderless"
-                        android:clickable="true"
-                        android:focusable="true"
-                        android:fontFamily="@font/inter_variable"
-                        android:paddingHorizontal="10dp"
-                        android:paddingVertical="6dp"
-                        android:letterSpacing="0.08"
-                        android:text="VER TODO"
-                        android:textColor="@color/stitch_blue"
-                        android:textSize="10sp"
-                        android:textStyle="bold" />
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal">
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:fontFamily="@font/manrope_variable" android:text="Siguiente en cola" android:textColor="@color/text_primary" android:textSize="20sp" android:textStyle="bold" />
+                    <TextView android:id="@+id/tvViewAllQueue" android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="?attr/selectableItemBackgroundBorderless" android:clickable="true" android:focusable="true" android:fontFamily="@font/inter_variable" android:paddingHorizontal="10dp" android:paddingVertical="6dp" android:letterSpacing="0.08" android:text="VER TODO" android:textColor="@color/stitch_blue" android:textSize="10sp" android:textStyle="bold" />
                 </LinearLayout>
 
                 <androidx.recyclerview.widget.RecyclerView
                     android:id="@+id/rvNextUp"
                     android:layout_width="match_parent"
-                    android:layout_height="320dp"
+                    android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
-                    android:nestedScrollingEnabled="true"
+                    android:nestedScrollingEnabled="false"
                     tools:itemCount="10"
                     tools:listitem="@layout/item_song_next_up" />
             </LinearLayout>
-        </LinearLayout>
+        </androidx.constraintlayout.widget.ConstraintLayout>
     </androidx.core.widget.NestedScrollView>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

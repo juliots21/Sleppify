@@ -29,6 +29,7 @@ class TaskReminderPrepareWorker(context: Context, workerParams: WorkerParameters
         val taskTime = input.getString(TaskReminderConstants.INPUT_TASK_TIME)
         val dateKey = input.getString(TaskReminderConstants.INPUT_DATE_KEY)
         val notifyAtMs = input.getLong(TaskReminderConstants.INPUT_NOTIFY_AT_MS, 0L)
+        val cachePrefs = context.getSharedPreferences(TaskReminderConstants.PREFS_CACHE, Context.MODE_PRIVATE)
 
         if (TextUtils.isEmpty(reminderId) || TextUtils.isEmpty(taskTitle)) {
             return Result.success()
@@ -37,7 +38,16 @@ class TaskReminderPrepareWorker(context: Context, workerParams: WorkerParameters
         val profileName = resolveProfileName(context)
         val snapshot = buildTaskSnapshot(taskTitle!!, taskDesc, taskTime, dateKey)
 
-        val messageRef = AtomicReference<String?>(null)
+        if (GeminiIntelligenceService.isSuspended()) {
+            val fallback = buildFallbackSummary(taskTitle, taskDesc, taskTime)
+            cachePrefs.edit()
+                .putString(TaskReminderConstants.KEY_SUMMARY_PREFIX + reminderId, fallback)
+                .putLong(TaskReminderConstants.KEY_SUMMARY_TS_PREFIX + reminderId, System.currentTimeMillis())
+                .apply()
+            return Result.success()
+        }
+
+        val aiMessageRef = AtomicReference<String?>(null)
         val latch = CountDownLatch(1)
 
         GeminiIntelligenceService().generateTodayAgendaSummary(
@@ -45,7 +55,7 @@ class TaskReminderPrepareWorker(context: Context, workerParams: WorkerParameters
             snapshot,
             object : GeminiIntelligenceService.TodayAgendaSummaryCallback {
                 override fun onSuccess(message: String) {
-                    messageRef.set(message)
+                    aiMessageRef.set(message)
                     latch.countDown()
                 }
 
@@ -62,7 +72,7 @@ class TaskReminderPrepareWorker(context: Context, workerParams: WorkerParameters
             return Result.retry()
         }
 
-        var summary = messageRef.get()
+        var summary = aiMessageRef.get()
         if (!completed || summary.isNullOrBlank()) {
             val nowMs = System.currentTimeMillis()
             if (notifyAtMs > nowMs + 15_000L) {
@@ -71,7 +81,6 @@ class TaskReminderPrepareWorker(context: Context, workerParams: WorkerParameters
             summary = buildFallbackSummary(taskTitle, taskDesc, taskTime)
         }
 
-        val cachePrefs = context.getSharedPreferences(TaskReminderConstants.PREFS_CACHE, Context.MODE_PRIVATE)
         cachePrefs.edit()
             .putString(TaskReminderConstants.KEY_SUMMARY_PREFIX + reminderId, summary)
             .putLong(TaskReminderConstants.KEY_SUMMARY_TS_PREFIX + reminderId, System.currentTimeMillis())

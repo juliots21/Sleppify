@@ -202,6 +202,7 @@ public class EqualizerFragment extends Fragment {
         refreshOutputDeviceAndProfile(false, true);
         refreshEqModuleState();
         ensureEqServiceActive();
+        applyAmoledStyles(view);
     }
 
     @Override
@@ -304,18 +305,11 @@ public class EqualizerFragment extends Fragment {
 
     private void setupListeners() {
         sliderBassGain.addOnChangeListener((slider, value, fromUser) -> {
-            float snappedValue = quantizeBassGainToggle(value);
-            if (fromUser && Math.abs(slider.getValue() - snappedValue) > 0.001f) {
-                restoringUi = true;
-                slider.setValue(snappedValue);
-                restoringUi = false;
-            }
-
-            tvBassGainValue.setText(formatDb(snappedValue));
+            tvBassGainValue.setText(formatDb(value));
             if (restoringUi) {
                 return;
             }
-            preferences.edit().putFloat(AudioEffectsService.KEY_BASS_DB, snappedValue).apply();
+            preferences.edit().putFloat(AudioEffectsService.KEY_BASS_DB, value).apply();
             markPresetAsCustom();
             applyIfEnabled();
         });
@@ -452,6 +446,7 @@ public class EqualizerFragment extends Fragment {
         if (sliderBassFrequency != null) {
             sliderBassFrequency.setEnabled(eqEnabled);
         }
+        applyAmoledStyles(getView());
     }
 
     private void registerOutputDeviceCallback() {
@@ -1566,8 +1561,7 @@ public class EqualizerFragment extends Fragment {
     }
 
     private float quantizeBassGainToggle(float rawValue) {
-        float clamped = clamp(rawValue, BASS_GAIN_MIN_DB, BASS_GAIN_MAX_DB);
-        return clamped > BASS_GAIN_TOGGLE_THRESHOLD_DB ? BASS_GAIN_MAX_DB : BASS_GAIN_MIN_DB;
+        return clamp(rawValue, BASS_GAIN_MIN_DB, BASS_GAIN_MAX_DB);
     }
 
     private void markPresetAsCustom() {
@@ -1903,5 +1897,55 @@ public class EqualizerFragment extends Fragment {
 
     private interface PresetNameCallback {
         void onNameConfirmed(@NonNull String name);
+    }
+
+    private boolean isAmoledModeEnabled() {
+        return preferences != null && preferences.getBoolean(CloudSyncManager.KEY_AMOLED_MODE_ENABLED, false);
+    }
+
+    private void applyAmoledStyles(@Nullable View rootView) {
+        if (rootView == null || !isAmoledModeEnabled()) {
+            return;
+        }
+
+        Context context = rootView.getContext();
+        int amoledBlack = 0xFF000000;
+        int premiumDarkGray = 0xFF0D0D0D; 
+        int cardStrokeColor = 0xFF1A1A1A;
+
+        rootView.setBackgroundColor(amoledBlack);
+
+        // Styling cards for AMOLED
+        int[] cardIds = {R.id.cardPresetSelector, R.id.cardGraphicEq, R.id.cardBassTuner, R.id.cardBassTypeSelector, R.id.cardReverbSelector};
+        for (int id : cardIds) {
+            View v = rootView.findViewById(id);
+            if (v instanceof com.google.android.material.card.MaterialCardView) {
+                com.google.android.material.card.MaterialCardView card = (com.google.android.material.card.MaterialCardView) v;
+                card.setCardBackgroundColor(ColorStateList.valueOf(premiumDarkGray));
+                card.setStrokeColor(ColorStateList.valueOf(cardStrokeColor));
+                card.setStrokeWidth(dp(1));
+            }
+        }
+
+        // Output info card (the first one doesn't have an ID in XML, let's find it by position)
+        View scrollContent = rootView.findViewById(R.id.scrollEqContent);
+        if (scrollContent instanceof ViewGroup && ((ViewGroup) scrollContent).getChildCount() > 0) {
+            View mainLinear = ((ViewGroup) scrollContent).getChildAt(0);
+            if (mainLinear instanceof ViewGroup && ((ViewGroup) mainLinear).getChildCount() > 0) {
+                View firstCard = ((ViewGroup) mainLinear).getChildAt(0);
+                if (firstCard instanceof com.google.android.material.card.MaterialCardView) {
+                    com.google.android.material.card.MaterialCardView card = (com.google.android.material.card.MaterialCardView) firstCard;
+                    card.setCardBackgroundColor(ColorStateList.valueOf(premiumDarkGray));
+                    card.setStrokeColor(ColorStateList.valueOf(cardStrokeColor));
+                    card.setStrokeWidth(dp(1));
+                }
+            }
+        }
+
+        if (eqCurveView != null) {
+            // Ensure any dark surfaces in the custom view also adapt
+            // EqCurveEditorView uses surface_dark, which we could override or just let it be if it was already dark.
+            // But we can force it here if needed.
+        }
     }
 }
