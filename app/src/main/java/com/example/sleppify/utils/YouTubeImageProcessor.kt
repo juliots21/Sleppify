@@ -86,19 +86,26 @@ object YouTubeImageProcessor {
             val content = Bitmap.createBitmap(source, cropLeft, cropTop, finalWidth, finalHeight)
             val aspectRatio = finalWidth.toFloat() / finalHeight
             
-            // Already ~square: use as-is (no letterboxing).
+            // Already ~square: use as-is (no padding).
             if (abs(aspectRatio - 1.0f) < 0.05f) {
                 return content
             }
 
-            // Non-square after stripping margins: center-crop to the largest inscribed square
-            // (same idea as ImageView centerCrop) instead of padding with bars.
-            val side = min(finalWidth, finalHeight)
-            val srcX = (finalWidth - side) / 2
-            val srcY = (finalHeight - side) / 2
-            val square = Bitmap.createBitmap(content, srcX, srcY, side, side)
+            // Instead of center-cropping (cutting the image), we PAD to 1:1 (preserving full content)
+            // Use the pixel at the very corner of the original source as a background color hint
+            val bgColor = source.getPixel(0, 0)
+            
+            val side = max(finalWidth, finalHeight)
+            val padded = Bitmap.createBitmap(side, side, Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(padded)
+            canvas.drawColor(bgColor)
+            
+            val drawLeft = (side - finalWidth) / 2f
+            val drawTop = (side - finalHeight) / 2f
+            canvas.drawBitmap(content, drawLeft, drawTop, null)
+            
             if (content != source) content.recycle()
-            square
+            padded
         } catch (e: Exception) {
             Log.e(TAG, "smartCrop: failed", e)
             source

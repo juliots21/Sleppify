@@ -237,6 +237,7 @@ class GeminiIntelligenceService {
         var lastHttpError = "Sin respuesta del servidor"
         val startIdx = nextRotatingIdx()
         val now = System.currentTimeMillis()
+        var consecutiveConnErrors = 0
 
         for (model in MODELS) {
             for (offset in API_KEYS.indices) {
@@ -258,6 +259,17 @@ class GeminiIntelligenceService {
                         KEY_COOLDOWNS[keyIdx] = now + KEY_COOLDOWN_MS
                         return RequestResponse.Error("Cuota de IA excedida. Reintentando en breve.")
                     }
+                    
+                    if (result.code <= 0) {
+                        consecutiveConnErrors++
+                        if (consecutiveConnErrors >= 2) {
+                            Log.e(TAG, "Too many consecutive connection errors. Aborting rotation.")
+                            return RequestResponse.Error("Error de conexión con el servicio de IA.")
+                        }
+                    } else {
+                        consecutiveConnErrors = 0
+                    }
+                    
                     if (result.code > 0) lastHttpError = "Error HTTP ${result.code}"
                 }
             }

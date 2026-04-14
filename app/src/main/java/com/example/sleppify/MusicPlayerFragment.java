@@ -125,7 +125,7 @@ public class MusicPlayerFragment extends Fragment {
     private static final String STREAM_SCREEN_LIBRARY = "library";
     private static final String STREAM_SCREEN_PLAYLIST_DETAIL = "playlist_detail";
     private static final String PREF_RECENT_SEARCH_QUERIES = "stream_recent_search_queries";
-    private static final long MINI_PROGRESS_TICK_MS = 850L;
+    private static final long MINI_PROGRESS_TICK_MS = 500L;
     private static final long MINI_SNAPSHOT_REFRESH_MS = 1200L;
     private static final long LIBRARY_INLINE_SEARCH_DEBOUNCE_MS = 320L;
     private static final String TAG_MODULE_MUSIC = "module_music";
@@ -389,6 +389,95 @@ public class MusicPlayerFragment extends Fragment {
             libraryTracks.remove(existingIndex);
         }
         libraryTracks.add(0, favoritesTrack);
+
+        List<String> customPlaylists = CustomPlaylistsStore.INSTANCE.getAllPlaylistNames(requireContext());
+        int injectionIndex = 1;
+
+        for (String customName : customPlaylists) {
+            List<FavoritesPlaylistStore.FavoriteTrack> customTracks = CustomPlaylistsStore.INSTANCE.getTracksFromPlaylist(requireContext(), customName);
+            int countCustom = customTracks.size();
+            String customSubtitle = countCustom == 1 ? "1 canción" : countCustom + " canciones";
+            String customThumb = "";
+            for (FavoritesPlaylistStore.FavoriteTrack t : customTracks) {
+                if (!TextUtils.isEmpty(t.imageUrl)) {
+                    customThumb = t.imageUrl;
+                    break;
+                }
+            }
+            YouTubeMusicService.TrackResult customTrackResult = new YouTubeMusicService.TrackResult(
+                "playlist",
+                CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX + customName,
+                customName,
+                customSubtitle,
+                customThumb
+            );
+
+            // remove previous version if exists
+            int eIdx = -1;
+            for (int i=0; i<libraryTracks.size(); i++) {
+                if (TextUtils.equals(customTrackResult.contentId, libraryTracks.get(i).contentId)) {
+                    eIdx = i; break;
+                }
+            }
+            if (eIdx >= 0) libraryTracks.remove(eIdx);
+
+            libraryTracks.add(injectionIndex++, customTrackResult);
+        }
+
+        // Add "Create Playlist" button
+        YouTubeMusicService.TrackResult createPlaylistBtn = new YouTubeMusicService.TrackResult(
+            "playlist",
+            "sleppify_action_create_playlist",
+            "Crear playlist",
+            "Crea una nueva lista de reproducción local",
+            ""
+        );
+        int cIdx = -1;
+        for (int i=0; i<libraryTracks.size(); i++) {
+            if (TextUtils.equals(createPlaylistBtn.contentId, libraryTracks.get(i).contentId)) {
+                cIdx = i; break;
+            }
+        }
+        if (cIdx >= 0) libraryTracks.remove(cIdx);
+        libraryTracks.add(injectionIndex++, createPlaylistBtn);
+
+        // Fetch Cloud Playlists if signed in
+        if (AuthManager.getInstance(requireContext()).isSignedIn()) {
+            final int finalInjectionIdx = injectionIndex;
+            CloudSyncManager.getInstance(requireContext()).fetchCloudPlaylists(cloudMap -> {
+                if (!isAdded()) return;
+                mainHandler.post(() -> {
+                    if (!isAdded()) return;
+                    for (Map.Entry<String, List<FavoritesPlaylistStore.FavoriteTrack>> entry : cloudMap.entrySet()) {
+                        String name = entry.getKey();
+                        String contentId = CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX + name;
+                        
+                        // Check if already in library
+                        boolean alreadyHandled = false;
+                        for (YouTubeMusicService.TrackResult r : libraryTracks) {
+                            if (TextUtils.equals(r.contentId, contentId)) {
+                                alreadyHandled = true;
+                                break;
+                            }
+                        }
+                        if (alreadyHandled) continue;
+
+                        List<FavoritesPlaylistStore.FavoriteTrack> tracks = entry.getValue();
+                        String sub = tracks.size() == 1 ? "1 canción (Nube)" : tracks.size() + " canciones (Nube)";
+                        String thumb = "";
+                        for (FavoritesPlaylistStore.FavoriteTrack t : tracks) {
+                            if (!TextUtils.isEmpty(t.imageUrl)) { thumb = t.imageUrl; break; }
+                        }
+
+                        YouTubeMusicService.TrackResult cloudTr = new YouTubeMusicService.TrackResult(
+                            "playlist", contentId, name, sub, thumb
+                        );
+                        libraryTracks.add(finalInjectionIdx, cloudTr);
+                        if (tracksAdapter != null) tracksAdapter.notifyDataSetChanged();
+                    }
+                });
+            });
+        }
     }
 
     private void refreshCurrentPlayingPlaylistState() {
@@ -822,7 +911,8 @@ public class MusicPlayerFragment extends Fragment {
         updateMiniPlayerUi();
         
         if (getActivity() instanceof MainActivity) {
-            ((MainActivity) getActivity()).revealModuleContent();
+            MainActivity mainActivity = (MainActivity) getActivity();
+            mainActivity.revealModuleContent();
         }
     }
 
@@ -3859,6 +3949,7 @@ public class MusicPlayerFragment extends Fragment {
         popup.getMenu().add(0, 2, 1, "Compartir");
         if (track.isVideo()) {
             popup.getMenu().add(0, 3, 2, "Agregar a Favoritos");
+            popup.getMenu().add(0, 4, 3, "Añadir a playlist");
         }
         popup.setOnMenuItemClickListener(item -> {
             if (item.getItemId() == 1) {
@@ -3873,9 +3964,96 @@ public class MusicPlayerFragment extends Fragment {
                 addSearchTrackToFavorites(track);
                 return true;
             }
+            if (item.getItemId() == 4) {
+                showAddToPlaylistDialog(track);
+                return true;
+            }
             return false;
         });
         popup.show();
+    }
+
+    private void showAddToPlaylistDialog(@NonNull YouTubeMusicService.TrackResult track) {
+        if (!isAdded()) return;
+
+        List<String> localNames = CustomPlaylistsStore.INSTANCE.getAllPlaylistNames(requireContext());
+        String token = resolveAccessTokenForPlaylistDetail();
+
+        if (TextUtils.isEmpty(token)) {
+            // Only local
+            if (localNames.isEmpty()) {
+                android.widget.Toast.makeText(requireContext(), "No tienes playlists. Crea una primero.", android.widget.Toast.LENGTH_SHORT).show();
+                return;
+            }
+            showAddToPlaylistDialogInternal(track, localNames, Collections.emptyList());
+            return;
+        }
+
+        // Show loading and fetch YT playlists
+        android.widget.Toast.makeText(requireContext(), "Cargando tus listas de YouTube...", android.widget.Toast.LENGTH_SHORT).show();
+        youTubeMusicService.fetchMyPlaylists(token, 50, new YouTubeMusicService.PlaylistsCallback() {
+            @Override
+            public void onSuccess(@NonNull List<YouTubeMusicService.PlaylistResult> playlists) {
+                if (!isAdded()) return;
+                showAddToPlaylistDialogInternal(track, localNames, playlists);
+            }
+
+            @Override
+            public void onError(@NonNull String error) {
+                if (!isAdded()) return;
+                showAddToPlaylistDialogInternal(track, localNames, Collections.emptyList());
+            }
+        });
+    }
+
+    private void showAddToPlaylistDialogInternal(@NonNull YouTubeMusicService.TrackResult track, @NonNull List<String> localNames, @NonNull List<YouTubeMusicService.PlaylistResult> ytPlaylists) {
+        List<String> displayNames = new ArrayList<>();
+        for (String name : localNames) {
+            displayNames.add("[Local] " + name);
+        }
+        for (YouTubeMusicService.PlaylistResult playlist : ytPlaylists) {
+            displayNames.add("[YT] " + playlist.title);
+        }
+
+        if (displayNames.isEmpty()) {
+            android.widget.Toast.makeText(requireContext(), "No tienes playlists. Crea una primero.", android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        String[] array = displayNames.toArray(new String[0]);
+        new androidx.appcompat.app.AlertDialog.Builder(requireContext(), R.style.Theme_Sleppify_AlertDialog)
+            .setTitle("Añadir a playlist")
+            .setItems(array, (dialog, which) -> {
+                if (which < localNames.size()) {
+                    String selected = localNames.get(which);
+                    CustomPlaylistsStore.INSTANCE.addTrackToPlaylist(
+                        requireContext(),
+                        selected,
+                        track.videoId,
+                        TextUtils.isEmpty(track.title) ? "Tema" : track.title,
+                        track.subtitle == null ? "" : track.subtitle,
+                        "",
+                        track.thumbnailUrl == null ? "" : track.thumbnailUrl
+                    );
+                    android.widget.Toast.makeText(requireContext(), "Añadida a local: " + selected, android.widget.Toast.LENGTH_SHORT).show();
+                    fetchLibraryPlaylists(true);
+                } else {
+                    int ytIdx = which - localNames.size();
+                    YouTubeMusicService.PlaylistResult selected = ytPlaylists.get(ytIdx);
+                    String token = resolveAccessTokenForPlaylistDetail();
+                    youTubeMusicService.insertTrackToPlaylist(token, selected.playlistId, track.videoId, (success, error) -> {
+                        if (!isAdded()) return;
+                        if (success) {
+                            android.widget.Toast.makeText(requireContext(), "Añadida a YouTube: " + selected.title, android.widget.Toast.LENGTH_SHORT).show();
+                        } else {
+                            android.widget.Toast.makeText(requireContext(), "Error YouTube: " + error, android.widget.Toast.LENGTH_SHORT).show();
+                        }
+                    });
+                }
+            })
+            .setNegativeButton("Cancelar", null)
+            .show();
+    }
     }
 
     private void addSearchTrackToFavorites(@NonNull YouTubeMusicService.TrackResult track) {
@@ -4065,7 +4243,7 @@ public class MusicPlayerFragment extends Fragment {
         androidx.fragment.app.FragmentTransaction transaction = getParentFragmentManager()
                 .beginTransaction()
                 .setReorderingAllowed(true)
-                .setCustomAnimations(R.anim.player_screen_enter, 0)
+                // custom animations removed
                 .add(R.id.fragmentContainer, playerFragment, "song_player");
 
         if (showPlayer) {
@@ -4243,7 +4421,7 @@ public class MusicPlayerFragment extends Fragment {
             getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
-                    .setCustomAnimations(R.anim.player_screen_enter, 0)
+                    // custom animations removed
                     .hide(this)
                     .show(existingPlayer)
                     .commit();
@@ -4262,7 +4440,7 @@ public class MusicPlayerFragment extends Fragment {
             getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
-                    .setCustomAnimations(R.anim.player_screen_enter, 0)
+                    // custom animations removed
                     .hide(this)
                     .add(R.id.fragmentContainer, playerFragment, "song_player")
                     .commit();
@@ -5314,6 +5492,11 @@ public class MusicPlayerFragment extends Fragment {
 
 
     private void openTrack(@NonNull YouTubeMusicService.TrackResult track) {
+        if ("sleppify_action_create_playlist".equals(track.contentId)) {
+            showCreatePlaylistDialog();
+            return;
+        }
+
         if ("playlist".equals(track.resultType)) {
             openPlaylistDetail(track);
             return;
@@ -5492,7 +5675,7 @@ public class MusicPlayerFragment extends Fragment {
             getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
-                    .setCustomAnimations(R.anim.player_screen_enter, 0)
+                    // custom animations removed
                     .hide(this)
                     .show(existingPlayer)
                     .commit();
@@ -5515,7 +5698,7 @@ public class MusicPlayerFragment extends Fragment {
             getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
-                    .setCustomAnimations(R.anim.player_screen_enter, 0)
+                    // custom animations removed
                     .hide(this)
                     .add(R.id.fragmentContainer, playerFragment, "song_player")
                     .commit();
@@ -5622,6 +5805,32 @@ public class MusicPlayerFragment extends Fragment {
                 "timed out",
                 "connection reset",
                 "no address associated");
+    }
+
+    private void showCreatePlaylistDialog() {
+        if (!isAdded()) return;
+        android.widget.EditText input = new android.widget.EditText(requireContext());
+        input.setHint("Nombre de la playlist");
+        int padding = (int) (16 * getResources().getDisplayMetrics().density);
+        input.setPadding(padding, padding, padding, padding);
+
+        new androidx.appcompat.app.AlertDialog.Builder(requireContext(), R.style.Theme_Sleppify_AlertDialog)
+                .setTitle("Crear nueva playlist")
+                .setView(input)
+                .setPositiveButton("Crear", (dialog, which) -> {
+                    String name = input.getText().toString().trim();
+                    if (!TextUtils.isEmpty(name)) {
+                        boolean success = CustomPlaylistsStore.INSTANCE.createPlaylist(requireContext(), name);
+                        if (success) {
+                            android.widget.Toast.makeText(requireContext(), "Playlist creada", android.widget.Toast.LENGTH_SHORT).show();
+                            fetchLibraryPlaylists(true); // reload playlists
+                        } else {
+                            android.widget.Toast.makeText(requireContext(), "La playlist ya existe", android.widget.Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                })
+                .setNegativeButton("Cancelar", null)
+                .show();
     }
 
     @Override

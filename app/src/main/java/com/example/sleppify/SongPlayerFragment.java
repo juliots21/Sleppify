@@ -413,6 +413,18 @@ public class SongPlayerFragment extends Fragment {
 
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
+        
+        // Lightweight internal enter animation (YouTube Music style slide-up)
+        int screenHeight = getResources().getDisplayMetrics().heightPixels;
+        view.setTranslationY(screenHeight);
+        view.setAlpha(0f);
+        view.animate()
+            .translationY(0f)
+            .alpha(1f)
+            .setDuration(320)
+            .setInterpolator(new androidx.interpolator.view.animation.FastOutSlowInInterpolator())
+            .start();
+
         persistentAppContext = requireContext().getApplicationContext();
         if (getActivity() instanceof MainActivity) {
             ((MainActivity) getActivity()).setContainerOverlayMode(true);
@@ -508,9 +520,6 @@ public class SongPlayerFragment extends Fragment {
                     return false;
                 }
                 boolean moved = nextUpAdapter.moveItem(from, to);
-                if (moved) {
-                    applyNextUpOrderToQueue();
-                }
                 return moved;
             }
 
@@ -579,7 +588,6 @@ public class SongPlayerFragment extends Fragment {
                 item.setRotation(0f);
                 ViewCompat.setElevation(item, 0f);
                 applyNextUpOrderToQueue();
-                refreshNextUp();
             }
         };
 
@@ -592,11 +600,13 @@ public class SongPlayerFragment extends Fragment {
 
         currentIndex = Math.max(0, Math.min(currentIndex, tracks.size() - 1));
         bindCurrentTrack(true);
-        localProgressHandler.postDelayed(() -> {
+        
+        // Eliminate the hardcoded 320ms asynchronous delay to prevent freezing behavior
+        localProgressHandler.post(() -> {
             if (!isAdded()) return;
             prewarmYouTubePlayerIfNeeded();
             playCurrentTrack();
-        }, 320L);
+        });
 
         view.findViewById(R.id.btnPrev).setOnClickListener(v -> moveTrack(-1));
         view.findViewById(R.id.btnNext).setOnClickListener(v -> moveTrack(1));
@@ -1137,6 +1147,18 @@ public class SongPlayerFragment extends Fragment {
                 if (tracks.isEmpty()) {
                     return;
                 }
+                
+                // Task 16 Fix: Bring app to foreground if playing YouTube in background
+                if (usingYoutubeFallbackSource && !isAdded()) {
+                    try {
+                        Intent intent = new Intent(persistentAppContext, MainActivity.class);
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                        persistentAppContext.startActivity(intent);
+                    } catch (Exception e) {
+                        Log.e(TAG, "media-session:failed_to_restart_activity", e);
+                    }
+                }
+
                 pauseRequestedByUser = false;
                 isPlaying = true;
                 ensureActivePlaybackIfExpected("media-session-play");
@@ -1167,6 +1189,7 @@ public class SongPlayerFragment extends Fragment {
                 updateMediaSessionState();
                 updateMediaNotification();
                 persistPlaybackSnapshot(false);
+                AudioEffectsService.stopForeground(persistentAppContext, false);
             }
 
             @Override
@@ -1177,6 +1200,11 @@ public class SongPlayerFragment extends Fragment {
             @Override
             public void onSkipToPrevious() {
                 moveTrack(-1);
+            }
+
+            @Override
+            public void onSetShuffleMode(int shuffleMode) {
+                toggleShuffleMode();
             }
 
             @Override
@@ -1271,7 +1299,6 @@ public class SongPlayerFragment extends Fragment {
         }
         currentSeconds = 0;
         lastPersistedSecond = -1;
-        bindCurrentTrack(false);
         playCurrentTrack();
         if (fromCompletion) {
             scheduleAutoplayRecoveryForCurrentTrack();
@@ -1926,10 +1953,9 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
-        // Show black placeholder immediately BEFORE starting any load
-        showPlayerArtworkLoadingState();
-        
         // Bind metadata immediately and FORCE currentSeconds=0
+        // NOTE: Do NOT call showPlayerArtworkLoadingState() here — keep old cover visible
+        // until the new one loads via Glide, preventing the black flash.
         bindCurrentTrackInternal(false, true);
         
         cancelOfflineCrossfade();
@@ -1994,7 +2020,8 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
-        showPlayerArtworkLoadingState(); // Visual hint that we are resolving
+        // Artwork is already being loaded by bindCurrentTrackInternal,
+        // no need to wipe it here — keep old cover visible while resolving.
 
         pendingStreamResolverFuture = streamResolverExecutor.submit(() -> {
             String resolvedUrl = YouTubeStreamResolver.resolveStreamUrl(track.videoId);
@@ -2861,6 +2888,9 @@ public class SongPlayerFragment extends Fragment {
         }
 
         int remainingMs = Math.max(0, durationMs - Math.max(0, positionMs));
+        
+        // Safety: if we have very little time left (e.g. < 500ms) and no crossfade has started,
+        // it might be too late to prepare a new MediaPlayer, but we should try anyway if remainingMs <= crossfadeDurationMs.
         if (remainingMs > crossfadeDurationMs) {
             return;
         }
@@ -3255,7 +3285,8 @@ public class SongPlayerFragment extends Fragment {
 
         long delay = bootstrapArtwork ? PLAYER_BACKDROP_DEFER_LOAD_MS : 0L;
         if (delay <= 0L) {
-            localProgressHandler.post(deferredBackdropLoadRunnable);
+            // Direct call: no extra frame delay for non-bootstrap loads
+            deferredBackdropLoadRunnable.run();
         } else {
             localProgressHandler.postDelayed(deferredBackdropLoadRunnable, delay);
         }
@@ -3553,10 +3584,8 @@ public class SongPlayerFragment extends Fragment {
                 if (bootstrapArtwork) {
                     ivPlayerBackdrop.setImageDrawable(null);
                     ivPlayerBackdrop.setAlpha(0f);
-                } else {
-                    ivPlayerBackdrop.setImageDrawable(null);
-                    ivPlayerBackdrop.setAlpha(0f);
                 }
+                // Non-bootstrap: keep old backdrop visible (don't wipe it)
             }
 
             @Override
@@ -3568,10 +3597,8 @@ public class SongPlayerFragment extends Fragment {
                 if (bootstrapArtwork) {
                     ivPlayerBackdrop.setImageDrawable(null);
                     ivPlayerBackdrop.setAlpha(0f);
-                } else {
-                    ivPlayerBackdrop.setImageDrawable(null);
-                    ivPlayerBackdrop.setAlpha(0f);
                 }
+                // Non-bootstrap: keep old backdrop visible on failure
                 completePlayerArtworkBootstrap();
             }
         };
@@ -3580,6 +3607,17 @@ public class SongPlayerFragment extends Fragment {
                 .asDrawable()
                 .load(preferredImageUrl)
                 .centerCrop()
+                .diskCacheStrategy(DiskCacheStrategy.ALL)
+                .error(
+                        TextUtils.isEmpty(fallbackImageUrl)
+                                || TextUtils.equals(preferredImageUrl, fallbackImageUrl)
+                                ? null
+                                : Glide.with(this)
+                                        .asDrawable()
+                                        .load(fallbackImageUrl)
+                                        .centerCrop()
+                                        .diskCacheStrategy(DiskCacheStrategy.ALL)
+                )
                 .into(playerBackdropTarget);
     }
 
@@ -4238,6 +4276,8 @@ public class SongPlayerFragment extends Fragment {
         String targetVideoId = targetIndexFromArgs < videoIds.size()
                 ? safeValue(videoIds.get(targetIndexFromArgs))
                 : "";
+        
+        // Important: check if the track we ARE playing is the same as the one we WILL play
         boolean sameAsLoaded = !TextUtils.isEmpty(targetVideoId)
                 && TextUtils.equals(targetVideoId, loadedVideoId);
 
@@ -4269,8 +4309,14 @@ public class SongPlayerFragment extends Fragment {
 
         currentIndex = Math.max(0, Math.min(selectedIndex, tracks.size() - 1));
         isPlaying = keepPlaying;
-        loadedVideoId = "";
-        lastPersistedSecond = -1;
+        
+        // Only clear loadedVideoId if we are actually switching tracks OR starting from beginning.
+        // This prevents the current song from RESTARTING when only the rest of the queue changed.
+        if (!sameAsLoaded || startFromBeginning) {
+            loadedVideoId = "";
+            lastPersistedSecond = -1;
+        }
+        
         resetEmbedErrorAutoskipWindow();
 
         cacheOriginalQueueOrder();
@@ -4286,8 +4332,16 @@ public class SongPlayerFragment extends Fragment {
             currentSeconds = 0;
         }
 
-        bindCurrentTrack(!startFromBeginning);
-        playCurrentTrack();
+        if (!sameAsLoaded || startFromBeginning) {
+            bindCurrentTrack(!startFromBeginning);
+            playCurrentTrack();
+        } else {
+            // Queue changed but current song is the same: lightweight sync only.
+            // Do NOT call bindCurrentTrack or playCurrentTrack to avoid any lag/pause.
+            refreshNextUp();
+            prefetchNextTrackStream();
+        }
+        
         persistPlaybackSnapshot(false);
     }
 
@@ -4643,6 +4697,8 @@ public class SongPlayerFragment extends Fragment {
                 persistentAppContext, isPlaying ? PlaybackStateCompat.ACTION_PAUSE : PlaybackStateCompat.ACTION_PLAY);
         PendingIntent nextIntent = androidx.media.session.MediaButtonReceiver.buildMediaButtonPendingIntent(
                 persistentAppContext, PlaybackStateCompat.ACTION_SKIP_TO_NEXT);
+        PendingIntent shuffleIntent = androidx.media.session.MediaButtonReceiver.buildMediaButtonPendingIntent(
+                persistentAppContext, PlaybackStateCompat.ACTION_SET_SHUFFLE_MODE);
 
         Intent openAppIntent = new Intent(persistentAppContext, MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
@@ -4670,6 +4726,7 @@ public class SongPlayerFragment extends Fragment {
                         playPauseIntent
                 )
                 .addAction(android.R.drawable.ic_media_next, "Siguiente", nextIntent)
+                .addAction(R.drawable.ic_player_shuffle, "Aleatorio", shuffleIntent)
                 .setStyle(new androidx.media.app.NotificationCompat.MediaStyle()
                         .setMediaSession(mediaSession.getSessionToken())
                         .setShowActionsInCompactView(0, 1, 2));
@@ -4683,7 +4740,12 @@ public class SongPlayerFragment extends Fragment {
                 builder.setLargeIcon((Bitmap) null);
             }
 
-        NotificationManagerCompat.from(persistentAppContext).notify(MEDIA_NOTIFICATION_ID, builder.build());
+        android.app.Notification notification = builder.build();
+        if (isPlaying) {
+            AudioEffectsService.startForeground(persistentAppContext, MEDIA_NOTIFICATION_ID, notification);
+        } else {
+            NotificationManagerCompat.from(persistentAppContext).notify(MEDIA_NOTIFICATION_ID, notification);
+        }
     }
 
     private void clearMediaNotification() {

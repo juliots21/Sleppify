@@ -69,6 +69,7 @@ public final class CloudSyncManager {
     private static final String DOC_SETTINGS = "settings";
     private static final String DOC_AGENDA = "agenda";
     private static final String DOC_STREAMING = "streaming";
+    private static final String COLLECTION_PLAYLISTS = "playlists";
 
     private static final String FIELD_PREFS = "prefs";
     private static final String FIELD_UPDATED_AT = "updatedAt";
@@ -1834,6 +1835,71 @@ public final class CloudSyncManager {
                 .document(uid)
                 .collection(APP_SCOPE_COLLECTION)
                 .document(DOC_STREAMING);
+    }
+
+    public void syncPlaylistToCloud(@NonNull String playlistName, @NonNull List<FavoritesPlaylistStore.FavoriteTrack> tracks) {
+        String uid = activeUserId;
+        if (TextUtils.isEmpty(uid)) return;
+
+        Map<String, Object> data = new HashMap<>();
+        List<Map<String, Object>> tracksList = new ArrayList<>();
+        for (FavoritesPlaylistStore.FavoriteTrack t : tracks) {
+            Map<String, Object> tm = new HashMap<>();
+            tm.put("videoId", t.videoId);
+            tm.put("title", t.title);
+            tm.put("artist", t.artist);
+            tm.put("duration", t.duration);
+            tm.put("imageUrl", t.imageUrl);
+            tracksList.add(tm);
+        }
+        data.put("tracks", tracksList);
+
+        firestore.collection(USERS_COLLECTION).document(uid)
+                .collection(COLLECTION_PLAYLISTS).document(playlistName)
+                .set(data, com.google.firebase.firestore.SetOptions.merge())
+                .addOnSuccessListener(aVoid -> Log.d(TAG, "Playlist " + playlistName + " synced to cloud"))
+                .addOnFailureListener(e -> Log.e(TAG, "Error syncing playlist " + playlistName, e));
+    }
+
+    public interface CloudPlaylistsCallback {
+        void onResult(@NonNull Map<String, List<FavoritesPlaylistStore.FavoriteTrack>> playlists);
+    }
+
+    public void fetchCloudPlaylists(@NonNull CloudPlaylistsCallback callback) {
+        String uid = activeUserId;
+        if (TextUtils.isEmpty(uid)) {
+            callback.onResult(new HashMap<>());
+            return;
+        }
+
+        firestore.collection(USERS_COLLECTION).document(uid)
+                .collection(COLLECTION_PLAYLISTS)
+                .get()
+                .addOnSuccessListener(documents -> {
+                    Map<String, List<FavoritesPlaylistStore.FavoriteTrack>> result = new HashMap<>();
+                    for (com.google.firebase.firestore.DocumentSnapshot doc : documents) {
+                        String name = doc.getId();
+                        List<Map<String, Object>> tracksData = (List<Map<String, Object>>) doc.get("tracks");
+                        if (tracksData == null) continue;
+
+                        List<FavoritesPlaylistStore.FavoriteTrack> tracks = new ArrayList<>();
+                        for (Map<String, Object> m : tracksData) {
+                            tracks.add(new FavoritesPlaylistStore.FavoriteTrack(
+                                    (String) m.get("videoId"),
+                                    (String) m.get("title"),
+                                    (String) m.get("artist"),
+                                    (String) m.get("duration"),
+                                    (String) m.get("imageUrl")
+                            ));
+                        }
+                        result.put(name, tracks);
+                    }
+                    callback.onResult(result);
+                })
+                .addOnFailureListener(e -> {
+                    Log.e(TAG, "Error fetching cloud playlists", e);
+                    callback.onResult(new HashMap<>());
+                });
     }
 
     private static final class PendingSync {

@@ -52,7 +52,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 class ScannerFragment : Fragment() {
 
     companion object {
-        private const val DETECTION_FREEZE_MS = 5000L
     }
 
     private var previewScanner: PreviewView? = null
@@ -68,6 +67,7 @@ class ScannerFragment : Fragment() {
     private var rowScanResultValue: View? = null
     private var ivScanResultChevron: ImageView? = null
     private var btnScanResultViewOptions: TextView? = null
+    private var btnCancelScan: View? = null
     private var pendingScanForMenu: DetectedScanItem? = null
     private var pendingScanIsUrl: Boolean = false
     private var scanOptionsBottomSheet: BottomSheetDialog? = null
@@ -118,9 +118,11 @@ class ScannerFragment : Fragment() {
         rowScanResultValue = view.findViewById(R.id.rowScanResultValue)
         ivScanResultChevron = view.findViewById(R.id.ivScanResultChevron)
         btnScanResultViewOptions = view.findViewById(R.id.btnScanResultViewOptions)
+        btnCancelScan = view.findViewById(R.id.btnCancelScan)
 
         rowScanResultValue?.setOnClickListener { onScanResultRowClick() }
         btnScanResultViewOptions?.setOnClickListener { showScanResultOptionsMenu() }
+        btnCancelScan?.setOnClickListener { resetDetectionState() }
 
         previewScanner?.let { pv ->
             zoomGestureDetector = ScaleGestureDetector(requireContext(), object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
@@ -180,6 +182,7 @@ class ScannerFragment : Fragment() {
         rowScanResultValue = null
         ivScanResultChevron = null
         btnScanResultViewOptions = null
+        btnCancelScan = null
         actionImportImages = null
         scannerRoot = null
         scanArea = null
@@ -272,7 +275,6 @@ class ScannerFragment : Fragment() {
         }
 
         showScanResultBottomCard(items)
-        scheduleDetectionRelease()
     }
 
     private fun ensureCameraPermissionAndStart() {
@@ -390,7 +392,6 @@ class ScannerFragment : Fragment() {
             if (!isAdded || previewScanner == null) { detectionLock.set(false); return@launch }
             showFreezeFrame()
             showScanResultBottomCard(items)
-            scheduleDetectionRelease()
         }
     }
 
@@ -542,13 +543,6 @@ class ScannerFragment : Fragment() {
         freezeOverlay?.visibility = View.GONE
         freezeOverlay?.setImageBitmap(null)
         hideScanResultCard()
-    }
-
-    private fun scheduleDetectionRelease() {
-        viewLifecycleOwner.lifecycleScope.launch {
-            delay(DETECTION_FREEZE_MS)
-            resetDetectionState()
-        }
     }
 
     private data class DetectedScanItem(val rawValue: String, val detectedType: String)

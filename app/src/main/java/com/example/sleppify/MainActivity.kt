@@ -65,7 +65,7 @@ class MainActivity : AppCompatActivity() {
 
         private const val RESUME_WORK_DELAY_MS = 180L
         private const val PREFETCH_DEBOUNCE_MS = 800L
-        private const val PREFETCH_MIN_INTERVAL_MS = 12000L
+        private const val PREFETCH_MIN_INTERVAL_MS = 3 * 60 * 60 * 1000L // 3 hours
         private const val MODULE_LOAD_OVERLAY_MIN_MS = 120L
         private const val MODULE_CONTENT_FADE_IN_MS = 280L
         
@@ -781,7 +781,7 @@ class MainActivity : AppCompatActivity() {
             val fallback = resolveSongPlayerReturnTarget(player.externalGetReturnTargetTag())
             supportFragmentManager.beginTransaction().apply {
                 setReorderingAllowed(true)
-                setCustomAnimations(0, R.anim.player_screen_exit)
+                // setCustomAnimations deleted
                 if (fallback != null && fallback.isAdded && fallback != player) {
                     hide(player).show(fallback)
                 } else {

@@ -1221,12 +1221,13 @@ public class PlaylistDetailFragment extends Fragment {
         String effectiveAccessToken = resolveYoutubeAccessToken(accessToken);
         List<PlaylistTrack> cachedTracks = sanitizeTracksForPlaylist(playlistId, loadCachedTracks(playlistId));
         boolean favoritesContext = isFavoritesPlaylistContext(playlistId);
+        boolean customContext = isCustomPlaylistContext(playlistId);
         int requestedLimit = resolveTrackFetchLimit(forceRefresh, loadMore);
 
-        if (favoritesContext) {
+        if (favoritesContext || customContext) {
             renderTracks(cachedTracks, playlistId, true);
             if (cachedTracks.isEmpty() && !isOfflineStatusPinned()) {
-                headerTracksState = "Aun no guardas canciones en Favoritos.";
+                headerTracksState = customContext ? "Aun no añades canciones a esta playlist." : "Aun no guardas canciones en Favoritos.";
                 notifyHeaderChanged();
             }
             if (forceRefresh) {
@@ -2263,13 +2264,17 @@ public class PlaylistDetailFragment extends Fragment {
             List<FavoritesPlaylistStore.FavoriteTrack> favorites = FavoritesPlaylistStore.loadFavorites(requireContext());
             List<PlaylistTrack> mapped = new ArrayList<>(favorites.size());
             for (FavoritesPlaylistStore.FavoriteTrack track : favorites) {
-                mapped.add(new PlaylistTrack(
-                        track.videoId,
-                        track.title,
-                        track.artist,
-                        track.duration,
-                        track.imageUrl
-                ));
+                mapped.add(new PlaylistTrack(track.videoId, track.title, track.artist, track.duration, track.imageUrl));
+            }
+            return mapped;
+        }
+
+        if (isCustomPlaylistContext(playlistId) && isAdded()) {
+            String name = playlistId.substring(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX.length());
+            List<FavoritesPlaylistStore.FavoriteTrack> custom = CustomPlaylistsStore.INSTANCE.getTracksFromPlaylist(requireContext(), name);
+            List<PlaylistTrack> mapped = new ArrayList<>(custom.size());
+            for (FavoritesPlaylistStore.FavoriteTrack track : custom) {
+                mapped.add(new PlaylistTrack(track.videoId, track.title, track.artist, track.duration, track.imageUrl));
             }
             return mapped;
         }
@@ -2324,6 +2329,10 @@ public class PlaylistDetailFragment extends Fragment {
 
     private boolean isFavoritesPlaylistContext(@NonNull String playlistId) {
         return FavoritesPlaylistStore.PLAYLIST_ID.equals(playlistId);
+    }
+
+    private boolean isCustomPlaylistContext(@NonNull String playlistId) {
+        return playlistId.startsWith(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX);
     }
 
     public void externalRefreshFavoritesIfActive() {
@@ -3411,7 +3420,7 @@ public class PlaylistDetailFragment extends Fragment {
 
             getParentFragmentManager()
                     .beginTransaction()
-                .setCustomAnimations(R.anim.player_screen_enter, 0)
+                // custom animations removed
                     .setReorderingAllowed(true)
                     .hide(this)
                     .show(existingPlayer)
@@ -3430,7 +3439,7 @@ public class PlaylistDetailFragment extends Fragment {
 
             getParentFragmentManager()
                     .beginTransaction()
-                    .setCustomAnimations(R.anim.player_screen_enter, 0)
+                    // custom animations removed
                     .setReorderingAllowed(true)
                     .hide(this)
                     .add(R.id.fragmentContainer, playerFragment, "song_player")
@@ -3607,7 +3616,7 @@ public class PlaylistDetailFragment extends Fragment {
             if (showPlayer) {
                 getParentFragmentManager()
                         .beginTransaction()
-                        .setCustomAnimations(R.anim.player_screen_enter, 0)
+                        // custom animations removed
                         .setReorderingAllowed(true)
                         .hide(this)
                         .show(existingPlayer)
@@ -3645,7 +3654,7 @@ public class PlaylistDetailFragment extends Fragment {
 
         if (showPlayer) {
             transaction
-                    .setCustomAnimations(R.anim.player_screen_enter, 0)
+                    // custom animations removed
                     .hide(this)
                     .commit();
         } else {

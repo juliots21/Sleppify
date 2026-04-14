@@ -445,7 +445,7 @@ public class WeeklySchedulerFragment extends Fragment {
 
         loadAgendaFromLocal(true);
         refreshSelectedDayTasks();
-        scheduleBackfillForIncompleteTaskMetadata(true, 0);
+        scheduleBackfillForIncompleteTaskMetadata(true, TASK_METADATA_PULL_REFRESH_LIMIT);
         updateFabLoginState();
         setAgendaPullRefreshState(false);
     }

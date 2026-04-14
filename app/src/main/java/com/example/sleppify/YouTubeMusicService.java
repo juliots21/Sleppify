@@ -94,6 +94,10 @@ public final class YouTubeMusicService {
         void onError(@NonNull String error);
     }
 
+    public interface SimpleResultCallback {
+        void onResult(boolean success, @Nullable String error);
+    }
+
     public interface PlaylistMetaCallback {
         void onSuccess(@NonNull PlaylistResult playlist);
         void onError(@NonNull String error);
@@ -261,6 +265,24 @@ public final class YouTubeMusicService {
             } catch (Exception e) {
                 String error = e.getMessage() == null ? "No se pudo cargar la biblioteca." : e.getMessage();
                 mainHandler.post(() -> callback.onError(error));
+            }
+        });
+    }
+
+    public void insertTrackToPlaylist(@NonNull String accessToken, @NonNull String playlistId, @NonNull String videoId, @NonNull SimpleResultCallback callback) {
+        final String token = accessToken.trim();
+        if (token.isEmpty() || playlistId.isEmpty() || videoId.isEmpty()) {
+            callback.onResult(false, "Parametros invalidos.");
+            return;
+        }
+
+        executor.execute(() -> {
+            try {
+                boolean ok = performInsertPlaylistTrackRequest(token, playlistId, videoId);
+                mainHandler.post(() -> callback.onResult(ok, ok ? null : "No se pudo añadir a la playlist."));
+            } catch (Exception e) {
+                Log.e("YouTubeMusicService", "Error inserting playlist track", e);
+                mainHandler.post(() -> callback.onResult(false, e.getMessage()));
             }
         });
     }
@@ -1418,5 +1440,33 @@ public final class YouTubeMusicService {
     @NonNull
     public String getYoutubeReadonlyScope() {
         return YT_SCOPE_READONLY;
+    }
+
+    private boolean performInsertPlaylistTrackRequest(@NonNull String token, @NonNull String playlistId, @NonNull String videoId) throws Exception {
+        String urlString = API_BASE_URL + "/playlistItems?part=snippet";
+        URL url = new URL(urlString);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Authorization", "Bearer " + token);
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setDoOutput(true);
+
+        JSONObject snippet = new JSONObject();
+        snippet.put("playlistId", playlistId);
+        JSONObject resourceId = new JSONObject();
+        resourceId.put("kind", "youtube#video");
+        resourceId.put("videoId", videoId);
+        snippet.put("resourceId", resourceId);
+
+        JSONObject root = new JSONObject();
+        root.put("snippet", snippet);
+
+        try (OutputStream os = conn.getOutputStream()) {
+            byte[] input = root.toString().getBytes(StandardCharsets.UTF_8);
+            os.write(input, 0, input.length);
+        }
+
+        int code = conn.getResponseCode();
+        return code >= 200 && code < 300;
     }
 }

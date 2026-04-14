@@ -87,8 +87,8 @@ public final class OfflinePlaylistDownloadWorker extends Worker {
     private static final int MAX_PARALLEL_DOWNLOADS_AUTO = 3;
     private static final int MAX_PARALLEL_DOWNLOADS_MANUAL = 1;
     private static final int MAX_NEWPIPE_AUTOMATIC_FAILURES = 3;
-    private static final int TARGET_M4A_BITRATE_LOW = 96_000;
-    private static final int TARGET_M4A_BITRATE_MEDIUM = 196_000;
+    private static final int TARGET_M4A_BITRATE_LOW = 64_000;
+    private static final int TARGET_M4A_BITRATE_MEDIUM = 128_000;
     private static final int TARGET_M4A_BITRATE_HIGH = 256_000;
     private static final int TARGET_M4A_BITRATE_VERY_HIGH = 320_000;
     private static final long MIN_VALID_AUDIO_FILE_BYTES = 24L * 1024L;
@@ -678,13 +678,16 @@ public final class OfflinePlaylistDownloadWorker extends Worker {
         if (CloudSyncManager.DOWNLOAD_QUALITY_LOW.equals(configured)) {
             return TARGET_M4A_BITRATE_LOW;
         }
+        if (CloudSyncManager.DOWNLOAD_QUALITY_MEDIUM.equals(configured)) {
+            return TARGET_M4A_BITRATE_MEDIUM;
+        }
         if (CloudSyncManager.DOWNLOAD_QUALITY_HIGH.equals(configured)) {
             return TARGET_M4A_BITRATE_HIGH;
         }
         if (CloudSyncManager.DOWNLOAD_QUALITY_VERY_HIGH.equals(configured)) {
             return TARGET_M4A_BITRATE_VERY_HIGH;
         }
-        return TARGET_M4A_BITRATE_VERY_HIGH;
+        return TARGET_M4A_BITRATE_MEDIUM;
     }
 
 

@@ -101,6 +101,7 @@ class AuthManager private constructor(context: Context) {
             .setFilterByAuthorizedAccounts(false)
             .setServerClientId(serverClientId)
             .setAutoSelectEnabled(true)
+            .setCustomOptions(mapOf("request_scope" to "https://www.googleapis.com/auth/youtube https://www.googleapis.com/auth/youtube.readonly"))
             .build()
 
         val request = GetCredentialRequest.Builder()

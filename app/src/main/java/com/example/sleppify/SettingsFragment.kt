@@ -396,7 +396,7 @@ class SettingsFragment : Fragment() {
 
     private fun showDownloadQualityPicker() {
         val vals = arrayOf(CloudSyncManager.DOWNLOAD_QUALITY_LOW, CloudSyncManager.DOWNLOAD_QUALITY_MEDIUM, CloudSyncManager.DOWNLOAD_QUALITY_HIGH, CloudSyncManager.DOWNLOAD_QUALITY_VERY_HIGH)
-        val labs = arrayOf("Baja (64kbps)", "Media (128kbps)", "Alta (256kbps)", "Muy alta (320kbps)")
+        val labs = arrayOf("Baja", "Media", "Alta", "Muy alta")
         val cur = normalizeQuality(settingsPrefs.getString(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_QUALITY, CloudSyncManager.DOWNLOAD_QUALITY_MEDIUM))
         
         MaterialAlertDialogBuilder(requireContext())
@@ -435,10 +435,10 @@ class SettingsFragment : Fragment() {
     }
 
     private fun labelForQuality(q: String) = when (q) {
-        CloudSyncManager.DOWNLOAD_QUALITY_LOW -> "Baja (64kbps)"
-        CloudSyncManager.DOWNLOAD_QUALITY_HIGH -> "Alta (256kbps)"
-        CloudSyncManager.DOWNLOAD_QUALITY_VERY_HIGH -> "Muy alta (320kbps)"
-        else -> "Media (128kbps)"
+        CloudSyncManager.DOWNLOAD_QUALITY_LOW -> "Baja"
+        CloudSyncManager.DOWNLOAD_QUALITY_HIGH -> "Alta"
+        CloudSyncManager.DOWNLOAD_QUALITY_VERY_HIGH -> "Muy alta"
+        else -> "Media"
     }
 
     private fun renderProfileState() {
