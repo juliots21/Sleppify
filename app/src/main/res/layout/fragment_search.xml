@@ -6,53 +6,6 @@
     android:layout_height="match_parent"
     android:background="@color/surface_dark">
 
-    <!-- Shared Top App Bar -->
-    <LinearLayout
-        android:id="@+id/topAppBar"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="@color/surface_dark"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingHorizontal="16dp"
-        android:paddingBottom="8dp"
-        app:layout_constraintTop_toTopOf="parent">
-
-        <TextView
-            android:id="@+id/tvModuleTitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="6dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:drawablePadding="10dp"
-            android:gravity="start|center_vertical"
-            android:minHeight="40dp"
-            android:paddingStart="10dp"
-            android:paddingEnd="10dp"
-            android:paddingVertical="8dp"
-            android:text="@string/header_brand_title"
-            android:textColor="@color/text_primary"
-            android:textSize="18sp"
-            android:textStyle="bold" />
-
-        <Space
-            android:layout_width="0dp"
-            android:layout_height="1dp"
-            android:layout_weight="1" />
-
-        <ImageView
-            android:id="@+id/btnSettings"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:clickable="true"
-            android:contentDescription="@string/header_action_settings"
-            android:focusable="true"
-            android:padding="8dp"
-            android:src="@drawable/ic_settings"
-            app:tint="@color/text_secondary" />
-    </LinearLayout>
-
     <!-- Search Bar -->
     <LinearLayout
         android:id="@+id/llSearchBar"
@@ -62,7 +15,7 @@
         android:orientation="horizontal"
         android:paddingStart="8dp"
         android:paddingEnd="16dp"
-        app:layout_constraintTop_toBottomOf="@id/topAppBar">
+        app:layout_constraintTop_toTopOf="parent">
 
         <LinearLayout
             android:layout_width="0dp"
@@ -144,7 +97,7 @@
         android:id="@+id/flResultsContainer"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        app:layout_constraintBottom_toTopOf="@id/llMiniPlayer"
+        app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintTop_toBottomOf="@id/llSearchState">
 
         <LinearLayout
@@ -239,8 +192,8 @@
                         android:id="@+id/btnFeaturedShare"
                         android:layout_width="0dp"
                         android:layout_height="46dp"
-                        android:layout_marginStart="10dp"
                         android:layout_weight="1"
+                        android:layout_marginStart="10dp"
                         android:fontFamily="@font/inter_variable"
                         android:text="Compartir"
                         android:textAllCaps="false"
@@ -271,127 +224,19 @@
         </LinearLayout>
     </FrameLayout>
 
-    <LinearLayout
-        android:id="@+id/llMiniPlayer"
-        android:layout_width="0dp"
-        android:layout_height="84dp"
-        android:layout_marginBottom="-8dp"
-        android:background="@drawable/bg_playlist_footer_extension"
-        android:clickable="true"
-        android:focusable="true"
-        android:foreground="?attr/selectableItemBackground"
-        android:gravity="center_vertical"
-        android:orientation="vertical"
-        android:paddingTop="8dp"
-        android:paddingBottom="6dp"
-        android:visibility="gone"
-        app:layout_constraintBottom_toTopOf="@id/bottomNavigation"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent">
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp">
-
-            <com.google.android.material.imageview.ShapeableImageView
-                android:id="@+id/ivMiniPlayerArt"
-                android:layout_width="42dp"
-                android:layout_height="42dp"
-                android:background="@color/surface_high"
-                android:scaleType="centerCrop"
-                android:src="@drawable/ic_music"
-                app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Small" />
-
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="10dp"
-                android:layout_weight="1"
-                android:orientation="vertical">
-
-                <TextView
-                    android:id="@+id/tvMiniPlayerTitle"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:ellipsize="end"
-                    android:fontFamily="@font/manrope_variable"
-                    android:maxLines="1"
-                    android:text="Reproduciendo"
-                    android:textColor="@color/text_primary"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/tvMiniPlayerSubtitle"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:ellipsize="end"
-                    android:fontFamily="@font/inter_variable"
-                    android:maxLines="1"
-                    android:text=""
-                    android:textColor="@color/text_secondary"
-                    android:textSize="10sp" />
-            </LinearLayout>
-
-            <ImageButton
-                android:id="@+id/btnMiniPlayPause"
-                android:layout_width="38dp"
-                android:layout_height="38dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:padding="6dp"
-                android:src="@drawable/ic_mini_play"
-                app:tint="@color/stitch_blue" />
-        </LinearLayout>
-
-        <SeekBar
-            android:id="@+id/sbMiniPlayerProgress"
-            android:layout_width="match_parent"
-            android:layout_height="16dp"
-            android:layout_marginTop="4dp"
-            android:enabled="false"
-            android:max="1000"
-            android:progress="0"
-            android:progressTint="@color/stitch_blue"
-            android:splitTrack="false"
-            android:thumb="@null"
-            android:thumbTint="@android:color/transparent" />
-    </LinearLayout>
-
-    <com.google.android.material.bottomnavigation.BottomNavigationView
-        android:id="@+id/bottomNavigation"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="@color/surface_low"
-        app:itemIconTint="@color/stitch_blue"
-        app:itemTextColor="@color/stitch_blue"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:menu="@menu/bottom_nav_menu" />
-
-    <FrameLayout
-        android:id="@+id/searchPlayerContainer"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:elevation="9dp"
-        app:layout_constraintBottom_toTopOf="@id/llMiniPlayer"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/llSearchBar" />
-
     <!-- Search suggestions -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/rvSearchSuggestions"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="0dp"
         android:clipToPadding="false"
         android:paddingBottom="12dp"
         android:visibility="visible"
+        android:background="@color/surface_dark"
+        app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintTop_toBottomOf="@id/vDivider" />
 
-    <!-- Loading Overlay (Sincronizado con MainActivity y otros modulos) -->
+    <!-- Loading Overlay -->
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/moduleLoadingOverlay"
         android:layout_width="0dp"
@@ -401,7 +246,7 @@
         android:visibility="gone"
         android:clickable="true"
         android:focusable="true"
-        app:layout_constraintBottom_toTopOf="@id/bottomNavigation"
+        app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/llSearchBar">

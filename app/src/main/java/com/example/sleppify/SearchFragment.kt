@@ -1,15 +1,10 @@
 package com.example.sleppify
 
 import android.content.Context
-import android.content.Intent
-import android.content.SharedPreferences
 import android.graphics.Typeface
-import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.text.Editable
 import android.text.TextUtils
 import android.text.TextWatcher
@@ -22,15 +17,10 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.content.res.ResourcesCompat
-import androidx.core.graphics.Insets
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
+import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
-import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -38,7 +28,6 @@ import com.bumptech.glide.Glide
 import com.bumptech.glide.load.engine.DiskCacheStrategy
 import com.example.sleppify.utils.YouTubeCropTransformation
 import com.example.sleppify.utils.YouTubeImageProcessor
-import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.google.android.material.imageview.ShapeableImageView
 import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.Dispatchers
@@ -49,25 +38,9 @@ import org.json.JSONArray
 import java.text.Normalizer
 import java.util.*
 
-/**
- * Optimized Kotlin version of SearchActivity.
- * Managed by Coroutines for high-performance search and predictive pre-fetching.
- */
-class SearchActivity : AppCompatActivity() {
+class SearchFragment : Fragment() {
 
     companion object {
-        const val EXTRA_RESULT_TYPE = "search_result_type"
-        const val EXTRA_RESULT_VIDEO_ID = "search_result_video_id"
-        const val EXTRA_RESULT_CONTENT_ID = "search_result_content_id"
-        const val EXTRA_RESULT_TITLE = "search_result_title"
-        const val EXTRA_RESULT_SUBTITLE = "search_result_subtitle"
-        const val EXTRA_RESULT_THUMBNAIL = "search_result_thumbnail"
-        const val EXTRA_RESULT_TRACKS_JSON = "search_result_tracks_json"
-        
-        const val RESULT_TRACK_SELECTED = 100
-        const val RESULT_PLAYLIST_SELECTED = 101
-        private const val TAG_SONG_PLAYER_SEARCH = "song_player_search"
-
         private const val PREFS_STREAMING_CACHE = "streaming_cache"
         private const val PREF_RECENT_SEARCH_QUERIES = "stream_recent_search_queries"
         private const val SEARCH_PAGE_SIZE = 20
@@ -96,24 +69,7 @@ class SearchActivity : AppCompatActivity() {
     private lateinit var ivFeaturedThumb: ShapeableImageView
     private lateinit var tvFeaturedTitle: TextView
     private lateinit var tvFeaturedSubtitle: TextView
-    private lateinit var tvModuleTitle: TextView
-    private lateinit var btnSettings: View
     private lateinit var moduleLoadingOverlay: View
-    private lateinit var miniPlayer: View
-    private lateinit var miniPlayerArt: ShapeableImageView
-    private lateinit var miniPlayerTitle: TextView
-    private lateinit var miniPlayerSubtitle: TextView
-    private lateinit var miniPlayerPlayPause: ImageView
-    private lateinit var miniPlayerProgress: android.widget.SeekBar
-    private lateinit var bottomNavigation: BottomNavigationView
-
-    private val miniHandler = Handler(Looper.getMainLooper())
-    private val miniTicker = object : Runnable {
-        override fun run() {
-            refreshMiniPlayerUi()
-            miniHandler.postDelayed(this, 500L)
-        }
-    }
 
     private var adapter: SearchResultsAdapter? = null
     private var featuredTrack: YouTubeMusicService.TrackResult? = null
@@ -125,18 +81,16 @@ class SearchActivity : AppCompatActivity() {
     private var activeSearchQuery = ""
     private var latestSearchRequestId = 0L
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-        setContentView(R.layout.activity_search)
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
+        return inflater.inflate(R.layout.fragment_search, container, false)
+    }
 
-        initViews()
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        initViews(view)
         setupRecyclerView()
         setupSuggestionsRecyclerView()
         setupSearchInput()
-        configureStandardHeader()
-        setupBottomFooter()
-        setupMiniPlayer()
         
         restoreRecentSearchQueries()
         refreshSearchSuggestions("")
@@ -144,57 +98,36 @@ class SearchActivity : AppCompatActivity() {
         etSearchQuery.requestFocus()
         lifecycleScope.launch {
             delay(350)
-            if (!isFinishing && !isDestroyed) {
-                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            if (isAdded) {
+                val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
                 imm?.showSoftInput(etSearchQuery, InputMethodManager.SHOW_IMPLICIT)
             }
         }
-
-        overridePendingTransition(R.anim.fade_in, R.anim.fade_out)
     }
 
-    private fun initViews() {
-        val root = findViewById<View>(R.id.llSearchRoot)
-        val topAppBar = findViewById<View>(R.id.topAppBar)
-        tvModuleTitle = findViewById(R.id.tvModuleTitle)
-        btnSettings = findViewById(R.id.btnSettings)
-        etSearchQuery = findViewById(R.id.etSearchQuery)
-        llSearchBar = findViewById(R.id.llSearchBar)
-        ivSearchClear = findViewById(R.id.ivSearchClear)
-        rvSearchResults = findViewById(R.id.rvSearchResults)
-        tvSearchState = findViewById(R.id.tvSearchState)
-        rvSearchSuggestions = findViewById(R.id.rvSearchSuggestions)
-        llFeaturedResult = findViewById(R.id.llFeaturedResult)
-        ivFeaturedThumb = findViewById(R.id.ivFeaturedThumb)
-        tvFeaturedTitle = findViewById(R.id.tvFeaturedTitle)
-        tvFeaturedSubtitle = findViewById(R.id.tvFeaturedSubtitle)
-        moduleLoadingOverlay = findViewById(R.id.moduleLoadingOverlay)
-        miniPlayer = findViewById(R.id.llMiniPlayer)
-        miniPlayerArt = findViewById(R.id.ivMiniPlayerArt)
-        miniPlayerTitle = findViewById(R.id.tvMiniPlayerTitle)
-        miniPlayerSubtitle = findViewById(R.id.tvMiniPlayerSubtitle)
-        miniPlayerPlayPause = findViewById(R.id.btnMiniPlayPause)
-        miniPlayerProgress = findViewById(R.id.sbMiniPlayerProgress)
-        bottomNavigation = findViewById(R.id.bottomNavigation)
-
-        ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
-            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            val extraPadding = (8 * resources.displayMetrics.density).toInt()
-            topAppBar.setPadding(topAppBar.paddingLeft, systemBars.top + extraPadding, topAppBar.paddingRight, topAppBar.paddingBottom)
-            bottomNavigation.setPadding(systemBars.left, 0, systemBars.right, systemBars.bottom)
-            insets
-        }
+    private fun initViews(view: View) {
+        etSearchQuery = view.findViewById(R.id.etSearchQuery)
+        llSearchBar = view.findViewById(R.id.llSearchBar)
+        ivSearchClear = view.findViewById(R.id.ivSearchClear)
+        rvSearchResults = view.findViewById(R.id.rvSearchResults)
+        tvSearchState = view.findViewById(R.id.tvSearchState)
+        rvSearchSuggestions = view.findViewById(R.id.rvSearchSuggestions)
+        llFeaturedResult = view.findViewById(R.id.llFeaturedResult)
+        ivFeaturedThumb = view.findViewById(R.id.ivFeaturedThumb)
+        tvFeaturedTitle = view.findViewById(R.id.tvFeaturedTitle)
+        tvFeaturedSubtitle = view.findViewById(R.id.tvFeaturedSubtitle)
+        moduleLoadingOverlay = view.findViewById(R.id.moduleLoadingOverlay)
     }
 
     private fun setupRecyclerView() {
-        val layoutManager = LinearLayoutManager(this)
+        val layoutManager = LinearLayoutManager(requireContext())
         adapter = SearchResultsAdapter { onTrackClicked(it) }
         rvSearchResults.apply {
             this.layoutManager = layoutManager
             setHasFixedSize(true)
             itemAnimator = null
             setItemViewCacheSize(15)
-            adapter = this@SearchActivity.adapter
+            adapter = this@SearchFragment.adapter
             addOnScrollListener(object : RecyclerView.OnScrollListener() {
                 override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
                     if (dy <= 0 || searching || searchPaginationInFlight || !hasMoreSearchPages) return
@@ -215,7 +148,7 @@ class SearchActivity : AppCompatActivity() {
             hideKeyboard()
         }
         rvSearchSuggestions.apply {
-            layoutManager = LinearLayoutManager(this@SearchActivity)
+            layoutManager = LinearLayoutManager(requireContext())
             adapter = suggestionsAdapter
         }
     }
@@ -243,7 +176,7 @@ class SearchActivity : AppCompatActivity() {
             etSearchQuery.setText("")
             etSearchQuery.requestFocus()
             clearResults()
-            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
             imm?.showSoftInput(etSearchQuery, InputMethodManager.SHOW_IMPLICIT)
         }
     }
@@ -258,41 +191,6 @@ class SearchActivity : AppCompatActivity() {
         activeSearchQuery = ""
         rvSearchSuggestions.visibility = View.VISIBLE
         refreshSearchSuggestions("")
-    }
-
-    private fun configureStandardHeader() {
-        btnSettings.visibility = View.VISIBLE
-        (btnSettings as ImageView).setImageResource(R.drawable.ic_settings)
-        btnSettings.contentDescription = "Ajustes"
-        btnSettings.setOnClickListener {
-            val intent = Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                putExtra("SHOW_SETTINGS", true)
-            }
-            startActivity(intent)
-            finish()
-        }
-
-        tvModuleTitle.apply {
-            text = getString(R.string.header_brand_title)
-            isAllCaps = true
-            letterSpacing = 0.08f
-            typeface = ResourcesCompat.getFont(this@SearchActivity, R.font.manrope_variable) ?: Typeface.DEFAULT_BOLD
-            
-            val density = resources.displayMetrics.density
-            val iconSize = (26 * density).toInt()
-            ContextCompat.getDrawable(this@SearchActivity, R.mipmap.ic_launcher)?.apply {
-                setBounds(0, 0, iconSize, iconSize)
-                setCompoundDrawablesRelative(this, null, null, null)
-            }
-            compoundDrawablePadding = (8 * density).toInt()
-            setOnClickListener { onBackPressedDispatcher.onBackPressed() }
-        }
-    }
-
-    @Deprecated("Back is handled by OnBackPressedDispatcher.")
-    override fun onBackPressed() {
-        super.onBackPressed()
     }
 
     private fun performSearch() {
@@ -320,7 +218,6 @@ class SearchActivity : AppCompatActivity() {
 
     private fun requestPagedSearchResults(query: String, pageToken: String, append: Boolean) {
         if (!isNetworkAvailable()) {
-            // Offline: search local playlists instead of API
             searchOfflineTracks(query)
             return
         }
@@ -335,7 +232,7 @@ class SearchActivity : AppCompatActivity() {
 
         youTubeMusicService.searchTracksPaged(query, SEARCH_PAGE_SIZE, pageToken.takeIf { it.isNotEmpty() }, object : YouTubeMusicService.SearchPageCallback {
             override fun onSuccess(pageResult: YouTubeMusicService.SearchPageResult) {
-                if (isFinishing || isDestroyed || requestId != latestSearchRequestId) return
+                if (!isAdded || requestId != latestSearchRequestId) return
                 
                 if (append) {
                     searchPaginationInFlight = false
@@ -357,10 +254,8 @@ class SearchActivity : AppCompatActivity() {
                 if (allTracks.isEmpty()) {
                     tvSearchState.text = "No encontré resultados para: $query"
                 } else if (!append) {
-                    // Predictive pre-fetching in IO dispatcher
                     allTracks.firstOrNull()?.videoId?.let { id ->
                         lifecycleScope.launch(Dispatchers.IO) {
-                            Log.d("SearchActivity", "Predictive pre-fetch: Resolviendo stream...")
                             YouTubeStreamResolver.resolveStreamUrl(id)
                         }
                     }
@@ -368,7 +263,7 @@ class SearchActivity : AppCompatActivity() {
             }
 
             override fun onError(error: String) {
-                if (isFinishing || isDestroyed || requestId != latestSearchRequestId) return
+                if (!isAdded || requestId != latestSearchRequestId) return
                 if (append) {
                     searchPaginationInFlight = false
                     tvSearchState.text = "Error al cargar más resultados."
@@ -391,35 +286,20 @@ class SearchActivity : AppCompatActivity() {
             val normQuery = normalizeForFilter(query)
             val tokens = normQuery.split(Regex("\\s+")).filter { it.isNotEmpty() }
 
-            // Search favorites
-            val favorites = FavoritesPlaylistStore.loadFavorites(this@SearchActivity)
+            val favorites = FavoritesPlaylistStore.loadFavorites(requireContext())
             favorites.forEach {
                 if (matchesOfflineTokens(it.title, it.artist, normQuery, tokens)) {
-                    results.add(YouTubeMusicService.TrackResult(
-                        "video",
-                        it.videoId,
-                        it.title,
-                        it.artist,
-                        it.imageUrl
-                    ))
+                    results.add(YouTubeMusicService.TrackResult("video", it.videoId, it.title, it.artist, it.imageUrl))
                 }
             }
 
-            // Search custom playlists
-            val playlists = CustomPlaylistsStore.getAllPlaylistNames(this@SearchActivity)
+            val playlists = CustomPlaylistsStore.getAllPlaylistNames(requireContext())
             playlists.forEach { plName ->
-                val tracks = CustomPlaylistsStore.getTracksFromPlaylist(this@SearchActivity, plName)
+                val tracks = CustomPlaylistsStore.getTracksFromPlaylist(requireContext(), plName)
                 tracks.forEach {
                     if (matchesOfflineTokens(it.title, it.artist, normQuery, tokens)) {
-                        // Prevent duplicates
                         if (results.none { res -> res.videoId == it.videoId }) {
-                            results.add(YouTubeMusicService.TrackResult(
-                                "video",
-                                it.videoId,
-                                it.title,
-                                it.artist,
-                                it.imageUrl
-                            ))
+                            results.add(YouTubeMusicService.TrackResult("video", it.videoId, it.title, it.artist, it.imageUrl))
                         }
                     }
                 }
@@ -427,19 +307,17 @@ class SearchActivity : AppCompatActivity() {
 
             withContext(Dispatchers.Main) {
                 setSearchLoadingState(false, "")
-                if (isFinishing || isDestroyed) return@withContext
+                if (!isAdded) return@withContext
                 
                 allTracks.clear()
                 allTracks.addAll(results)
                 hasMoreSearchPages = false
                 nextSearchPageToken = ""
-                
                 applyActiveFilter(query)
 
                 if (results.isEmpty()) {
                     tvSearchState.text = "No hay canciones locales que coincidan con: ${query}"
                     tvSearchState.visibility = View.VISIBLE
-                    findViewById<View>(R.id.llSearchState).visibility = View.VISIBLE
                 }
                 
                 revealModuleContent()
@@ -498,11 +376,9 @@ class SearchActivity : AppCompatActivity() {
         else if (t.startsWith("$query ")) score += 760
         else if (t.startsWith(query)) score += 560
         else if (t.contains(query)) score += 340
-        
         if (s == query) score += 220
         else if (s.startsWith(query)) score += 180
         else if (s.contains(query)) score += 120
-        
         tokens.forEach { 
             if (t.contains(it)) score += 60
             if (s.contains(it)) score += 30
@@ -516,18 +392,19 @@ class SearchActivity : AppCompatActivity() {
         tvFeaturedSubtitle.text = if (track.subtitle.isNullOrEmpty()) type else "$type • ${track.subtitle}"
         loadArtworkInto(ivFeaturedThumb, track.thumbnailUrl)
         llFeaturedResult.setOnClickListener { onTrackClicked(track) }
-        findViewById<View>(R.id.btnFeaturedPlay).setOnClickListener { onTrackClicked(track) }
+        view?.findViewById<View>(R.id.btnFeaturedPlay)?.setOnClickListener { onTrackClicked(track) }
     }
 
     private fun onTrackClicked(track: YouTubeMusicService.TrackResult) {
-        LocalBroadcastManager.getInstance(this).sendBroadcast(Intent("com.example.sleppify.ACTION_STOP_MAIN_PLAYER"))
         val queue = listOfNotNull(featuredTrack) + tracks
         val selectedIndex = queue.indexOfFirst { TextUtils.equals(it.videoId, track.videoId) }.coerceAtLeast(0)
+        
         val ids = ArrayList<String>(queue.size)
         val titles = ArrayList<String>(queue.size)
         val artists = ArrayList<String>(queue.size)
         val durations = ArrayList<String>(queue.size)
         val images = ArrayList<String>(queue.size)
+        
         queue.forEach { item ->
             ids.add(item.videoId ?: "")
             titles.add(item.title ?: "")
@@ -535,131 +412,33 @@ class SearchActivity : AppCompatActivity() {
             durations.add("0:00")
             images.add(item.thumbnailUrl ?: "")
         }
-        if (ids.isEmpty()) return
-
-        val existing = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER_SEARCH) as? SongPlayerFragment
-        if (existing != null) {
-            existing.externalSetReturnTargetTag("search_results")
-            existing.externalReplaceQueueFromStart(ids, titles, artists, durations, images, selectedIndex, true)
-            if (existing.isHidden) {
-                supportFragmentManager.beginTransaction()
-                    .setReorderingAllowed(true)
-                    .show(existing)
-                    .commit()
-            }
-        } else {
-            val player = SongPlayerFragment.newInstance(ids, titles, artists, durations, images, selectedIndex, true)
-            player.externalSetReturnTargetTag("search_results")
-            supportFragmentManager.beginTransaction()
-                .setReorderingAllowed(true)
-                .add(R.id.searchPlayerContainer, player, TAG_SONG_PLAYER_SEARCH)
-                .commitNowAllowingStateLoss()
+        
+        if (ids.isNotEmpty()) {
+            (requireActivity() as MainActivity).playQueue(ids, titles, artists, durations, images, selectedIndex)
         }
-        // Hide mini-player and search bar when player is visible
-        miniPlayer.visibility = View.GONE
-        llSearchBar.visibility = View.GONE
-        refreshMiniPlayerUi()
-    }
-
-    private fun setupBottomFooter() {
-        bottomNavigation.selectedItemId = R.id.nav_music
-        bottomNavigation.setOnItemSelectedListener { item ->
-            val intent = Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                putExtra("TARGET_NAV_ITEM_ID", item.itemId)
-            }
-            startActivity(intent)
-            finish()
-            true
-        }
-    }
-
-    private fun setupMiniPlayer() {
-        miniPlayer.visibility = View.GONE
-        miniPlayer.setOnClickListener { showPlayerFromMini() }
-        miniPlayerPlayPause.setOnClickListener {
-            val player = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER_SEARCH) as? SongPlayerFragment
-            if (player != null) {
-                player.externalTogglePlayback()
-            } else {
-                showPlayerFromMini()
-            }
-        }
-    }
-
-    private fun showPlayerFromMini() {
-        val existing = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER_SEARCH) as? SongPlayerFragment
-        if (existing != null) {
-            supportFragmentManager.beginTransaction()
-                .setReorderingAllowed(true)
-                .show(existing)
-                .commit()
-            // Hide mini-player and search bar when player is visible
-            miniPlayer.visibility = View.GONE
-            llSearchBar.visibility = View.GONE
-            return
-        }
-
-        val snapshot = PlaybackHistoryStore.load(this)
-        if (snapshot.queue.isEmpty()) return
-        val ids = ArrayList<String>(snapshot.queue.size)
-        val titles = ArrayList<String>(snapshot.queue.size)
-        val artists = ArrayList<String>(snapshot.queue.size)
-        val durations = ArrayList<String>(snapshot.queue.size)
-        val images = ArrayList<String>(snapshot.queue.size)
-        snapshot.queue.forEach { item ->
-            ids.add(item.videoId)
-            titles.add(item.title)
-            artists.add(item.artist)
-            durations.add(item.duration)
-            images.add(item.imageUrl)
-        }
-        val player = SongPlayerFragment.newInstance(ids, titles, artists, durations, images, snapshot.currentIndex, snapshot.isPlaying)
-        player.externalSetReturnTargetTag("search_results")
-        supportFragmentManager.beginTransaction()
-            .setReorderingAllowed(true)
-            .add(R.id.searchPlayerContainer, player, TAG_SONG_PLAYER_SEARCH)
-            .commit()
-    }
-
-    private fun refreshMiniPlayerUi() {
-        val snapshot = PlaybackHistoryStore.load(this)
-        val current = snapshot.currentTrack()
-        if (current == null) {
-            miniPlayer.visibility = View.GONE
-            return
-        }
-        miniPlayer.visibility = View.VISIBLE
-        miniPlayerTitle.text = current.title.ifEmpty { "Reproduciendo" }
-        miniPlayerSubtitle.text = current.artist
-        miniPlayerPlayPause.setImageResource(if (snapshot.isPlaying) R.drawable.ic_mini_pause else R.drawable.ic_mini_play)
-        val total = snapshot.totalSeconds.coerceAtLeast(1)
-        val progress = ((snapshot.currentSeconds.toFloat() / total.toFloat()) * 1000f).toInt().coerceIn(0, 1000)
-        miniPlayerProgress.progress = progress
-        loadArtworkInto(miniPlayerArt, current.imageUrl)
     }
 
     private fun setSearchLoadingState(loading: Boolean, msg: String) {
         searching = loading
-        val llState = findViewById<LinearLayout>(R.id.llSearchState)
+        val llState = view?.findViewById<LinearLayout>(R.id.llSearchState)
         if (loading) {
             showModuleLoadingOverlay()
             tvSearchState.visibility = View.GONE
-            llState.visibility = View.VISIBLE
+            llState?.visibility = View.VISIBLE
         } else {
             if (msg.isNotEmpty()) {
                 tvSearchState.text = msg
                 tvSearchState.visibility = View.VISIBLE
-                llState.visibility = View.VISIBLE
+                llState?.visibility = View.VISIBLE
             } else {
                 tvSearchState.visibility = View.GONE
-                llState.visibility = View.GONE
+                llState?.visibility = View.GONE
             }
         }
     }
 
     private fun restoreRecentSearchQueries() {
-        val prefs = getSharedPreferences(PREFS_STREAMING_CACHE, MODE_PRIVATE)
+        val prefs = requireContext().getSharedPreferences(PREFS_STREAMING_CACHE, Context.MODE_PRIVATE)
         val json = prefs.getString(PREF_RECENT_SEARCH_QUERIES, "[]")
         recentSearchQueries.clear()
         try {
@@ -681,7 +460,7 @@ class SearchActivity : AppCompatActivity() {
 
     private fun saveRecentSearchQueries() {
         val array = JSONArray(recentSearchQueries)
-        getSharedPreferences(PREFS_STREAMING_CACHE, MODE_PRIVATE).edit().putString(PREF_RECENT_SEARCH_QUERIES, array.toString()).apply()
+        requireContext().getSharedPreferences(PREFS_STREAMING_CACHE, Context.MODE_PRIVATE).edit().putString(PREF_RECENT_SEARCH_QUERIES, array.toString()).apply()
     }
 
     private fun refreshSearchSuggestions(draft: String?) {
@@ -744,44 +523,23 @@ class SearchActivity : AppCompatActivity() {
     }
 
     private fun isNetworkAvailable(): Boolean {
-        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
+        val cm = requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
         val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
         return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) || caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) || caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
     }
 
     private fun hideKeyboard() {
-        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-        imm?.hideSoftInputFromWindow(currentFocus?.windowToken, 0)
+        val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.hideSoftInputFromWindow(view?.windowToken, 0)
     }
 
     private fun showModuleLoadingOverlay() { moduleLoadingOverlay.visibility = View.VISIBLE }
     private fun revealModuleContent() { moduleLoadingOverlay.visibility = View.GONE }
 
-    override fun onResume() {
-        super.onResume()
-        miniHandler.removeCallbacks(miniTicker)
-        miniHandler.post(miniTicker)
-    }
-
-    override fun onPause() {
-        miniHandler.removeCallbacks(miniTicker)
-        super.onPause()
-    }
-
-    override fun onDestroy() {
-        miniHandler.removeCallbacks(miniTicker)
-        super.onDestroy()
-    }
-
-    // ── Adapters ────────────────────────────────────────
-
     private inner class SearchResultsAdapter(val onClick: (YouTubeMusicService.TrackResult) -> Unit) : RecyclerView.Adapter<SearchResultsAdapter.TrackViewHolder>() {
         private val data = mutableListOf<YouTubeMusicService.TrackResult>()
-
         init { setHasStableIds(true) }
-
         override fun getItemId(position: Int) = data[position].let { "${it.resultType}|${it.contentId}|${it.title}".hashCode().toLong() }
-
         fun submitResults(newData: List<YouTubeMusicService.TrackResult>) {
             val old = data.toList()
             val diff = DiffUtil.calculateDiff(object : DiffUtil.Callback() {
@@ -790,58 +548,36 @@ class SearchActivity : AppCompatActivity() {
                 override fun areItemsTheSame(op: Int, np: Int) = old[op].contentId == newData[np].contentId && old[op].resultType == newData[np].resultType
                 override fun areContentsTheSame(op: Int, np: Int) = old[op] == newData[np]
             })
-            data.clear()
-            data.addAll(newData)
-            diff.dispatchUpdatesTo(this)
+            data.clear(); data.addAll(newData); diff.dispatchUpdatesTo(this)
         }
-
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) = TrackViewHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_music_search_result, parent, false))
-
-        override fun onBindViewHolder(holder: TrackViewHolder, position: Int) {
-            val item = data[position]
-            holder.title.text = item.title ?: "Resultado"
-            val type = searchTypeLabel(item)
-            holder.subtitle.text = if (item.subtitle.isNullOrEmpty()) type else "$type • ${item.subtitle}"
-            loadArtworkInto(holder.thumb, item.thumbnailUrl)
-            holder.divider.visibility = if (position == data.size - 1) View.GONE else View.VISIBLE
-            holder.itemView.setOnClickListener { onClick(item) }
-        }
-
+        override fun onBindViewHolder(holder: TrackViewHolder, position: Int) = holder.bind(data[position])
         override fun getItemCount() = data.size
-
         inner class TrackViewHolder(v: View) : RecyclerView.ViewHolder(v) {
-            val thumb: ImageView = v.findViewById(R.id.ivTrackThumb)
-            val title: TextView = v.findViewById(R.id.tvTrackTitle)
-            val subtitle: TextView = v.findViewById(R.id.tvTrackSubtitle)
-            val divider: View = v.findViewById(R.id.vTrackDivider)
+            val ivArt = v.findViewById<ImageView>(R.id.ivTrackThumb)
+            val tvTitle = v.findViewById<TextView>(R.id.tvTrackTitle)
+            val tvSubtitle = v.findViewById<TextView>(R.id.tvTrackSubtitle)
+            fun bind(item: YouTubeMusicService.TrackResult) {
+                tvTitle.text = item.title; tvSubtitle.text = item.subtitle; loadArtworkInto(ivArt, item.thumbnailUrl)
+                itemView.setOnClickListener { onClick(item) }
+            }
         }
     }
 
-    private inner class SuggestionsAdapter(val onClick: (String) -> Unit) : RecyclerView.Adapter<SuggestionsAdapter.ViewHolder>() {
+    private inner class SuggestionsAdapter(val onClick: (String) -> Unit) : RecyclerView.Adapter<SuggestionsAdapter.SuggestionViewHolder>() {
         private val data = mutableListOf<String>()
-
-        fun updateSuggestions(newList: List<String>) {
-            data.clear()
-            data.addAll(newList)
-            notifyDataSetChanged()
+        fun updateSuggestions(newData: List<String>) {
+            data.clear(); data.addAll(newData); notifyDataSetChanged()
         }
-
-        override fun onCreateViewHolder(p: ViewGroup, t: Int) = ViewHolder(LayoutInflater.from(p.context).inflate(R.layout.item_search_suggestion, p, false))
-
-        override fun onBindViewHolder(h: ViewHolder, p: Int) {
-            val s = data[p]
-            h.text.text = s
-            val recent = recentSearchQueries.contains(s)
-            h.icon.setImageResource(if (recent) R.drawable.ic_time_24 else android.R.drawable.ic_menu_search)
-            h.icon.alpha = if (recent) 0.7f else 0.5f
-            h.itemView.setOnClickListener { onClick(s) }
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) = SuggestionViewHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_search_suggestion, parent, false))
+        override fun onBindViewHolder(holder: SuggestionViewHolder, position: Int) {
+            val item = data[position]
+            holder.tvSuggestion.text = item
+            holder.itemView.setOnClickListener { onClick(item) }
         }
-
         override fun getItemCount() = data.size
-
-        inner class ViewHolder(v: View) : RecyclerView.ViewHolder(v) {
-            val text: TextView = v.findViewById(R.id.tvSuggestionText)
-            val icon: ImageView = v.findViewById(R.id.ivSuggestionIcon)
+        inner class SuggestionViewHolder(v: View) : RecyclerView.ViewHolder(v) {
+            val tvSuggestion = v.findViewById<TextView>(R.id.tvSuggestionText)
         }
     }
 }

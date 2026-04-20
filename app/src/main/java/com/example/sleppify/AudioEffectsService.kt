@@ -405,11 +405,11 @@ class AudioEffectsService : Service() {
                 putExtra(EXTRA_AUDIO_SESSION_ID, audioSessionId)
             }
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    context.startForegroundService(intent)
-                } else {
-                    context.startService(intent)
-                }
+                // Use startService (NOT startForegroundService) because ACTION_APPLY
+                // does not call startForeground(). Using startForegroundService would
+                // trigger ForegroundServiceDidNotStartInTimeException after 5s,
+                // crashing the entire app process.
+                context.startService(intent)
             } catch (e: Exception) {
                 Log.w(TAG, "sendApply:failed", e)
             }

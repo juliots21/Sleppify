@@ -20,24 +20,12 @@
     android:paddingBottom="0dp"
     tools:context=".MusicPlayerFragment">
 
-    <TextView
-        android:id="@+id/tvLibraryTitle"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:elevation="4dp"
-        android:text="Biblioteca"
-        android:textColor="@color/text_primary"
-        android:textSize="22sp"
-        android:textStyle="bold"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
+
 
     <LinearLayout
         android:id="@+id/llLibraryInlineSearch"
         android:layout_width="0dp"
         android:layout_height="40dp"
-        android:layout_marginStart="12dp"
         android:elevation="4dp"
         android:background="@drawable/bg_music_chip_inactive"
         android:gravity="center_vertical"
@@ -45,7 +33,7 @@
         android:paddingStart="10dp"
         android:paddingEnd="6dp"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toEndOf="@id/tvLibraryTitle"
+        app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent">
 
         <ImageView
@@ -85,14 +73,17 @@
                 app:tint="@color/text_secondary" />
     </LinearLayout>
 
+
+
+
+
     <HorizontalScrollView
-        android:id="@+id/hsvLibraryFilters"
+        android:id="@+id/hsvFilterChips"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:elevation="4dp"
-        android:background="@color/surface_dark"
+        android:layout_marginTop="8dp"
         android:scrollbars="none"
+        android:visibility="gone"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/llLibraryInlineSearch">
@@ -100,85 +91,108 @@
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:orientation="horizontal">
+            android:orientation="horizontal"
+            android:paddingHorizontal="4dp">
 
-            <TextView
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnChipSongs"
+                style="@style/Widget.Material3.Button.TonalButton"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:background="@drawable/bg_music_chip_active"
-                android:paddingHorizontal="14dp"
-                android:paddingVertical="8dp"
+                android:layout_height="40dp"
+                android:text="Canciones"
+                android:textSize="12sp"
+                app:cornerRadius="20dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnChipVideos"
+                style="@style/Widget.Material3.Button.TonalButton"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:layout_marginStart="8dp"
+                android:text="Videos"
+                android:textSize="12sp"
+                app:cornerRadius="20dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnChipArtists"
+                style="@style/Widget.Material3.Button.TonalButton"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:layout_marginStart="8dp"
+                android:text="Artistas"
+                android:textSize="12sp"
+                app:cornerRadius="20dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnChipPlaylists"
+                style="@style/Widget.Material3.Button.TonalButton"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:layout_marginStart="8dp"
                 android:text="Playlists"
-                android:textColor="#13254A"
                 android:textSize="12sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:alpha="0.48"
-                android:background="@drawable/bg_music_chip_inactive"
-                android:clickable="false"
-                android:enabled="false"
-                android:focusable="false"
-                android:importantForAccessibility="no"
-                android:paddingHorizontal="14dp"
-                android:paddingVertical="8dp"
-                android:text="Artists"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:alpha="0.48"
-                android:background="@drawable/bg_music_chip_inactive"
-                android:clickable="false"
-                android:enabled="false"
-                android:focusable="false"
-                android:importantForAccessibility="no"
-                android:paddingHorizontal="14dp"
-                android:paddingVertical="8dp"
-                android:text="Albums"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:alpha="0.48"
-                android:background="@drawable/bg_music_chip_inactive"
-                android:clickable="false"
-                android:enabled="false"
-                android:focusable="false"
-                android:importantForAccessibility="no"
-                android:paddingHorizontal="14dp"
-                android:paddingVertical="8dp"
-                android:text="Podcasts"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp"
-                android:textStyle="bold" />
+                app:cornerRadius="20dp" />
         </LinearLayout>
     </HorizontalScrollView>
 
-    <View
-        android:id="@+id/vLibraryTopSolid"
+
+
+    <!-- Search Overlay -->
+    <LinearLayout
+        android:id="@+id/llSearchOverlay"
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:background="@color/surface_dark"
-        android:clickable="false"
-        android:elevation="3dp"
-        android:focusable="false"
-        android:importantForAccessibility="no"
-        app:layout_constraintBottom_toBottomOf="@id/hsvLibraryFilters"
+        android:elevation="6dp"
+        android:orientation="vertical"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/llMiniPlayer"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
+        app:layout_constraintTop_toBottomOf="@id/llLibraryInlineSearch">
+
+        <LinearLayout
+            android:id="@+id/llSearchRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="24dp"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_search_input"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="12dp">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etMusicQuery"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:background="@android:color/transparent"
+                android:hint="Canción, artista, video..."
+                android:imeOptions="actionSearch"
+                android:inputType="text"
+                android:textColor="@color/text_primary"
+                android:textColorHint="@color/text_secondary"
+                android:textSize="14sp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnSearchMusic"
+                style="@style/Widget.Material3.Button.IconButton"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                app:icon="@android:drawable/ic_menu_search"
+                app:iconTint="@color/stitch_blue" />
+        </LinearLayout>
+
+        <com.google.android.material.chip.ChipGroup
+            android:id="@+id/cgSearchSuggestions"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="24dp"
+            android:layout_marginTop="12dp"
+            app:chipSpacingHorizontal="8dp" />
+
+    </LinearLayout>
 
     <LinearLayout
         android:id="@+id/llMusicState"
@@ -191,7 +205,7 @@
         android:orientation="horizontal"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/hsvLibraryFilters">
+        app:layout_constraintTop_toBottomOf="@id/hsvFilterChips">
 
         <ProgressBar
             android:id="@+id/progressMusic"
@@ -370,100 +384,27 @@
 
 
 
-    <LinearLayout
-        android:id="@+id/llMiniPlayer"
-        android:layout_width="0dp"
-        android:layout_height="84dp"
-        android:layout_marginStart="-24dp"
-        android:layout_marginEnd="-24dp"
-        android:layout_marginBottom="-8dp"
-        android:background="@drawable/bg_playlist_footer_extension"
-        android:clickable="true"
-        android:focusable="true"
-        android:foreground="?attr/selectableItemBackground"
-        android:gravity="center_vertical"
-        android:orientation="vertical"
-        android:paddingStart="0dp"
-        android:paddingTop="8dp"
-        android:paddingEnd="0dp"
-        android:paddingBottom="6dp"
-        android:visibility="gone"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent">
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp">
-
-            <com.google.android.material.imageview.ShapeableImageView
-                android:id="@+id/ivMiniPlayerArt"
-                android:layout_width="42dp"
-                android:layout_height="42dp"
-                android:background="@color/surface_high"
-                android:scaleType="centerCrop"
-                android:src="@drawable/ic_music"
-                app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Small" />
-
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="10dp"
-                android:layout_weight="1"
-                android:orientation="vertical">
-
-                <TextView
-                    android:id="@+id/tvMiniPlayerTitle"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:ellipsize="end"
-                    android:fontFamily="@font/manrope_variable"
-                    android:maxLines="1"
-                    android:text="Selecciona una canción"
-                    android:textColor="@color/text_primary"
-                    android:textSize="13sp" />
-
-                <TextView
-                    android:id="@+id/tvMiniPlayerSubtitle"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:ellipsize="end"
-                    android:fontFamily="@font/inter_variable"
-                    android:maxLines="1"
-                    android:text=""
-                    android:textColor="@color/text_secondary"
-                    android:textSize="10sp" />
-            </LinearLayout>
-
-            <ImageButton
-                android:id="@+id/btnMiniPlayPause"
-                android:layout_width="38dp"
-                android:layout_height="38dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:padding="6dp"
-                android:src="@drawable/ic_mini_play"
-                app:tint="@color/stitch_blue" />
-        </LinearLayout>
-
-        <SeekBar
-            android:id="@+id/sbMiniPlayerProgress"
-            android:layout_width="match_parent"
-            android:layout_height="16dp"
-            android:layout_marginTop="4dp"
-            android:enabled="false"
-            android:max="1000"
-            android:paddingStart="0dp"
-            android:paddingEnd="0dp"
-            android:progress="0"
-            android:progressTint="@color/stitch_blue"
-            android:splitTrack="false"
-            android:thumb="@null"
-            android:thumbTint="@android:color/transparent" />
-    </LinearLayout>
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/fabAddPlaylist"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:layout_marginEnd="0dp"
+            android:layout_marginBottom="16dp"
+            android:contentDescription="Nueva Playlist"
+            android:insetLeft="0dp"
+            android:insetTop="0dp"
+            android:insetRight="0dp"
+            android:insetBottom="0dp"
+            android:padding="0dp"
+            app:backgroundTint="@color/stitch_blue"
+            app:cornerRadius="12dp"
+            app:elevation="0dp"
+            app:icon="@android:drawable/ic_input_add"
+            app:iconGravity="textStart"
+            app:iconPadding="0dp"
+            app:iconTint="@android:color/white"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent" />
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 

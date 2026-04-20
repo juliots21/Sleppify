@@ -19,6 +19,7 @@ import android.graphics.drawable.Drawable;
 import android.media.AudioAttributes;
 import android.media.MediaPlayer;
 import android.net.Uri;
+import android.os.PowerManager;
 import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
 import android.os.Build;
@@ -28,8 +29,6 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.text.TextUtils;
 import android.util.Log;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
@@ -69,10 +68,6 @@ import android.support.v4.media.session.MediaSessionCompat;
 import android.support.v4.media.session.PlaybackStateCompat;
 
 import com.bumptech.glide.Glide;
-import com.bumptech.glide.load.DecodeFormat;
-import com.bumptech.glide.load.engine.DiskCacheStrategy;
-import com.bumptech.glide.request.target.CustomTarget;
-import com.bumptech.glide.request.transition.Transition;
 import com.google.android.material.imageview.ShapeableImageView;
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants;
 import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.YouTubePlayer;
@@ -95,6 +90,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -150,6 +146,8 @@ public class SongPlayerFragment extends Fragment {
     private static final long PLAYBACK_BOOTSTRAP_GRACE_MS = 1800L;
     private static final int MAX_PLAYBACK_SOURCE_RETRY = 1;
     private static final long PLAYBACK_SOURCE_RETRY_DELAY_MS = 350L;
+    private static final int STREAM_URL_CACHE_MAX_SIZE = 60;
+    private static final long STREAM_URL_CACHE_TTL_MS = 12L * 60L * 1000L;
     private static final String STREAM_HTTP_USER_AGENT = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36";
     private static final String AUDIUS_API_BASE_URL = "https://discoveryprovider.audius.co/v1";
     private static final String AUDIUS_APP_NAME = "sleppify";
@@ -161,11 +159,8 @@ public class SongPlayerFragment extends Fragment {
     private static final int PLAYER_HERO_DEFAULT_HEIGHT_DP = 370;
     private static final int PLAYER_HERO_MIN_HEIGHT_DP = 260;
     private static final int PLAYER_HERO_MAX_HEIGHT_DP = 560;
-    private static final long PLAYER_BACKDROP_FADE_IN_DURATION_MS = 500L;
     private static final long PLAYER_BACKDROP_DEFER_LOAD_MS = 110L;
-    private static final int NEXT_UP_FIRST_BATCH_SIZE = 14;
-    private static final int NEXT_UP_BATCH_SIZE = 24;
-    private static final long NEXT_UP_BATCH_DELAY_MS = 32L;
+    private static final int PLAYER_BACKDROP_FADE_IN_DURATION_MS = 0;
 
     private final List<PlayerTrack> tracks = new ArrayList<>();
     private final List<PlayerTrack> nextUpTracks = new ArrayList<>();
@@ -200,6 +195,8 @@ public class SongPlayerFragment extends Fragment {
     private NextUpAdapter nextUpAdapter;
     @Nullable
     private ItemTouchHelper nextUpItemTouchHelper;
+    private Runnable nextUpRevealRunnable;
+    private int nextUpRevealCursor;
 
     @Nullable
     private OnBackPressedCallback backPressedCallback;
@@ -256,6 +253,14 @@ public class SongPlayerFragment extends Fragment {
     // Direct streaming & pre-fetching
     private String prefetchedNextVideoId = null;
     private String prefetchedNextUrl = null;
+    private final Object streamUrlCacheLock = new Object();
+    private final Object prefetchLock = new Object();
+    private final Map<String, CachedStreamUrl> resolvedStreamUrlCache = new LinkedHashMap<String, CachedStreamUrl>(STREAM_URL_CACHE_MAX_SIZE, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, CachedStreamUrl> eldest) {
+            return size() > STREAM_URL_CACHE_MAX_SIZE;
+        }
+    };
 
     @Nullable
     private Future<?> pendingStreamResolverFuture;
@@ -302,12 +307,9 @@ public class SongPlayerFragment extends Fragment {
     private CustomTarget<Bitmap> notificationArtworkTarget;
     @NonNull
     private String activeNotificationArtworkVideoId = "";
-    private CustomTarget<Drawable> playerBackdropTarget;
+    private CustomTarget<Bitmap> playerBackdropTarget;
     @Nullable
     private Runnable deferredBackdropLoadRunnable;
-    @Nullable
-    private Runnable nextUpRevealRunnable;
-    private int nextUpRevealCursor = 0;
     @NonNull
     private String activeCoverVideoId = "";
     @NonNull
@@ -363,18 +365,6 @@ public class SongPlayerFragment extends Fragment {
             @NonNull ArrayList<String> artists,
             @NonNull ArrayList<String> durations,
             @NonNull ArrayList<String> images,
-            int selectedIndex
-    ) {
-        return newInstance(videoIds, titles, artists, durations, images, selectedIndex, true);
-    }
-
-    @NonNull
-    public static SongPlayerFragment newInstance(
-            @NonNull ArrayList<String> videoIds,
-            @NonNull ArrayList<String> titles,
-            @NonNull ArrayList<String> artists,
-            @NonNull ArrayList<String> durations,
-            @NonNull ArrayList<String> images,
             int selectedIndex,
             boolean startPlaying
     ) {
@@ -414,17 +404,6 @@ public class SongPlayerFragment extends Fragment {
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
         
-        // Lightweight internal enter animation (YouTube Music style slide-up)
-        int screenHeight = getResources().getDisplayMetrics().heightPixels;
-        view.setTranslationY(screenHeight);
-        view.setAlpha(0f);
-        view.animate()
-            .translationY(0f)
-            .alpha(1f)
-            .setDuration(320)
-            .setInterpolator(new androidx.interpolator.view.animation.FastOutSlowInInterpolator())
-            .start();
-
         persistentAppContext = requireContext().getApplicationContext();
         if (getActivity() instanceof MainActivity) {
             ((MainActivity) getActivity()).setContainerOverlayMode(true);
@@ -608,8 +587,14 @@ public class SongPlayerFragment extends Fragment {
             playCurrentTrack();
         });
 
-        view.findViewById(R.id.btnPrev).setOnClickListener(v -> moveTrack(-1));
-        view.findViewById(R.id.btnNext).setOnClickListener(v -> moveTrack(1));
+        view.findViewById(R.id.btnPrev).setOnClickListener(v -> {
+            v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
+            localProgressHandler.post(() -> moveTrack(-1));
+        });
+        view.findViewById(R.id.btnNext).setOnClickListener(v -> {
+            v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
+            localProgressHandler.post(() -> moveTrack(1));
+        });
         view.findViewById(R.id.tvViewAllQueue).setOnClickListener(v -> openQueuePlaylistDetail());
         btnShuffle.setOnClickListener(v -> toggleShuffleMode());
         btnRepeat.setOnClickListener(v -> cycleRepeatMode());
@@ -815,8 +800,11 @@ public class SongPlayerFragment extends Fragment {
 
     @Override
     public void onDestroyView() {
-        persistPositionForLoadedTrack();
-        persistPlaybackSnapshot(true);
+        try {
+            persistPositionForLoadedTrack();
+            persistPlaybackSnapshot(true);
+        } catch (Exception ignored) {
+        }
         cancelAutoplayRecovery();
         cancelPlaybackErrorRetry();
         cancelDeferredBackdropLoad();
@@ -832,8 +820,14 @@ public class SongPlayerFragment extends Fragment {
         if (getActivity() instanceof MainActivity) {
             ((MainActivity) getActivity()).setContainerOverlayMode(false);
         }
-        releaseMediaSession();
-        clearMediaNotification();
+        try {
+            releaseMediaSession();
+        } catch (Exception ignored) {
+        }
+        try {
+            clearMediaNotification();
+        } catch (Exception ignored) {
+        }
         clearMediaNotificationArtwork();
         if (backPressedCallback != null) {
             backPressedCallback.remove();
@@ -841,7 +835,10 @@ public class SongPlayerFragment extends Fragment {
         }
         if (youtubePlayerView != null) {
             pauseYouTubePlaybackEngine("onDestroyView");
-            youtubePlayerView.release();
+            try {
+                youtubePlayerView.release();
+            } catch (Exception ignored) {
+            }
             youtubePlayerView = null;
         }
         youTubePlayer = null;
@@ -1140,7 +1137,7 @@ public class SongPlayerFragment extends Fragment {
         }
 
         mediaSession = new MediaSessionCompat(requireContext().getApplicationContext(), "SleppifySongSession");
-        mediaSession.setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS | MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS);
+        // Flags are handled automatically since API 21
         mediaSession.setCallback(new MediaSessionCompat.Callback() {
             @Override
             public void onPlay() {
@@ -1548,7 +1545,9 @@ public class SongPlayerFragment extends Fragment {
         try {
             if (isPlaying) {
                 if (isResumed()) {
+                if (youTubePlayer != null) {
                     youTubePlayer.loadVideo(track.videoId, startAt);
+                }
                 } else {
                     YouTubePlayerUtils.loadOrCueVideo(youTubePlayer, getLifecycle(), track.videoId, startAt);
                 }
@@ -1995,15 +1994,14 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
+        // Fire prefetch early so next online transition has a warm source (helps crossfade and skip responsiveness).
+        prefetchNextTrackStream();
+
         // Check if we have a prefetched URL for THIS track
-        if (TextUtils.equals(track.videoId, prefetchedNextVideoId) && !TextUtils.isEmpty(prefetchedNextUrl)) {
+        String prefetchedUrl = consumePrefetchedUrlFor(track.videoId);
+        if (!TextUtils.isEmpty(prefetchedUrl)) {
             Log.d(TAG, "playCurrentTrack: using prefetched stream for videoId=" + track.videoId);
-            String url = prefetchedNextUrl;
-            // Clear prefetch after use
-            prefetchedNextVideoId = null;
-            prefetchedNextUrl = null;
-            
-            startMediaPlaybackFromSource(track, url, requestToken, () -> {
+            startMediaPlaybackFromSource(track, prefetchedUrl, requestToken, () -> {
                 // If prefetched URL fails, try fresh resolution
                 resolveAndPlayOnlineTrack(track, requestToken);
             });
@@ -2020,6 +2018,16 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
+        String cachedResolvedUrl = getCachedStreamUrl(track.videoId);
+        if (!TextUtils.isEmpty(cachedResolvedUrl)) {
+            Log.d(TAG, "resolveAndPlayOnlineTrack: using cached stream url for videoId=" + track.videoId);
+            startMediaPlaybackFromSource(track, cachedResolvedUrl, requestToken, () -> {
+                invalidateCachedStreamUrl(track.videoId);
+                resolveAndPlayOnlineTrack(track, requestToken);
+            });
+            return;
+        }
+
         // Artwork is already being loaded by bindCurrentTrackInternal,
         // no need to wipe it here — keep old cover visible while resolving.
 
@@ -2031,6 +2039,7 @@ public class SongPlayerFragment extends Fragment {
                 pendingStreamResolverFuture = null;
 
                 if (!TextUtils.isEmpty(resolvedUrl)) {
+                    cacheResolvedStreamUrl(track.videoId, resolvedUrl);
                     startMediaPlaybackFromSource(track, resolvedUrl, requestToken, () -> {
                         // If direct playback fails, fallback to WebView
                         tryYouTubeFallbackForCurrentTrack("Fallo de reproducción directa: usando fallback embebido.", false);
@@ -2056,14 +2065,29 @@ public class SongPlayerFragment extends Fragment {
         }
 
         // Skip if already prefetched
-        if (TextUtils.equals(nextTrack.videoId, prefetchedNextVideoId)) return;
+        synchronized (prefetchLock) {
+            if (TextUtils.equals(nextTrack.videoId, prefetchedNextVideoId)) return;
+        }
+
+        // Reuse hot stream url cache when available.
+        String cached = getCachedStreamUrl(nextTrack.videoId);
+        if (!TextUtils.isEmpty(cached)) {
+            synchronized (prefetchLock) {
+                prefetchedNextVideoId = nextTrack.videoId;
+                prefetchedNextUrl = cached;
+            }
+            return;
+        }
 
         Log.d(TAG, "prefetchNextTrackStream: starting pre-fetch for videoId=" + nextTrack.videoId);
         streamResolverExecutor.submit(() -> {
             String url = YouTubeStreamResolver.resolveStreamUrl(nextTrack.videoId);
             if (!TextUtils.isEmpty(url)) {
-                prefetchedNextVideoId = nextTrack.videoId;
-                prefetchedNextUrl = url;
+                cacheResolvedStreamUrl(nextTrack.videoId, url);
+                synchronized (prefetchLock) {
+                    prefetchedNextVideoId = nextTrack.videoId;
+                    prefetchedNextUrl = url;
+                }
                 Log.d(TAG, "prefetchNextTrackStream: successfully prefetched videoId=" + nextTrack.videoId);
             }
         });
@@ -2169,6 +2193,12 @@ public class SongPlayerFragment extends Fragment {
                 .setUsage(AudioAttributes.USAGE_MEDIA)
                 .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                 .build());
+
+        // Hold a partial wake lock so playback survives when screen turns off
+        try {
+            player.setWakeMode(requireContext().getApplicationContext(), PowerManager.PARTIAL_WAKE_LOCK);
+        } catch (Exception ignored) {
+        }
 
         // Publish audio session to DSP engine for EQ processing
         try {
@@ -2663,7 +2693,9 @@ public class SongPlayerFragment extends Fragment {
                 // y forzamos carga/reproduccion para mantener el audio en segundo plano.
                 boolean forceBackgroundPlayback = appInBackground || isHidden();
                 if (isResumed() || forceBackgroundPlayback) {
+                if (youTubePlayer != null) {
                     youTubePlayer.loadVideo(track.videoId, startAt);
+                }
                 } else {
                     YouTubePlayerUtils.loadOrCueVideo(youTubePlayer, getLifecycle(), track.videoId, startAt);
                 }
@@ -2946,9 +2978,34 @@ public class SongPlayerFragment extends Fragment {
         }
 
         // Try prefetched online
-        if (nextUrl == null && TextUtils.equals(nextTrack.videoId, prefetchedNextVideoId) && !TextUtils.isEmpty(prefetchedNextUrl)) {
-            nextUrl = prefetchedNextUrl;
-            nextIsNetwork = true;
+        if (nextUrl == null) {
+            String prefetched = consumePrefetchedUrlFor(nextTrack.videoId);
+            if (!TextUtils.isEmpty(prefetched)) {
+                nextUrl = prefetched;
+                nextIsNetwork = true;
+            }
+        }
+
+        // Try memory cache before giving up (helps online crossfade).
+        if (nextUrl == null) {
+            String cachedStreamUrl = getCachedStreamUrl(nextTrack.videoId);
+            if (!TextUtils.isEmpty(cachedStreamUrl)) {
+                nextUrl = cachedStreamUrl;
+                nextIsNetwork = true;
+            }
+        }
+
+        // Last chance: attempt a direct resolve for next track to keep crossfade online.
+        if (nextUrl == null && isNetworkAvailable()) {
+            try {
+                String resolved = YouTubeStreamResolver.resolveStreamUrl(nextTrack.videoId);
+                if (!TextUtils.isEmpty(resolved)) {
+                    cacheResolvedStreamUrl(nextTrack.videoId, resolved);
+                    nextUrl = resolved;
+                    nextIsNetwork = true;
+                }
+            } catch (Exception ignored) {
+            }
         }
 
         if (nextUrl == null) {
@@ -3173,6 +3230,68 @@ public class SongPlayerFragment extends Fragment {
                 localMediaPlayer.setVolume(1f, 1f);
             } catch (Exception ignored) {
             }
+        }
+    }
+
+    @Nullable
+    private String consumePrefetchedUrlFor(@Nullable String videoId) {
+        if (TextUtils.isEmpty(videoId)) {
+            return null;
+        }
+        synchronized (prefetchLock) {
+            if (!TextUtils.equals(videoId, prefetchedNextVideoId) || TextUtils.isEmpty(prefetchedNextUrl)) {
+                return null;
+            }
+            String value = prefetchedNextUrl;
+            prefetchedNextVideoId = null;
+            prefetchedNextUrl = null;
+            return value;
+        }
+    }
+
+    @Nullable
+    private String getCachedStreamUrl(@Nullable String videoId) {
+        if (TextUtils.isEmpty(videoId)) {
+            return null;
+        }
+        synchronized (streamUrlCacheLock) {
+            CachedStreamUrl cached = resolvedStreamUrlCache.get(videoId);
+            if (cached == null) {
+                return null;
+            }
+            if ((SystemClock.elapsedRealtime() - cached.cachedAtElapsedMs) > STREAM_URL_CACHE_TTL_MS) {
+                resolvedStreamUrlCache.remove(videoId);
+                return null;
+            }
+            return cached.url;
+        }
+    }
+
+    private void cacheResolvedStreamUrl(@Nullable String videoId, @Nullable String url) {
+        if (TextUtils.isEmpty(videoId) || TextUtils.isEmpty(url)) {
+            return;
+        }
+        synchronized (streamUrlCacheLock) {
+            resolvedStreamUrlCache.put(videoId, new CachedStreamUrl(url, SystemClock.elapsedRealtime()));
+        }
+    }
+
+    private void invalidateCachedStreamUrl(@Nullable String videoId) {
+        if (TextUtils.isEmpty(videoId)) {
+            return;
+        }
+        synchronized (streamUrlCacheLock) {
+            resolvedStreamUrlCache.remove(videoId);
+        }
+    }
+
+    private static final class CachedStreamUrl {
+        final String url;
+        final long cachedAtElapsedMs;
+
+        CachedStreamUrl(@NonNull String url, long cachedAtElapsedMs) {
+            this.url = url;
+            this.cachedAtElapsedMs = cachedAtElapsedMs;
         }
     }
 
@@ -3559,14 +3678,14 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
-        playerBackdropTarget = new CustomTarget<Drawable>() {
+        playerBackdropTarget = new CustomTarget<Bitmap>() {
             @Override
-            public void onResourceReady(@NonNull Drawable resource, @Nullable Transition<? super Drawable> transition) {
+            public void onResourceReady(@NonNull Bitmap resource, @Nullable Transition<? super Bitmap> transition) {
                 if (!isAdded() || !TextUtils.equals(activeBackdropVideoId, requestVideoId)) {
                     return;
                 }
 
-                ivPlayerBackdrop.setImageDrawable(resource);
+                ivPlayerBackdrop.setImageBitmap(resource);
                 if (bootstrapArtwork) {
                     revealBackdropWithFade();
                     completePlayerArtworkBootstrap();
@@ -3582,7 +3701,7 @@ public class SongPlayerFragment extends Fragment {
                 }
 
                 if (bootstrapArtwork) {
-                    ivPlayerBackdrop.setImageDrawable(null);
+                    ivPlayerBackdrop.setImageBitmap(null);
                     ivPlayerBackdrop.setAlpha(0f);
                 }
                 // Non-bootstrap: keep old backdrop visible (don't wipe it)
@@ -3595,7 +3714,7 @@ public class SongPlayerFragment extends Fragment {
                 }
 
                 if (bootstrapArtwork) {
-                    ivPlayerBackdrop.setImageDrawable(null);
+                    ivPlayerBackdrop.setImageBitmap(null);
                     ivPlayerBackdrop.setAlpha(0f);
                 }
                 // Non-bootstrap: keep old backdrop visible on failure
@@ -3604,18 +3723,18 @@ public class SongPlayerFragment extends Fragment {
         };
 
         Glide.with(this)
-                .asDrawable()
+                .asBitmap()
                 .load(preferredImageUrl)
-                .centerCrop()
+                .transform(new YouTubeCropTransformation())
                 .diskCacheStrategy(DiskCacheStrategy.ALL)
                 .error(
                         TextUtils.isEmpty(fallbackImageUrl)
                                 || TextUtils.equals(preferredImageUrl, fallbackImageUrl)
                                 ? null
                                 : Glide.with(this)
-                                        .asDrawable()
+                                        .asBitmap()
                                         .load(fallbackImageUrl)
-                                        .centerCrop()
+                                        .transform(new YouTubeCropTransformation())
                                         .diskCacheStrategy(DiskCacheStrategy.ALL)
                 )
                 .into(playerBackdropTarget);
@@ -3686,11 +3805,9 @@ public class SongPlayerFragment extends Fragment {
         boolean bootstrapArtwork = playerArtworkBootstrapPending;
         if (bootstrapArtwork) {
             showPlayerArtworkLoadingState();
-            localProgressHandler.postDelayed(() -> {
-                if (!isAdded()) return;
-                loadPlayerCover(track, bootstrapArtwork);
-                scheduleBackdropLoad(track, bootstrapArtwork);
-            }, 280L);
+            // Load artwork immediately — no deferred delay
+            loadPlayerCover(track, bootstrapArtwork);
+            scheduleBackdropLoad(track, bootstrapArtwork);
         } else {
             loadPlayerCover(track, bootstrapArtwork);
             scheduleBackdropLoad(track, bootstrapArtwork);
@@ -4165,10 +4282,6 @@ public class SongPlayerFragment extends Fragment {
         return isEffectivePlaying();
     }
 
-    public boolean externalIsShuffleEnabled() {
-        return shuffleEnabled;
-    }
-
     public int externalGetRepeatMode() {
         return repeatMode;
     }
@@ -4435,16 +4548,14 @@ public class SongPlayerFragment extends Fragment {
 
         androidx.fragment.app.FragmentTransaction transaction = fm.beginTransaction()
                 .setReorderingAllowed(true);
-        if (animate) {
-            transaction.setCustomAnimations(0, R.anim.player_screen_exit);
-        }
+        // No exit animation — instant hide for snappy response
 
         if (target != null && target != this && target.isAdded()) {
             transaction
                     .hide(this)
                     .show(target);
         } else {
-            transaction.remove(this);
+            transaction.hide(this);
         }
 
         transaction.runOnCommit(() -> collapsingToMiniMode = false);
@@ -4701,7 +4812,8 @@ public class SongPlayerFragment extends Fragment {
                 persistentAppContext, PlaybackStateCompat.ACTION_SET_SHUFFLE_MODE);
 
         Intent openAppIntent = new Intent(persistentAppContext, MainActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                .putExtra("OPEN_PLAYER", true);
         int pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             pendingFlags |= PendingIntent.FLAG_IMMUTABLE;
@@ -4821,7 +4933,11 @@ public class SongPlayerFragment extends Fragment {
         ArrayList<String> durations = safeList(args.getStringArrayList(ARG_DURATIONS));
         ArrayList<String> images = safeList(args.getStringArrayList(ARG_IMAGES));
         currentIndex = args.getInt(ARG_SELECTED_INDEX, 0);
-        isPlaying = args.getBoolean(ARG_START_PLAYING, true);
+        if (args != null) {
+            isPlaying = args.getBoolean(ARG_START_PLAYING, true);
+        } else {
+            isPlaying = true;
+        }
 
         int count = Math.min(ids.size(), Math.min(titles.size(), Math.min(artists.size(), Math.min(durations.size(), images.size()))));
         for (int i = 0; i < count; i++) {
@@ -5015,9 +5131,8 @@ public class SongPlayerFragment extends Fragment {
 
         rvNextUp.setNestedScrollingEnabled(false);
         if (rvNextUp.getVisibility() != View.VISIBLE) {
-            rvNextUp.setAlpha(0f);
+            rvNextUp.setAlpha(1f);
             rvNextUp.setVisibility(View.VISIBLE);
-            rvNextUp.animate().alpha(1f).setDuration(PLAYER_BACKDROP_FADE_IN_DURATION_MS).start();
         }
 
         nextUpAdapter.notifyDataSetChanged();
@@ -5208,7 +5323,7 @@ public class SongPlayerFragment extends Fragment {
             }
 
             holder.itemView.setOnClickListener(v -> {
-                int adapterPosition = holder.getAdapterPosition();
+                int adapterPosition = holder.getBindingAdapterPosition();
                 if (adapterPosition == RecyclerView.NO_POSITION) {
                     return;
                 }

@@ -48,7 +48,7 @@
                 android:id="@+id/llNowPlayingOverlay"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:background="#55233972"
+                android:background="#B3000000"
                 android:gravity="center"
                 android:orientation="vertical"
                 android:visibility="gone">
@@ -57,7 +57,7 @@
                     android:layout_width="22dp"
                     android:layout_height="22dp"
                     android:src="@drawable/ic_equalizer"
-                    app:tint="@color/stitch_blue" />
+                    app:tint="@color/active_track_green" />
             </LinearLayout>
         </FrameLayout>
 

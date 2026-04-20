@@ -13,11 +13,12 @@
         android:background="@color/surface_dark"
         tools:context=".WeeklySchedulerFragment">
 
-        <ScrollView
+        <androidx.core.widget.NestedScrollView
             android:id="@+id/scrollAgendaContent"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:clipToPadding="false"
+            android:fillViewport="true"
             android:paddingBottom="100dp">
 
         <LinearLayout
@@ -110,29 +111,29 @@
                 android:nestedScrollingEnabled="false"
                 tools:listitem="@layout/item_task"/>
 
+            <!-- Dynamic Future Tasks Layer (Replaces WebView) -->
             <TextView
-                android:id="@+id/tvFutureTasksLayerTitle"
+                android:id="@+id/tvFutureTasksHeader"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="28dp"
-                android:visibility="gone"
+                android:layout_marginTop="32dp"
+                android:text="Próximas Tareas"
                 android:textColor="@color/text_primary"
-                android:textSize="16sp"
-                android:textStyle="bold" />
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:alpha="0.8" />
 
-            <WebView
-                android:id="@+id/wvFutureTasksLayer"
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvFutureTasksLayer"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:minHeight="360dp"
                 android:layout_marginTop="12dp"
-                android:background="@android:color/transparent"
-                android:overScrollMode="never"
-                android:scrollbars="none"
-                tools:ignore="WebViewLayout" />
+                android:nestedScrollingEnabled="false"
+                tools:listitem="@layout/item_future_task" />
+
 
         </LinearLayout>
-        </ScrollView>
+        </androidx.core.widget.NestedScrollView>
 
         <com.google.android.material.floatingactionbutton.FloatingActionButton
             android:id="@+id/fabAddTask"

@@ -15,4 +15,5 @@
     <color name="text_primary">#e2e2eb</color>
     <color name="text_secondary">#c3c6d5</color>
     <color name="alert_red">#FF4D4D</color>
+    <color name="active_track_green">#20A99B</color>
 </resources>

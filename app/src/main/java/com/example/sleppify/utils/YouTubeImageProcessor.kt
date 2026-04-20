@@ -85,27 +85,29 @@ object YouTubeImageProcessor {
         return try {
             val content = Bitmap.createBitmap(source, cropLeft, cropTop, finalWidth, finalHeight)
             val aspectRatio = finalWidth.toFloat() / finalHeight
-            
-            // Already ~square: use as-is (no padding).
+
+            // Already ~square: use as-is.
             if (abs(aspectRatio - 1.0f) < 0.05f) {
                 return content
             }
 
-            // Instead of center-cropping (cutting the image), we PAD to 1:1 (preserving full content)
-            // Use the pixel at the very corner of the original source as a background color hint
-            val bgColor = source.getPixel(0, 0)
-            
-            val side = max(finalWidth, finalHeight)
-            val padded = Bitmap.createBitmap(side, side, Bitmap.Config.ARGB_8888)
-            val canvas = android.graphics.Canvas(padded)
-            canvas.drawColor(bgColor)
-            
-            val drawLeft = (side - finalWidth) / 2f
-            val drawTop = (side - finalHeight) / 2f
-            canvas.drawBitmap(content, drawLeft, drawTop, null)
-            
-            if (content != source) content.recycle()
-            padded
+            if (finalWidth > finalHeight) {
+                // Wide image: pad top/bottom to complete 1:1, preserving full width
+                val side = finalWidth
+                val bgColor = sampleMarginColor(source, cropTop, cropLeft, finalWidth, height)
+                val padded = Bitmap.createBitmap(side, side, Bitmap.Config.ARGB_8888)
+                val canvas = android.graphics.Canvas(padded)
+                canvas.drawColor(bgColor)
+                val offsetY = (side - finalHeight) / 2
+                canvas.drawBitmap(content, 0f, offsetY.toFloat(), null)
+                padded
+            } else {
+                // Tall image: center-crop to square
+                val side = finalWidth
+                val cropY = max(0, (finalHeight - side) / 2)
+                val squared = Bitmap.createBitmap(content, 0, cropY, side, side)
+                squared
+            }
         } catch (e: Exception) {
             Log.e(TAG, "smartCrop: failed", e)
             source
@@ -141,6 +143,36 @@ object YouTubeImageProcessor {
         return Math.abs(Color.red(c1) - Color.red(c2)) <= threshold &&
                Math.abs(Color.green(c1) - Color.green(c2)) <= threshold &&
                Math.abs(Color.blue(c1) - Color.blue(c2)) <= threshold
+    }
+
+    /**
+     * Samples the dominant margin color from the original image edges.
+     * Used for padding wide images to 1:1 without introducing mismatched backgrounds.
+     */
+    private fun sampleMarginColor(source: Bitmap, cropTop: Int, cropLeft: Int, contentWidth: Int, sourceHeight: Int): Int {
+        return try {
+            val samples = mutableListOf<Int>()
+            val midX = cropLeft + contentWidth / 2
+            val safeX = midX.coerceIn(0, source.width - 1)
+            // Sample from the top and bottom margin areas
+            if (cropTop > 2) {
+                samples.add(source.getPixel(safeX, 1))
+                samples.add(source.getPixel(safeX, cropTop / 2))
+            }
+            val bottomMarginStart = cropTop + (sourceHeight - cropTop)
+            if (bottomMarginStart < source.height - 2) {
+                samples.add(source.getPixel(safeX, source.height - 2))
+            }
+            // Also sample corners for resilience
+            if (source.width > 4 && source.height > 4) {
+                samples.add(source.getPixel(2, 2))
+                samples.add(source.getPixel(source.width - 3, 2))
+            }
+            if (samples.isEmpty()) Color.BLACK
+            else samples.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: Color.BLACK
+        } catch (e: Exception) {
+            Color.BLACK
+        }
     }
 
     @JvmStatic

@@ -143,6 +143,13 @@ class ScannerFragment : Fragment() {
         }
 
         actionImportImages?.setOnClickListener { requestImageImportPermissionAndPick() }
+
+        // Tap anywhere outside the result card to dismiss it
+        scannerRoot?.setOnClickListener {
+            if (cardScanResult?.visibility == View.VISIBLE) {
+                resetDetectionState()
+            }
+        }
         
         if (cameraExecutor == null || cameraExecutor?.isShutdown == true) {
             cameraExecutor = Executors.newSingleThreadExecutor()
@@ -160,8 +167,7 @@ class ScannerFragment : Fragment() {
 
     override fun onPause() {
         stopCamera()
-        resetDetectionState()
-        hideScanResultCard()
+        // Do NOT dismiss scan result card here — keep it persistent
         super.onPause()
     }
 
@@ -452,6 +458,7 @@ class ScannerFragment : Fragment() {
         } else {
             copyToClipboard(item.rawValue)
         }
+        resetDetectionState()
     }
 
     /** Bottom sheet (same colors as the scan card). Do not use PopupMenu or R.menu.menu_scan_result_options here. */

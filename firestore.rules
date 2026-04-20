@@ -1,0 +1,18 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    // Main app sync buckets: users/{uid}/sleppify/{doc}
+    match /users/{uid}/sleppify/{document=**} {
+      allow read, write: if isOwner(uid);
+    }
+
+    // Legacy path kept temporarily for backward compatibility.
+    match /users/{uid}/playlists/{document=**} {
+      allow read, write: if isOwner(uid);
+    }
+  }
+}

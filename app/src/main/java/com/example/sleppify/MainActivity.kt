@@ -3,8 +3,10 @@ package com.example.sleppify
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -17,6 +19,7 @@ import android.view.View
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
+import com.bumptech.glide.Glide
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
@@ -34,6 +37,7 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentTransaction
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.google.android.material.button.MaterialButton
 import com.google.firebase.auth.FirebaseUser
@@ -55,6 +59,7 @@ class MainActivity : AppCompatActivity() {
         private const val TAG_MODULE_SETTINGS = "module_settings"
         private const val TAG_PLAYLIST_DETAIL = "playlist_detail"
         private const val TAG_SONG_PLAYER = "song_player"
+        private const val TAG_SEARCH = "search_fragment"
 
         private const val PREFS_PLAYER_STATE = "player_state"
         private const val PREFS_BOOTSTRAP = "sleppify_bootstrap"
@@ -66,10 +71,9 @@ class MainActivity : AppCompatActivity() {
         private const val RESUME_WORK_DELAY_MS = 180L
         private const val PREFETCH_DEBOUNCE_MS = 800L
         private const val PREFETCH_MIN_INTERVAL_MS = 3 * 60 * 60 * 1000L // 3 hours
-        private const val MODULE_LOAD_OVERLAY_MIN_MS = 120L
-        private const val MODULE_CONTENT_FADE_IN_MS = 280L
         
         const val ACTION_PLAY_FROM_SEARCH = "com.example.sleppify.ACTION_PLAY_FROM_SEARCH"
+        const val EXTRA_TARGET_NAV_ITEM_ID = "TARGET_NAV_ITEM_ID"
         private const val REQUEST_CODE_RECORD_AUDIO = 4107
     }
 
@@ -82,6 +86,13 @@ class MainActivity : AppCompatActivity() {
     private var loginGateContainer: View? = null
     private var tvLoginStatus: TextView? = null
     private var btnLoginGoogle: MaterialButton? = null
+    
+    private lateinit var llMiniPlayerCentral: View
+    private lateinit var ivMiniPlayerArt: ImageView
+    private lateinit var tvMiniPlayerTitle: TextView
+    private lateinit var tvMiniPlayerSubtitle: TextView
+    private lateinit var btnMiniPlayPause: ImageView
+    private lateinit var sbMiniPlayerProgress: android.widget.SeekBar
 
     private var inSettings = false
     private var forceInitialOauthGate = false
@@ -93,6 +104,14 @@ class MainActivity : AppCompatActivity() {
     fun getAuthManager(): AuthManager = authManagerLazy
 
     private val cloudSyncManager: CloudSyncManager by lazy { CloudSyncManager.getInstance(this) }
+
+    private val stopMainPlayerReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "com.example.sleppify.ACTION_STOP_MAIN_PLAYER") {
+                pauseActiveMediaAndDownloadsForSessionChange()
+            }
+        }
+    }
     
     private var scheduleFragment: Fragment? = null
     private var musicFragment: Fragment? = null
@@ -102,6 +121,7 @@ class MainActivity : AppCompatActivity() {
     private var settingsFragment: Fragment? = null
     private var playlistDetailFragment: Fragment? = null
     private var songPlayerFragment: Fragment? = null
+    private var searchFragment: Fragment? = null
 
     private var currentMainNavItemId = View.NO_ID
     private var lastSmartPrefetchAtMs = 0L
@@ -127,6 +147,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             if (handleSongPlayerBackPressed()) return
+            if (handleSearchBackPressed()) return
             if (handlePlaylistDetailBackPressed()) return
 
             if (shouldMoveTaskToBackForOngoingPlayback()) {
@@ -156,6 +177,10 @@ class MainActivity : AppCompatActivity() {
         syncAudioEffectsServiceFromPreferences(forceSync = true)
         syncDailyAgendaNotificationSchedule(forceSync = true)
 
+        LocalBroadcastManager.getInstance(this).registerReceiver(
+            stopMainPlayerReceiver, IntentFilter("com.example.sleppify.ACTION_STOP_MAIN_PLAYER")
+        )
+
         forceInitialOauthGate = !isInitialOauthGateCompleted()
         val shouldShowLoginGate = shouldShowLoginGateAtStartup()
 
@@ -179,6 +204,8 @@ class MainActivity : AppCompatActivity() {
         if (intent?.getBooleanExtra("SHOW_SETTINGS", false) == true) {
             enterSettings()
         }
+        applyTargetNavIntent(intent)
+        handleOpenPlayerIntent(intent)
     }
 
     private fun initViews() {
@@ -192,6 +219,13 @@ class MainActivity : AppCompatActivity() {
         loginGateContainer = findViewById(R.id.loginGateContainer)
         tvLoginStatus = findViewById(R.id.tvLoginStatus)
         btnLoginGoogle = findViewById(R.id.btnLoginGoogle)
+        
+        llMiniPlayerCentral = findViewById(R.id.llMiniPlayer)
+        ivMiniPlayerArt = findViewById(R.id.ivMiniPlayerArt)
+        tvMiniPlayerTitle = findViewById(R.id.tvMiniPlayerTitle)
+        tvMiniPlayerSubtitle = findViewById(R.id.tvMiniPlayerSubtitle)
+        btnMiniPlayPause = findViewById(R.id.btnMiniPlayPause)
+        sbMiniPlayerProgress = findViewById(R.id.sbMiniPlayerProgress)
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -211,8 +245,76 @@ class MainActivity : AppCompatActivity() {
             if (inSettings) exitSettings()
             switchToMainModule(item.itemId)
         }
-        cloudSyncManager.setSyncStateListener(this::setSyncOverlayVisible)
+        cloudSyncManager.setSyncStateListener { syncing -> setSyncOverlayVisible(syncing) }
         onBackPressedDispatcher.addCallback(this, backPressedCallback)
+        
+        llMiniPlayerCentral.setOnClickListener { openPlayerFromMiniBar() }
+        btnMiniPlayPause.setOnClickListener { togglePlaybackFromMiniBar() }
+        
+        // Start a ticker to update progress if playing
+        lifecycleScope.launch {
+            while (isActive) {
+                if (llMiniPlayerCentral.visibility == View.VISIBLE) {
+                    refreshSharedMiniPlayerUi()
+                }
+                delay(1000)
+            }
+        }
+    }
+
+    fun refreshSharedMiniPlayerUi() {
+        val snapshot = PlaybackHistoryStore.load(this)
+        val current = snapshot.currentTrack()
+        if (current == null) {
+            llMiniPlayerCentral.visibility = View.GONE
+            return
+        }
+        
+        // Don't show mini-player if full player is visible
+        val player = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER) as? SongPlayerFragment
+        if (player != null && player.isAdded && !player.isHidden) {
+            llMiniPlayerCentral.visibility = View.GONE
+            return
+        }
+
+        llMiniPlayerCentral.visibility = View.VISIBLE
+        tvMiniPlayerTitle.text = current.title
+        tvMiniPlayerSubtitle.text = current.artist
+        btnMiniPlayPause.setImageResource(if (snapshot.isPlaying) R.drawable.ic_mini_pause else R.drawable.ic_mini_play)
+        
+        val total = snapshot.totalSeconds.coerceAtLeast(1)
+        val progress = ((snapshot.currentSeconds.toFloat() / total.toFloat()) * 1000f).toInt().coerceIn(0, 1000)
+        sbMiniPlayerProgress.progress = progress
+
+        if (!isDestroyed && !isFinishing) {
+            Glide.with(this)
+                .load(current.imageUrl)
+                .placeholder(R.drawable.ic_music)
+                .error(R.drawable.ic_music)
+                .into(ivMiniPlayerArt)
+        }
+    }
+
+    private fun togglePlaybackFromMiniBar() {
+        (supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER) as? SongPlayerFragment)?.externalTogglePlayback()
+        refreshSharedMiniPlayerUi()
+    }
+
+    fun openPlayerFromMiniBar() {
+        if (inSettings) exitSettings()
+        
+        val existing = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER) as? SongPlayerFragment
+        if (existing != null && existing.isAdded) {
+            supportFragmentManager.beginTransaction()
+                .show(existing)
+                .commit()
+            setContainerOverlayMode(true)
+            llMiniPlayerCentral.visibility = View.GONE
+            return
+        }
+        
+        // Restore if possible
+        handleOpenPlayerIntent(Intent().putExtra("OPEN_PLAYER", true))
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -224,6 +326,15 @@ class MainActivity : AppCompatActivity() {
         if (intent.getBooleanExtra("SHOW_SETTINGS", false)) {
             enterSettings()
         }
+        applyTargetNavIntent(intent)
+        handleOpenPlayerIntent(intent)
+    }
+
+    private fun applyTargetNavIntent(intent: Intent?) {
+        val targetNav = intent?.getIntExtra(EXTRA_TARGET_NAV_ITEM_ID, View.NO_ID) ?: View.NO_ID
+        if (targetNav != View.NO_ID && bottomNav.selectedItemId != targetNav) {
+            bottomNav.selectedItemId = targetNav
+        }
     }
 
     private fun handlePlayFromSearchIntent(intent: Intent) {
@@ -234,6 +345,55 @@ class MainActivity : AppCompatActivity() {
                 bottomNav.selectedItemId = R.id.nav_music
             }
         }
+    }
+
+    private fun handleOpenPlayerIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra("OPEN_PLAYER", false) != true) return
+        // Consume the flag so it doesn't fire again on config change
+        intent.removeExtra("OPEN_PLAYER")
+
+        // Ensure we're on the music tab
+        if (bottomNav.selectedItemId != R.id.nav_music) {
+            bottomNav.selectedItemId = R.id.nav_music
+        }
+        if (inSettings) exitSettings()
+
+        // Try to show the existing SongPlayerFragment
+        val existing = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER) as? SongPlayerFragment
+        if (existing != null && existing.isAdded) {
+            if (existing.isHidden) {
+                supportFragmentManager.beginTransaction()
+                    .setReorderingAllowed(true)
+                    .show(existing)
+                    .commit()
+            }
+            setContainerOverlayMode(true)
+            return
+        }
+
+        // Restore player from PlaybackHistoryStore if there was an active session
+        val snapshot = PlaybackHistoryStore.load(this)
+        if (snapshot.queue.isEmpty()) return
+        val ids = ArrayList<String>(snapshot.queue.size)
+        val titles = ArrayList<String>(snapshot.queue.size)
+        val artists = ArrayList<String>(snapshot.queue.size)
+        val durations = ArrayList<String>(snapshot.queue.size)
+        val images = ArrayList<String>(snapshot.queue.size)
+        snapshot.queue.forEach { item ->
+            ids.add(item.videoId)
+            titles.add(item.title)
+            artists.add(item.artist)
+            durations.add(item.duration)
+            images.add(item.imageUrl)
+        }
+        val player = SongPlayerFragment.newInstance(ids, titles, artists, durations, images, snapshot.currentIndex, snapshot.isPlaying)
+        player.externalSetReturnTargetTag(TAG_MODULE_MUSIC)
+        songPlayerFragment = player
+        supportFragmentManager.beginTransaction()
+            .setReorderingAllowed(true)
+            .add(R.id.fragmentContainer, player, TAG_SONG_PLAYER)
+            .commit()
+        setContainerOverlayMode(true)
     }
 
     override fun onResume() {
@@ -253,7 +413,7 @@ class MainActivity : AppCompatActivity() {
     private fun runDeferredResumeWork() {
         if (isFinishing || isDestroyed || loginGateAuthInProgress) return
 
-        cloudSyncManager.setSyncStateListener(this::setSyncOverlayVisible)
+        cloudSyncManager.setSyncStateListener { syncing -> setSyncOverlayVisible(syncing) }
         syncAudioEffectsServiceFromPreferences(false)
         syncDailyAgendaNotificationSchedule(false)
 
@@ -267,6 +427,12 @@ class MainActivity : AppCompatActivity() {
 
         showMainShell()
         if (signedIn) prefetchSmartSuggestions(false)
+
+        // EQ verification: re-apply if enabled but potentially dead after background kill
+        val audioPrefs = getSharedPreferences(AudioEffectsService.PREFS_NAME, MODE_PRIVATE)
+        if (audioPrefs.getBoolean(AudioEffectsService.KEY_ENABLED, false)) {
+            AudioEffectsService.sendApply(applicationContext)
+        }
     }
 
     private fun applyThemeModeFromSettings() {
@@ -294,6 +460,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         cloudSyncManager.setSyncStateListener(null)
+        LocalBroadcastManager.getInstance(this).unregisterReceiver(stopMainPlayerReceiver)
         super.onDestroy()
     }
 
@@ -547,7 +714,7 @@ class MainActivity : AppCompatActivity() {
 
         inSettings = true
         showModuleLoadingOverlay()
-        fragmentContainer.alpha = 0f
+        // fragmentContainer.alpha = 0f  // REMOVED: Instant transition
 
         val target = settingsFragment ?: SettingsFragment().also { settingsFragment = it }
         val isNew = !target.isAdded
@@ -569,17 +736,14 @@ class MainActivity : AppCompatActivity() {
 
         configureHeaderActionForSettings()
         bottomNav.visibility = View.GONE
-        lifecycleScope.launch {
-            delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
-            revealModuleContent()
-        }
+        revealModuleContent()
     }
 
     private fun exitSettings() {
         if (!inSettings) return
         inSettings = false
         showModuleLoadingOverlay()
-        fragmentContainer.alpha = 0f
+        // fragmentContainer.alpha = 0f // REMOVED: Instant transition
 
         val selectedId = bottomNav.selectedItemId
         val target = getMainModuleFragment(selectedId) ?: getOrCreateMainModuleFragment(selectedId)
@@ -598,10 +762,7 @@ class MainActivity : AppCompatActivity() {
         configureHeaderActionForMainModules()
         bottomNav.visibility = View.VISIBLE
         updateHeaderTitleForModule(selectedId)
-        lifecycleScope.launch {
-            delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
-            revealModuleContent()
-        }
+        revealModuleContent()
     }
 
     private fun prefetchSmartSuggestions(force: Boolean) {
@@ -650,6 +811,7 @@ class MainActivity : AppCompatActivity() {
         settingsFragment = supportFragmentManager.findFragmentByTag(TAG_MODULE_SETTINGS)
         playlistDetailFragment = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL)
         songPlayerFragment = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER)
+        searchFragment = supportFragmentManager.findFragmentByTag(TAG_SEARCH)
     }
 
     private fun getOrCreateMainModuleFragment(itemId: Int): Fragment? {
@@ -704,7 +866,7 @@ class MainActivity : AppCompatActivity() {
 
         val isNew = !target.isAdded
         showModuleLoadingOverlay()
-        fragmentContainer.alpha = 0f
+        // fragmentContainer.alpha = 0f // REMOVED: Instant transition
 
         supportFragmentManager.beginTransaction().apply {
             setReorderingAllowed(true)
@@ -726,10 +888,7 @@ class MainActivity : AppCompatActivity() {
         if (itemId == R.id.nav_music) markStreamingEntryAsLibrary()
         updateHeaderTitleForModule(itemId)
 
-        lifecycleScope.launch {
-            delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
-            revealModuleContent()
-        }
+        revealModuleContent()
         return true
     }
 
@@ -740,10 +899,9 @@ class MainActivity : AppCompatActivity() {
 
     fun revealModuleContent() {
         if (isFinishing || isDestroyed) return
-        fragmentContainer.animate().alpha(1f).setDuration(MODULE_CONTENT_FADE_IN_MS).start()
-        moduleLoadingOverlay.animate().alpha(0f).setDuration(MODULE_CONTENT_FADE_IN_MS).withEndAction {
-            moduleLoadingOverlay.visibility = View.GONE
-        }.start()
+        fragmentContainer.alpha = 1f
+        moduleLoadingOverlay.alpha = 0f
+        moduleLoadingOverlay.visibility = View.GONE
     }
 
     private fun markStreamingEntryAsLibrary() {
@@ -779,9 +937,13 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             snapshotStreamingScreenBeforeNavigation()
             val fallback = resolveSongPlayerReturnTarget(player.externalGetReturnTargetTag())
+            
+            // UI should be updated AFTER removing/hiding the player
+            llMiniPlayerCentral.visibility = View.VISIBLE
+            refreshSharedMiniPlayerUi()
+            
             supportFragmentManager.beginTransaction().apply {
                 setReorderingAllowed(true)
-                // setCustomAnimations deleted
                 if (fallback != null && fallback.isAdded && fallback != player) {
                     hide(player).show(fallback)
                 } else {
@@ -789,7 +951,6 @@ class MainActivity : AppCompatActivity() {
                 }
                 commit()
             }
-            delay(MODULE_LOAD_OVERLAY_MIN_MS)
             revealModuleContent()
         }
         return true
@@ -816,7 +977,6 @@ class MainActivity : AppCompatActivity() {
             if (bottomNav.selectedItemId != R.id.nav_music) bottomNav.selectedItemId = R.id.nav_music
             currentMainNavItemId = R.id.nav_music
             updateHeaderTitleForModule(R.id.nav_music)
-            delay(MODULE_LOAD_OVERLAY_MIN_MS)
             revealModuleContent()
         }
         return true
@@ -852,6 +1012,71 @@ class MainActivity : AppCompatActivity() {
 
     private fun shouldMoveTaskToBackForOngoingPlayback(): Boolean {
         val snapshot = PlaybackHistoryStore.load(this)
-        return snapshot != null && snapshot.isPlaying && snapshot.queue?.isNotEmpty() == true
+        return snapshot.isPlaying && snapshot.queue.isNotEmpty()
+    }
+
+    fun playQueue(ids: ArrayList<String>, titles: ArrayList<String>, artists: ArrayList<String>, durations: ArrayList<String>, images: ArrayList<String>, startIndex: Int) {
+        // 1. Remove existing player if any to ensure fresh state
+        val existing = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER)
+        if (existing != null) {
+            supportFragmentManager.beginTransaction().remove(existing).commitNow()
+        }
+        
+        // 2. Create new player
+        val player = SongPlayerFragment.newInstance(ids, titles, artists, durations, images, startIndex, true)
+        player.externalSetReturnTargetTag(currentMainNavItemId.toString())
+        songPlayerFragment = player
+        
+        // 3. Show player instantly
+        supportFragmentManager.beginTransaction()
+            .setReorderingAllowed(true)
+            .add(R.id.fragmentContainer, player, TAG_SONG_PLAYER)
+            .commit()
+        
+        setContainerOverlayMode(true)
+        llMiniPlayerCentral.visibility = View.GONE
+    }
+
+    fun switchToSearchFragment() {
+        if (inSettings) exitSettings()
+        showModuleLoadingOverlay()
+        
+        val target = searchFragment ?: SearchFragment().also { searchFragment = it }
+        supportFragmentManager.beginTransaction()
+            .setReorderingAllowed(true)
+            .hideIfVisible(supportFragmentManager.findFragmentByTag(moduleTagForItem(currentMainNavItemId) ?: ""))
+            .hideIfVisible(playlistDetailFragment)
+            .hideIfVisible(songPlayerFragment)
+            .addOrShow(target, TAG_SEARCH)
+            .commit()
+            
+        revealModuleContent()
+    }
+
+    private fun FragmentTransaction.hideIfVisible(fragment: Fragment?): FragmentTransaction {
+        if (fragment != null && fragment.isAdded && !fragment.isHidden) {
+            hide(fragment)
+            setMaxLifecycle(fragment, androidx.lifecycle.Lifecycle.State.STARTED)
+        }
+        return this
+    }
+
+    private fun FragmentTransaction.addOrShow(fragment: Fragment, tag: String): FragmentTransaction {
+        if (fragment.isAdded) show(fragment) else add(R.id.fragmentContainer, fragment, tag)
+        setMaxLifecycle(fragment, androidx.lifecycle.Lifecycle.State.RESUMED)
+        return this
+    }
+
+    private fun handleSearchBackPressed(): Boolean {
+        val search = supportFragmentManager.findFragmentByTag(TAG_SEARCH) ?: return false
+        if (!search.isAdded || search.isHidden) return false
+        
+        showModuleLoadingOverlay()
+        supportFragmentManager.beginTransaction()
+            .remove(search)
+            .show(getOrCreateMainModuleFragment(currentMainNavItemId)!!)
+            .commit()
+        revealModuleContent()
+        return true
     }
 }

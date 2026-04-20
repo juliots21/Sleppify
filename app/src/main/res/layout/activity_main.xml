@@ -59,8 +59,15 @@
         android:id="@+id/fragmentContainer"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        app:layout_constraintBottom_toTopOf="@id/bottomNavigation"
+        app:layout_constraintBottom_toTopOf="@id/llMiniPlayer"
         app:layout_constraintTop_toBottomOf="@id/topAppBar" />
+
+    <include
+        android:id="@+id/llMiniPlayer"
+        layout="@layout/include_mini_player"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:layout_constraintBottom_toTopOf="@id/bottomNavigation" />
 
     <FrameLayout
         android:id="@+id/moduleLoadingOverlay"
@@ -69,7 +76,7 @@
         android:background="@color/surface_dark"
         android:elevation="2dp"
         android:visibility="gone"
-        app:layout_constraintBottom_toTopOf="@id/bottomNavigation"
+        app:layout_constraintBottom_toTopOf="@id/llMiniPlayer"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/topAppBar">

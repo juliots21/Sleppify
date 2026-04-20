@@ -50,6 +50,32 @@ object CustomPlaylistsStore {
         return true
     }
 
+    fun deletePlaylist(context: Context, name: String): Boolean {
+        val trimmed = name.trim()
+        val names = getAllPlaylistNames(context).toMutableList()
+        if (!names.remove(trimmed)) return false
+        
+        val prefs = getPrefs(context)
+        prefs.edit().putString(KEY_PLAYLIST_NAMES, JSONArray(names).toString()).apply()
+        
+        val tracks = getTracksFromPlaylist(context, trimmed)
+        val trackIds = tracks.map { it.videoId }
+        if (trackIds.isNotEmpty()) {
+            OfflineAudioStore.deleteOfflineAudio(context, trackIds)
+        }
+        
+        prefs.edit().remove(CUSTOM_PLAYLIST_PREFIX + trimmed).apply()
+        
+        // Disable offline auto feature for this playlist
+        val playerPrefs = context.getSharedPreferences("player_state", Context.MODE_PRIVATE)
+        playerPrefs.edit().remove("offline_auto_sync_$trimmed").apply()
+        
+        if (AuthManager.getInstance(context).isSignedIn()) {
+            CloudSyncManager.getInstance(context).deletePlaylistFromCloud(trimmed)
+        }
+        return true
+    }
+
     fun addTrackToPlaylist(context: Context, playlistName: String, videoId: String, title: String, subtitle: String, duration: String, thumbnailUrl: String) {
         val prefs = getPrefs(context)
         val key = CUSTOM_PLAYLIST_PREFIX + playlistName
@@ -91,6 +117,34 @@ object CustomPlaylistsStore {
         }
     }
 
+    fun removeTrackFromPlaylist(context: Context, playlistName: String, videoId: String) {
+        val prefs = getPrefs(context)
+        val key = CUSTOM_PLAYLIST_PREFIX + playlistName
+        val existingJson = prefs.getString(key, "[]")
+        val arr = try { JSONArray(existingJson) } catch (e: JSONException) { JSONArray() }
+        
+        val newArr = JSONArray()
+        var found = false
+        for (i in 0 until arr.length()) {
+            val obj = arr.getJSONObject(i)
+            if (obj.getString("videoId") == videoId) {
+                found = true
+                continue
+            }
+            newArr.put(obj)
+        }
+        
+        if (found) {
+            prefs.edit().putString(key, newArr.toString()).apply()
+            
+            // Sync to cloud if signed in
+            if (AuthManager.getInstance(context).isSignedIn()) {
+                val updatedTracks = getTracksFromPlaylist(context, playlistName)
+                CloudSyncManager.getInstance(context).syncPlaylistToCloud(playlistName, updatedTracks)
+            }
+        }
+    }
+
     fun getTracksFromPlaylist(context: Context, playlistName: String): List<FavoritesPlaylistStore.FavoriteTrack> {
         val prefs = getPrefs(context)
         val key = CUSTOM_PLAYLIST_PREFIX + playlistName
@@ -111,5 +165,35 @@ object CustomPlaylistsStore {
         } catch (e: JSONException) {
         }
         return tracks
+    }
+
+    fun importCloudPlaylists(context: Context, playlists: Map<String, List<FavoritesPlaylistStore.FavoriteTrack>>) {
+        val prefs = getPrefs(context)
+        val names = playlists.keys.toList().sorted()
+        
+        val editor = prefs.edit()
+        
+        // Update all_playlist_names
+        editor.putString(KEY_PLAYLIST_NAMES, JSONArray(names).toString())
+        
+        // Update each playlist's tracks
+        for ((name, tracks) in playlists) {
+            val key = CUSTOM_PLAYLIST_PREFIX + name
+            val arr = JSONArray()
+            for (track in tracks) {
+                val obj = JSONObject()
+                try {
+                    obj.put("videoId", track.videoId)
+                    obj.put("title", track.title)
+                    obj.put("subtitle", track.artist)
+                    obj.put("duration", track.duration)
+                    obj.put("thumbnailUrl", track.imageUrl)
+                    arr.put(obj)
+                } catch (e: JSONException) {
+                }
+            }
+            editor.putString(key, arr.toString())
+        }
+        editor.apply()
     }
 }

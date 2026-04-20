@@ -12,7 +12,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        app:layout_constraintGuide_percent="0.91" />
+        app:layout_constraintGuide_percent="0.85" />
 
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/scanArea"
@@ -171,7 +171,8 @@
                     android:fontFamily="@font/inter_variable"
                     android:textColor="#E8EAEF"
                     android:textIsSelectable="false"
-                    android:textSize="14sp" />
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
 
                 <ImageView
                     android:id="@+id/ivScanResultChevron"

@@ -51,7 +51,6 @@ class PlaylistDetailActivity : AppCompatActivity() {
         val btnBack: ImageButton = findViewById(R.id.btnBack)
         val btnMore: ImageButton = findViewById(R.id.btnMore)
         val btnListenNow: MaterialButton = findViewById(R.id.btnListenNow)
-        val btnShuffle: ImageButton = findViewById(R.id.btnShuffle)
         val btnDownload: ImageButton = findViewById(R.id.btnDownload)
         val btnEnhance: MaterialButton = findViewById(R.id.btnEnhance)
 
@@ -72,7 +71,6 @@ class PlaylistDetailActivity : AppCompatActivity() {
 
         btnBack.setOnClickListener { finish() }
         btnMore.setOnClickListener { }
-        btnShuffle.setOnClickListener { }
         btnDownload.setOnClickListener { }
         btnEnhance.setOnClickListener { }
         btnListenNow.setOnClickListener { openPlaylistExternal(playlistId) }
@@ -89,10 +87,18 @@ class PlaylistDetailActivity : AppCompatActivity() {
         tvPlaylistDuration.text = meta.durationLabel
 
         if (playlistThumbnail.isNotEmpty()) {
+            val density = resources.displayMetrics.density
+            val displayPx = (220 * density).toInt().coerceAtLeast(1)
+            val side = if (YouTubeImageProcessor.shouldProcess(playlistThumbnail)) {
+                YouTubeImageProcessor.decodeDimensionForSmartCrop(displayPx)
+            } else {
+                320
+            }
             Glide.with(this)
                 .load(playlistThumbnail)
                 .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL)
-                .centerCrop()
+                .transform(YouTubeCropTransformation())
+                .override(side, side)
                 .thumbnail(0.25f)
                 .placeholder(R.drawable.ic_music)
                 .error(R.drawable.ic_music)

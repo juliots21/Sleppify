@@ -13,6 +13,11 @@ class SleppifyApp : Application() {
         try {
             com.bumptech.glide.Glide.get(this)
         } catch (e: Exception) {}
+
+        // Start EQ engine on boot if enabled — ensures global EQ is always active
+        try {
+            AudioEffectsService.sendApply(this)
+        } catch (e: Exception) {}
     }
 
     @Synchronized

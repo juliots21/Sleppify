@@ -92,7 +92,7 @@ class TaskReminderPrepareWorker(context: Context, workerParams: WorkerParameters
     private fun resolveProfileName(context: Context): String {
         return try {
             val authManager = AuthManager.getInstance(context)
-            if (authManager != null && authManager.isSignedIn()) {
+            if (authManager.isSignedIn()) {
                 val displayName = authManager.getDisplayName()
                 if (!displayName.isNullOrBlank()) {
                     return displayName

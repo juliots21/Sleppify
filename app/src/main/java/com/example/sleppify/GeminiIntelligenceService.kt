@@ -47,7 +47,13 @@ class GeminiIntelligenceService {
         private const val KEY_COOLDOWN_MS = 3 * 60 * 1000L    // 3 minutes
 
         @JvmStatic
-        fun isSuspended(): Boolean = System.currentTimeMillis() < serviceSuspendedUntilMs
+        fun isSuspended(): Boolean {
+            val now = System.currentTimeMillis()
+            if (now < serviceSuspendedUntilMs) return true
+            // If all keys are individually on cooldown, consider suspended
+            if (KEY_COOLDOWNS.size >= API_KEYS.size && KEY_COOLDOWNS.values.all { it > now }) return true
+            return false
+        }
 
         private val mainHandler = Handler(Looper.getMainLooper())
         private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -254,10 +260,10 @@ class GeminiIntelligenceService {
                     return RequestResponse.Success(result.text ?: "")
                 } else {
                     if (result.code == 429 || result.code == 503) {
-                        Log.e(TAG, "Rate limit hit on key $keyIdx. Suspending.")
-                        serviceSuspendedUntilMs = now + GLOBAL_COOLDOWN_MS
+                        Log.w(TAG, "Rate limit hit on key $keyIdx. Cooling down this key only.")
                         KEY_COOLDOWNS[keyIdx] = now + KEY_COOLDOWN_MS
-                        return RequestResponse.Error("Cuota de IA excedida. Reintentando en breve.")
+                        // Don't globally suspend — continue trying other keys
+                        continue
                     }
                     
                     if (result.code <= 0) {
@@ -285,8 +291,8 @@ class GeminiIntelligenceService {
                 requestMethod = "POST"
                 setRequestProperty("Content-Type", "application/json")
                 doOutput = true
-                connectTimeout = 6000
-                readTimeout = 12000
+                connectTimeout = 8000
+                readTimeout = 15000
             }
 
             val payload = JSONObject().apply {

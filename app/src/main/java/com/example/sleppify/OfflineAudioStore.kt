@@ -114,6 +114,12 @@ object OfflineAudioStore {
             return true
         }
 
+        if (actualDurationSeconds < 0) {
+            // Couldn't reliably read the real duration, but size is plausible. Trust the file.
+            putCachedOfflineState(normalized, true)
+            return true
+        }
+
         val scaledExpectedSeconds = kotlin.math.round(expectedDurationSeconds * EXPECTED_DURATION_MATCH_RATIO).toInt()
         val minimumAllowedDurationSeconds = kotlin.math.max(
             MIN_VALID_AUDIO_DURATION_SECONDS,
@@ -123,7 +129,6 @@ object OfflineAudioStore {
         val matchesExpectedDuration = actualDurationSeconds >= minimumAllowedDurationSeconds
         if (!matchesExpectedDuration) {
             android.util.Log.w("OfflineAudioStore", "validation:fail id=$normalized actual=$actualDurationSeconds expected=$expectedDurationLabel (min=$minimumAllowedDurationSeconds)")
-            deleteOfflineAudio(context, normalized)
             return false
         }
 
@@ -251,6 +256,9 @@ object OfflineAudioStore {
     private fun isPlausibleOfflineAudioFile(file: File, durationSeconds: Int): Boolean {
         if (!file.isFile || file.length() < MIN_VALID_AUDIO_FILE_BYTES) {
             return false
+        }
+        if (durationSeconds < 0) {
+            return true // Fallback to trust if metadata extraction fails but file size is valid
         }
         return durationSeconds >= MIN_VALID_AUDIO_DURATION_SECONDS
     }
