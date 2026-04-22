@@ -19,15 +19,18 @@
         android:orientation="horizontal">
 
         <FrameLayout
-            android:layout_width="44dp"
-            android:layout_height="44dp">
+            android:layout_width="64dp"
+            android:layout_height="wrap_content"
+            android:minHeight="44dp">
 
             <ImageView
                 android:id="@+id/ivTrackArt"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
+                android:layout_height="wrap_content"
                 android:background="@color/surface_high"
-                android:scaleType="centerCrop"
+                android:scaleType="fitCenter"
+                android:adjustViewBounds="true"
+                android:maxHeight="64dp"
                 android:src="@drawable/ic_music" />
 
             <LinearLayout

@@ -15,9 +15,12 @@
 
     <ImageView
         android:id="@+id/ivNextUpArt"
-        android:layout_width="48dp"
-        android:layout_height="48dp"
-        android:scaleType="centerCrop"
+        android:layout_width="64dp"
+        android:layout_height="wrap_content"
+        android:minHeight="48dp"
+        android:scaleType="fitCenter"
+        android:adjustViewBounds="true"
+        android:maxHeight="64dp"
         android:src="@drawable/ic_music" />
 
     <LinearLayout

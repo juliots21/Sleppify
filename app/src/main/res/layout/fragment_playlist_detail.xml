@@ -55,10 +55,13 @@
 
             <com.google.android.material.imageview.ShapeableImageView
                 android:id="@+id/ivMiniPlayerArt"
-                android:layout_width="42dp"
-                android:layout_height="42dp"
+                android:layout_width="56dp"
+                android:layout_height="wrap_content"
+                android:minHeight="42dp"
                 android:background="@color/surface_high"
-                android:scaleType="centerCrop"
+                android:scaleType="fitCenter"
+                android:adjustViewBounds="true"
+                android:maxHeight="56dp"
                 android:src="@drawable/ic_music"
                 app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Small" />
 

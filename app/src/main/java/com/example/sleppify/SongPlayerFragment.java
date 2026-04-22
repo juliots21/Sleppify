@@ -4276,13 +4276,21 @@ public class SongPlayerFragment extends Fragment {
         String targetVideoId = targetIndexFromArgs < videoIds.size()
                 ? safeValue(videoIds.get(targetIndexFromArgs))
                 : "";
-        
+
         // Important: check if the track we ARE playing is the same as the one we WILL play
         boolean sameAsLoaded = !TextUtils.isEmpty(targetVideoId)
                 && TextUtils.equals(targetVideoId, loadedVideoId);
 
+        // ALWAYS stop previous audio before starting new playback to prevent overlap
         if (!sameAsLoaded) {
             persistPositionForLoadedTrack();
+            // Stop any playing audio immediately to prevent mixing
+            stopLocalProgressTicker();
+            releaseLocalMediaPlayer();
+            pauseYouTubePlaybackEngine("replace_queue_new_track");
+            usingOfflineSource = false;
+            usingYoutubeFallbackSource = false;
+            youtubePlaybackActive = false;
         }
 
         tracks.clear();
@@ -5175,18 +5183,10 @@ public class SongPlayerFragment extends Fragment {
             if (rawWidth > 0 && rawHeight > 0) {
                 int targetWidth;
                 int targetHeight;
-                if (YouTubeImageProcessor.shouldProcess(imageUrl)) {
-                    targetWidth = YouTubeImageProcessor.decodeDimensionForSmartCrop(rawWidth);
-                    targetHeight = YouTubeImageProcessor.decodeDimensionForSmartCrop(rawHeight);
-                } else {
-                    targetWidth = Math.max(64, ((Math.max(1, rawWidth) + 63) / 64) * 64);
-                    targetHeight = Math.max(64, ((Math.max(1, rawHeight) + 63) / 64) * 64);
-                }
                 Glide.with(holder.itemView)
                     .load(imageUrl)
                     .transform(new YouTubeCropTransformation())
                     .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL)
-                    .override(targetWidth, targetHeight)
                     .placeholder(R.drawable.ic_music)
                     .error(R.drawable.ic_music)
                     .into(holder.ivNextUpArt);
@@ -5197,10 +5197,6 @@ public class SongPlayerFragment extends Fragment {
                     .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL)
                     .placeholder(R.drawable.ic_music)
                     .error(R.drawable.ic_music);
-                if (YouTubeImageProcessor.shouldProcess(imageUrl)) {
-                    int side = YouTubeImageProcessor.decodeDimensionForSmartCrop(48);
-                    nextUpRequest = nextUpRequest.override(side, side);
-                }
                 nextUpRequest.into(holder.ivNextUpArt);
             }
             } else {

@@ -39,11 +39,12 @@ import android.widget.LinearLayout;
 import android.content.res.ColorStateList;
 import androidx.core.content.ContextCompat;
 
+import androidx.activity.OnBackPressedCallback;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
-import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.StringRes;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.Observer;
 import androidx.recyclerview.widget.DiffUtil;
@@ -79,6 +80,7 @@ import com.google.firebase.auth.FirebaseUser;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.chip.Chip;
 import com.google.android.material.chip.ChipGroup;
+import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.google.android.material.imageview.ShapeableImageView;
 import com.google.android.material.textfield.TextInputEditText;
 
@@ -424,22 +426,6 @@ public class MusicPlayerFragment extends Fragment {
             libraryTracks.add(injectionIndex++, customTrackResult);
         }
 
-        // Add "Create Playlist" button
-        YouTubeMusicService.TrackResult createPlaylistBtn = new YouTubeMusicService.TrackResult(
-            "playlist",
-            "sleppify_action_create_playlist",
-            "Crear playlist",
-            "Crea una nueva lista de reproducción local",
-            ""
-        );
-        int cIdx = -1;
-        for (int i=0; i<libraryTracks.size(); i++) {
-            if (TextUtils.equals(createPlaylistBtn.contentId, libraryTracks.get(i).contentId)) {
-                cIdx = i; break;
-            }
-        }
-        if (cIdx >= 0) libraryTracks.remove(cIdx);
-        libraryTracks.add(injectionIndex++, createPlaylistBtn);
 
         // Fetch Cloud Playlists if signed in
         if (AuthManager.getInstance(requireContext()).isSignedIn()) {
@@ -473,7 +459,7 @@ public class MusicPlayerFragment extends Fragment {
                             "playlist", contentId, name, sub, thumb
                         );
                         libraryTracks.add(finalInjectionIdx, cloudTr);
-                        if (tracksAdapter != null) tracksAdapter.notifyDataSetChanged();
+                        if (adapter != null) adapter.notifyDataSetChanged();
                     }
                 });
             });
@@ -797,6 +783,10 @@ public class MusicPlayerFragment extends Fragment {
         sbMiniPlayerProgress = view.findViewById(R.id.sbMiniPlayerProgress);
         btnMiniPlayPause = view.findViewById(R.id.btnMiniPlayPause);
         swipeLibraryRefresh = view.findViewById(R.id.swipeLibraryRefresh);
+        FloatingActionButton fabCreatePlaylist = view.findViewById(R.id.fabCreatePlaylist);
+        if (fabCreatePlaylist != null) {
+            fabCreatePlaylist.setOnClickListener(v -> showCreatePlaylistDialog());
+        }
 
         adapter = new MusicResultsAdapter(this::openTrack, this::onLibraryPlaylistMorePressed);
         musicResultsLayoutManager = new LinearLayoutManager(requireContext());
@@ -3763,14 +3753,7 @@ public class MusicPlayerFragment extends Fragment {
         if (rawWidth > 0 && rawHeight > 0) {
             int targetWidth;
             int targetHeight;
-            if (YouTubeImageProcessor.shouldProcess(safeUrl)) {
-                targetWidth = YouTubeImageProcessor.decodeDimensionForSmartCrop(rawWidth);
-                targetHeight = YouTubeImageProcessor.decodeDimensionForSmartCrop(rawHeight);
-            } else {
-                targetWidth = bucketArtworkDimension(rawWidth);
-                targetHeight = bucketArtworkDimension(rawHeight);
-            }
-            signature = safeUrl + "|" + targetWidth + "x" + targetHeight;
+            signature = safeUrl + "|dynamic";
             Object previousSignature = target.getTag(R.id.tag_artwork_signature);
             if (previousSignature instanceof String && signature.equals(previousSignature)) {
                 return;
@@ -3780,7 +3763,6 @@ public class MusicPlayerFragment extends Fragment {
                     .load(safeUrl)
                     .transform(new YouTubeCropTransformation())
                     .diskCacheStrategy(DiskCacheStrategy.ALL)
-                    .override(targetWidth, targetHeight)
                     .placeholder(R.drawable.ic_music)
                     .error(R.drawable.ic_music)
                     .into(target);
@@ -3800,10 +3782,6 @@ public class MusicPlayerFragment extends Fragment {
                 .diskCacheStrategy(DiskCacheStrategy.ALL)
                 .placeholder(R.drawable.ic_music)
                 .error(R.drawable.ic_music);
-        if (YouTubeImageProcessor.shouldProcess(safeUrl)) {
-            int side = YouTubeImageProcessor.decodeDimensionForSmartCrop(64);
-            request = request.override(side, side);
-        }
         request.into(target);
     }
 
@@ -4021,7 +3999,7 @@ public class MusicPlayerFragment extends Fragment {
         }
 
         String[] array = displayNames.toArray(new String[0]);
-        new androidx.appcompat.app.AlertDialog.Builder(requireContext(), R.style.Theme_Sleppify_AlertDialog)
+        new androidx.appcompat.app.AlertDialog.Builder(requireContext(), R.style.Theme_Sleppify)
             .setTitle("Añadir a playlist")
             .setItems(array, (dialog, which) -> {
                 if (which < localNames.size()) {
@@ -4053,7 +4031,6 @@ public class MusicPlayerFragment extends Fragment {
             })
             .setNegativeButton("Cancelar", null)
             .show();
-    }
     }
 
     private void addSearchTrackToFavorites(@NonNull YouTubeMusicService.TrackResult track) {
@@ -5492,10 +5469,6 @@ public class MusicPlayerFragment extends Fragment {
 
 
     private void openTrack(@NonNull YouTubeMusicService.TrackResult track) {
-        if ("sleppify_action_create_playlist".equals(track.contentId)) {
-            showCreatePlaylistDialog();
-            return;
-        }
 
         if ("playlist".equals(track.resultType)) {
             openPlaylistDetail(track);
@@ -5667,6 +5640,11 @@ public class MusicPlayerFragment extends Fragment {
             selectedIndex = 0;
         }
 
+        // Hide mini-player immediately to prevent UI overlap when player opens
+        if (llMiniPlayer != null) {
+            llMiniPlayer.setVisibility(View.GONE);
+        }
+
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
         if (existingPlayer != null && existingPlayer.isAdded()) {
             existingPlayer.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
@@ -5705,7 +5683,8 @@ public class MusicPlayerFragment extends Fragment {
         }
 
         invalidateMiniSnapshotCache();
-        updateMiniPlayerUi();
+        // Don't update mini-player UI immediately - keep it hidden while full player is visible
+        // updateMiniPlayerUi() will be called when returning from player
     }
 
     private void openPlaylistDetail(@NonNull YouTubeMusicService.TrackResult track) {
@@ -5814,7 +5793,7 @@ public class MusicPlayerFragment extends Fragment {
         int padding = (int) (16 * getResources().getDisplayMetrics().density);
         input.setPadding(padding, padding, padding, padding);
 
-        new androidx.appcompat.app.AlertDialog.Builder(requireContext(), R.style.Theme_Sleppify_AlertDialog)
+        new androidx.appcompat.app.AlertDialog.Builder(requireContext(), R.style.Theme_Sleppify)
                 .setTitle("Crear nueva playlist")
                 .setView(input)
                 .setPositiveButton("Crear", (dialog, which) -> {

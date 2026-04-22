@@ -49,8 +49,7 @@ class GeminiIntelligenceService {
         @JvmStatic
         fun isSuspended(): Boolean = System.currentTimeMillis() < serviceSuspendedUntilMs
 
-        private val mainHandler = Handler(Looper.getMainLooper())
-        private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+        private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 
     // --- DATA MODELS ---
@@ -239,15 +238,23 @@ class GeminiIntelligenceService {
         val now = System.currentTimeMillis()
         var consecutiveConnErrors = 0
 
+        // Limit rotation to first 2 available keys to prevent API saturation
+        val maxRotationAttempts = 2
+        var attempts = 0
         for (model in MODELS) {
             for (offset in API_KEYS.indices) {
+                if (attempts >= maxRotationAttempts) {
+                    Log.w(TAG, "Reached max rotation attempts ($maxRotationAttempts). Stopping.")
+                    break
+                }
                 val keyIdx = (startIdx + offset) % API_KEYS.size
                 
                 // Key cooldown check
                 if ((KEY_COOLDOWNS[keyIdx] ?: 0) > now) continue
 
+                attempts++
                 val apiKey = API_KEYS[keyIdx]
-                Log.d(TAG, "Trying $label [model=$model, key=$keyIdx]...")
+                Log.d(TAG, "Trying $label [model=$model, key=$keyIdx, attempt=$attempts/$maxRotationAttempts]...")
 
                 val result = tryOneRequest(model, apiKey, promptText)
                 if (result.isSuccess) {
@@ -273,6 +280,7 @@ class GeminiIntelligenceService {
                     if (result.code > 0) lastHttpError = "Error HTTP ${result.code}"
                 }
             }
+            if (attempts >= maxRotationAttempts) break
         }
         return RequestResponse.Error(lastHttpError)
     }
@@ -285,8 +293,8 @@ class GeminiIntelligenceService {
                 requestMethod = "POST"
                 setRequestProperty("Content-Type", "application/json")
                 doOutput = true
-                connectTimeout = 6000
-                readTimeout = 12000
+                connectTimeout = 4000
+                readTimeout = 8000
             }
 
             val payload = JSONObject().apply {

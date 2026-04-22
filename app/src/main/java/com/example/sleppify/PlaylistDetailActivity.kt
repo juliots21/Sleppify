@@ -92,7 +92,7 @@ class PlaylistDetailActivity : AppCompatActivity() {
             Glide.with(this)
                 .load(playlistThumbnail)
                 .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL)
-                .centerCrop()
+                .fitCenter()
                 .thumbnail(0.25f)
                 .placeholder(R.drawable.ic_music)
                 .error(R.drawable.ic_music)
@@ -406,13 +406,7 @@ class PlaylistDetailActivity : AppCompatActivity() {
                 val base = Glide.with(holder.itemView)
                     .load(url)
                     .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL)
-                val sized = if (YouTubeImageProcessor.shouldProcess(url)) {
-                    val side = YouTubeImageProcessor.decodeDimensionForSmartCrop(displayPx)
-                    base.transform(YouTubeCropTransformation()).override(side, side)
-                } else {
-                    base.centerCrop().override(128, 128)
-                }
-                sized
+                base.transform(YouTubeCropTransformation())
                     .thumbnail(0.25f)
                     .placeholder(R.drawable.ic_music)
                     .error(R.drawable.ic_music)

@@ -287,12 +287,43 @@ class SearchActivity : AppCompatActivity() {
     }
 
     private fun requestPagedSearchResults(query: String, pageToken: String, append: Boolean) {
+        val requestId = ++latestSearchRequestId
+
         if (!isNetworkAvailable()) {
-            setSearchLoadingState(false, "Sin internet.")
+            // Offline mode: search in local stores
+            if (!append) {
+                setSearchLoadingState(true, "Buscando música...")
+            }
+
+            lifecycleScope.launch(Dispatchers.IO) {
+                val offlineResults = performOfflineSearch(query)
+
+                launch(Dispatchers.Main) {
+                    if (isFinishing || isDestroyed || requestId != latestSearchRequestId) return@launch
+
+                    setSearchLoadingState(false, "")
+                    revealModuleContent()
+                    rvSearchResults.alpha = 0f
+                    rvSearchResults.animate().alpha(1f).setDuration(250).start()
+                    hideKeyboard()
+
+                    if (!append) allTracks.clear()
+                    appendUniqueTracks(offlineResults)
+
+                    // No pagination for offline search
+                    nextSearchPageToken = ""
+                    hasMoreSearchPages = false
+                    applyActiveFilter(query)
+
+                    if (allTracks.isEmpty()) {
+                        tvSearchState.text = "No encontré resultados para: $query"
+                    }
+                }
+            }
             return
         }
 
-        val requestId = ++latestSearchRequestId
+        // Online mode: use YouTube API
         if (append) {
             searchPaginationInFlight = true
             tvSearchState.text = "Cargando mas resultados..."
@@ -344,6 +375,60 @@ class SearchActivity : AppCompatActivity() {
                 }
             }
         })
+    }
+
+    private fun performOfflineSearch(query: String): List<YouTubeMusicService.TrackResult> {
+        val normalizedQuery = normalizeForFilter(query)
+        val results = mutableListOf<YouTubeMusicService.TrackResult>()
+        val seenIds = mutableSetOf<String>()
+
+        // Search in favorites
+        val favorites = FavoritesPlaylistStore.loadFavorites(this)
+        for (track in favorites) {
+            if (matchesQuery(track.title, track.artist, normalizedQuery)) {
+                val key = "video|${track.videoId}"
+                if (key !in seenIds) {
+                    seenIds.add(key)
+                    results.add(YouTubeMusicService.TrackResult(
+                        "video",
+                        track.videoId,
+                        track.title,
+                        track.artist,
+                        track.imageUrl
+                    ))
+                }
+            }
+        }
+
+        // Search in custom playlists
+        val playlistNames = CustomPlaylistsStore.getAllPlaylistNames(this)
+        for (playlistName in playlistNames) {
+            val tracks = CustomPlaylistsStore.getTracksFromPlaylist(this, playlistName)
+            for (track in tracks) {
+                if (matchesQuery(track.title, track.artist, normalizedQuery)) {
+                    val key = "video|${track.videoId}"
+                    if (key !in seenIds) {
+                        seenIds.add(key)
+                        results.add(YouTubeMusicService.TrackResult(
+                            "video",
+                            track.videoId,
+                            track.title,
+                            track.artist,
+                            track.imageUrl
+                        ))
+                    }
+                }
+            }
+        }
+
+        return results
+    }
+
+    private fun matchesQuery(title: String, artist: String, query: String): Boolean {
+        if (query.isEmpty()) return true
+        val normalizedTitle = normalizeForFilter(title)
+        val normalizedArtist = normalizeForFilter(artist)
+        return normalizedTitle.contains(query) || normalizedArtist.contains(query)
     }
 
     private fun loadMoreSearchResults() {
@@ -520,13 +605,7 @@ class SearchActivity : AppCompatActivity() {
             .diskCacheStrategy(DiskCacheStrategy.ALL)
             .placeholder(R.drawable.ic_music)
             .error(R.drawable.ic_music)
-        val req = if (YouTubeImageProcessor.shouldProcess(trimmed)) {
-            val side = YouTubeImageProcessor.decodeDimensionForSmartCrop(displayPx)
-            base.override(side, side)
-        } else {
-            base
-        }
-        req.into(target)
+        base.into(target)
     }
 
     private fun searchTypeLabel(track: YouTubeMusicService.TrackResult) = when (track.resultType?.lowercase(Locale.US)) {

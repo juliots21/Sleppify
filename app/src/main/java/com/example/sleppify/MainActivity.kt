@@ -228,10 +228,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun handlePlayFromSearchIntent(intent: Intent) {
         val music = supportFragmentManager.findFragmentByTag(TAG_MODULE_MUSIC)
-        if (music is MusicPlayerFragment) {
-            music.playTrackFromSearch(intent)
-            if (currentMainNavItemId != R.id.nav_music) {
-                bottomNav.selectedItemId = R.id.nav_music
+        if (music != null && music.javaClass.simpleName == "MusicPlayerFragment") {
+            try {
+                val method = music.javaClass.getMethod("playTrackFromSearch", Intent::class.java)
+                method.invoke(music, intent)
+                if (currentMainNavItemId != R.id.nav_music) {
+                    bottomNav.selectedItemId = R.id.nav_music
+                }
+            } catch (e: Exception) {
+                // Method not found or invocation failed
             }
         }
     }
@@ -654,14 +659,30 @@ class MainActivity : AppCompatActivity() {
 
     private fun getOrCreateMainModuleFragment(itemId: Int): Fragment? {
         getMainModuleFragment(itemId)?.let { return it }
-        return when (itemId) {
-            R.id.nav_schedule -> WeeklySchedulerFragment().also { scheduleFragment = it }
-            R.id.nav_music -> MusicPlayerFragment().also { musicFragment = it }
-            R.id.nav_scanner -> ScannerFragment().also { scannerFragment = it }
-            R.id.nav_equalizer -> EqualizerFragment().also { equalizerFragment = it }
-            R.id.nav_apps -> AppsFragment().also { appsFragment = it }
+        val fragment: Fragment? = when (itemId) {
+            R.id.nav_schedule -> WeeklySchedulerFragment()
+            R.id.nav_music -> {
+                try {
+                    Class.forName("com.example.sleppify.MusicPlayerFragment").newInstance() as Fragment
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            R.id.nav_scanner -> ScannerFragment()
+            R.id.nav_equalizer -> EqualizerFragment()
+            R.id.nav_apps -> AppsFragment()
             else -> null
         }
+        fragment?.let {
+            when (itemId) {
+                R.id.nav_schedule -> scheduleFragment = it
+                R.id.nav_music -> musicFragment = it
+                R.id.nav_scanner -> scannerFragment = it
+                R.id.nav_equalizer -> equalizerFragment = it
+                R.id.nav_apps -> appsFragment = it
+            }
+        }
+        return fragment
     }
 
     private fun getMainModuleFragment(itemId: Int): Fragment? = when (itemId) {

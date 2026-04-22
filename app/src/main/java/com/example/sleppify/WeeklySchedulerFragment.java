@@ -65,6 +65,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.UUID;
 
 public class WeeklySchedulerFragment extends Fragment {
 
@@ -180,6 +181,7 @@ public class WeeklySchedulerFragment extends Fragment {
     private final SimpleDateFormat dateKeyFormat = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
 
     public static class Task {
+        String id;
         String title;
         String desc;
         String time;
@@ -190,6 +192,11 @@ public class WeeklySchedulerFragment extends Fragment {
         }
 
         public Task(String title, String desc, String time, String category) {
+            this(UUID.randomUUID().toString(), title, desc, time, category);
+        }
+
+        public Task(String id, String title, String desc, String time, String category) {
+            this.id = (id == null || id.trim().isEmpty()) ? UUID.randomUUID().toString() : id.trim();
             this.title = title;
             this.desc = desc;
             this.time = time;
@@ -199,7 +206,7 @@ public class WeeklySchedulerFragment extends Fragment {
 
     @NonNull
     private Task copyTask(@NonNull Task source) {
-        return new Task(source.title, source.desc, source.time, source.category);
+        return new Task(source.id, source.title, source.desc, source.time, source.category);
     }
 
     @NonNull
@@ -436,7 +443,7 @@ public class WeeklySchedulerFragment extends Fragment {
             cloudSyncManager.refreshAgendaFromCloud((success, message) -> {
                 loadAgendaFromLocal(true);
                 refreshSelectedDayTasks();
-                scheduleBackfillForIncompleteTaskMetadata(true, 0);
+                scheduleBackfillForIncompleteTaskMetadata(true, TASK_METADATA_PULL_REFRESH_LIMIT);
                 updateFabLoginState();
                 setAgendaPullRefreshState(false);
             });
@@ -976,11 +983,6 @@ public class WeeklySchedulerFragment extends Fragment {
                 renderFutureTasksLayer();
                 selectDayByDate(saveKey, dialogDate[0]);
                 bottomSheetDialog.dismiss();
-                
-                // Only enrich if description was left empty
-                if (allowDescriptionOverride || isPlaceholderCategory(taskToEdit.category)) {
-                    requestTaskMetadataEnrichment(saveKey, taskToEdit, allowDescriptionOverride);
-                }
             } else {
                 List<Task> currentTasks = tasksPerDay.get(saveKey);
                 if (currentTasks == null) {
@@ -995,8 +997,6 @@ public class WeeklySchedulerFragment extends Fragment {
 
                 selectDayByDate(saveKey, dialogDate[0]);
                 bottomSheetDialog.dismiss();
-
-                requestTaskMetadataEnrichment(saveKey, createdTask, allowDescriptionOverride);
             }
         });
 
@@ -1297,9 +1297,13 @@ public class WeeklySchedulerFragment extends Fragment {
 
     @NonNull
     private String buildTaskMetadataRequestKey(@NonNull String dateKey, @NonNull Task task) {
+        String id = task.id == null ? "" : task.id.trim();
+        if (!id.isEmpty()) {
+            return dateKey + "|" + id;
+        }
         String title = task.title == null ? "" : task.title.trim();
-        String desc = task.desc == null ? "" : task.desc.trim();
-        return dateKey + "|" + title + "|" + desc;
+        String time = task.time == null ? "" : task.time.trim();
+        return dateKey + "|" + title + "|" + time;
     }
 
     private void scheduleBackfillForIncompleteTaskMetadata() {
@@ -1666,6 +1670,7 @@ public class WeeklySchedulerFragment extends Fragment {
                 JSONArray tasks = new JSONArray();
                 for (Task task : entry.getValue()) {
                     JSONObject taskObj = new JSONObject();
+                    taskObj.put("id", task.id);
                     taskObj.put("title", task.title);
                     taskObj.put("desc", task.desc);
                     taskObj.put("time", task.time);
@@ -1704,6 +1709,8 @@ public class WeeklySchedulerFragment extends Fragment {
                         continue;
                     }
 
+                    String id = taskObj.optString("id", "").trim();
+
                     String title = taskObj.optString("title", "").trim();
                     if (title.isEmpty()) {
                         continue;
@@ -1713,6 +1720,7 @@ public class WeeklySchedulerFragment extends Fragment {
                         String time = taskObj.optString("time", "").trim();
                         String category = normalizeTaskCategory(taskObj.optString("category", DEFAULT_TASK_CATEGORY));
                     dayTasks.add(new Task(
+                            id,
                             title,
                             desc.isEmpty() ? DEFAULT_TASK_DESCRIPTION : desc,
                             time,
@@ -2447,10 +2455,6 @@ public class WeeklySchedulerFragment extends Fragment {
 
         if (TextUtils.equals(selectedDateKey, selection.dateKey)) {
             refreshSelectedDayTasks();
-        }
-
-        if (isPlaceholderDescription(targetTask.desc) || isPlaceholderCategory(targetTask.category)) {
-            requestTaskMetadataEnrichment(selection.dateKey, targetTask, isPlaceholderDescription(targetTask.desc));
         }
 
         showSubtleMessage("Horario guardado para \"" + targetTask.title + "\" a las " + targetTask.time + ".");

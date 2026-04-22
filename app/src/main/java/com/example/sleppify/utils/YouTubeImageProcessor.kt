@@ -4,7 +4,6 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.text.TextUtils
 import android.util.Log
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -82,30 +81,22 @@ object YouTubeImageProcessor {
             return source
         }
 
-        return try {
-            val content = Bitmap.createBitmap(source, cropLeft, cropTop, finalWidth, finalHeight)
-            val aspectRatio = finalWidth.toFloat() / finalHeight
-            
-            // Already ~square: use as-is (no padding).
-            if (abs(aspectRatio - 1.0f) < 0.05f) {
-                return content
-            }
+        val minHorizontalMarginPx = max(2, width / 20) // 5% of width
+        val leftMargin = cropLeft
+        val rightMargin = width - cropRight
+        val hasStrongHorizontalMargins = leftMargin >= minHorizontalMarginPx && rightMargin >= minHorizontalMarginPx
+        if (!hasStrongHorizontalMargins) {
+            cropLeft = 0
+            cropRight = width
+        }
 
-            // Instead of center-cropping (cutting the image), we PAD to 1:1 (preserving full content)
-            // Use the pixel at the very corner of the original source as a background color hint
-            val bgColor = source.getPixel(0, 0)
-            
-            val side = max(finalWidth, finalHeight)
-            val padded = Bitmap.createBitmap(side, side, Bitmap.Config.ARGB_8888)
-            val canvas = android.graphics.Canvas(padded)
-            canvas.drawColor(bgColor)
-            
-            val drawLeft = (side - finalWidth) / 2f
-            val drawTop = (side - finalHeight) / 2f
-            canvas.drawBitmap(content, drawLeft, drawTop, null)
-            
-            if (content != source) content.recycle()
-            padded
+        return try {
+            val safeWidth = cropRight - cropLeft
+            val safeHeight = cropBottom - cropTop
+            if (safeWidth <= 0 || safeHeight <= 0) {
+                return source
+            }
+            Bitmap.createBitmap(source, cropLeft, cropTop, safeWidth, safeHeight)
         } catch (e: Exception) {
             Log.e(TAG, "smartCrop: failed", e)
             source

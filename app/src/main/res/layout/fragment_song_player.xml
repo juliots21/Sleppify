@@ -43,10 +43,9 @@
             <FrameLayout
                 android:id="@+id/flPlayerHero"
                 android:layout_width="0dp"
-                android:layout_height="0dp"
+                android:layout_height="260dp"
                 android:layout_marginTop="20dp"
                 android:layout_marginHorizontal="34dp"
-                app:layout_constraintDimensionRatio="1:1"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toTopOf="parent">
@@ -67,6 +66,7 @@
                     android:clickable="false"
                     android:focusable="false"
                     android:scaleType="fitCenter"
+                    android:adjustViewBounds="true"
                     android:src="@android:color/transparent" />
             </FrameLayout>
 

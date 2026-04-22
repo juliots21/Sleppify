@@ -267,9 +267,12 @@
             <com.google.android.material.imageview.ShapeableImageView
                 android:id="@+id/ivFeaturedThumb"
                 android:layout_width="84dp"
-                android:layout_height="84dp"
+                android:layout_height="wrap_content"
+                android:minHeight="84dp"
                 android:background="@color/surface_high"
-                android:scaleType="centerCrop"
+                android:scaleType="fitCenter"
+                android:adjustViewBounds="true"
+                android:maxHeight="84dp"
                 android:src="@drawable/ic_music"
                 app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Small" />
 
@@ -370,6 +373,21 @@
 
 
 
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fabCreatePlaylist"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_margin="14dp"
+        android:backgroundTint="@color/stitch_blue"
+        android:contentDescription="Crear playlist"
+        android:src="@android:drawable/ic_input_add"
+        app:tint="@color/white"
+        app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Medium"
+        app:layout_constraintBottom_toTopOf="@id/llMiniPlayer"
+        app:layout_constraintEnd_toEndOf="@id/llMiniPlayer"
+        android:layout_marginBottom="8dp"
+        android:layout_marginEnd="14dp" />
+
     <LinearLayout
         android:id="@+id/llMiniPlayer"
         android:layout_width="0dp"
@@ -402,10 +420,13 @@
 
             <com.google.android.material.imageview.ShapeableImageView
                 android:id="@+id/ivMiniPlayerArt"
-                android:layout_width="42dp"
-                android:layout_height="42dp"
+                android:layout_width="56dp"
+                android:layout_height="wrap_content"
+                android:minHeight="42dp"
                 android:background="@color/surface_high"
-                android:scaleType="centerCrop"
+                android:scaleType="fitCenter"
+                android:adjustViewBounds="true"
+                android:maxHeight="56dp"
                 android:src="@drawable/ic_music"
                 app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Small" />
 
