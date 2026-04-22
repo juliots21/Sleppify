@@ -3265,6 +3265,11 @@ public class PlaylistDetailFragment extends Fragment {
     }
 
     private void openPlayerFromMiniBar() {
+        // Hide mini-player immediately to prevent UI overlap
+        if (llMiniPlayer != null) {
+            llMiniPlayer.setVisibility(View.GONE);
+        }
+
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
         if (existingPlayer != null && existingPlayer.isAdded()) {
             existingPlayer.externalSetReturnTargetTag(TAG_PLAYLIST_DETAIL);
@@ -3298,6 +3303,11 @@ public class PlaylistDetailFragment extends Fragment {
     private void openIntegratedPlayerAt(int position, boolean startFromBeginning) {
         if (position < 0 || position >= currentTracks.size()) {
             return;
+        }
+
+        // Hide mini-player immediately to prevent UI overlap
+        if (llMiniPlayer != null) {
+            llMiniPlayer.setVisibility(View.GONE);
         }
 
         ensurePlaybackQueue();
@@ -3354,14 +3364,13 @@ public class PlaylistDetailFragment extends Fragment {
             if (trackAdapter != null) {
                 trackAdapter.setActiveIndex(position);
             }
-            updateMiniPlayerUi();
+            // Don't update mini-player UI - keep it hidden while full player is visible
             return;
         }
 
         currentTrackIndex = position;
         miniPlaying = true;
         trackAdapter.setActiveIndex(position);
-        updateMiniPlayerUi();
 
         if (startFromBeginning) {
             clearPersistedPositionForVideoId(selectedVideoId);
@@ -3384,6 +3393,7 @@ public class PlaylistDetailFragment extends Fragment {
                 .hide(this)
                 .add(R.id.fragmentContainer, playerFragment, "song_player")
                 .commit();
+        // Don't update mini-player UI - keep it hidden while full player is visible
     }
 
     private boolean openPlayerFromSnapshot(
