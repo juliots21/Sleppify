@@ -3404,6 +3404,11 @@ public class PlaylistDetailFragment extends Fragment {
             return false;
         }
 
+        // Hide mini-player immediately to prevent UI overlap
+        if (llMiniPlayer != null) {
+            llMiniPlayer.setVisibility(View.GONE);
+        }
+
         ArrayList<String> ids = new ArrayList<>();
         ArrayList<String> titles = new ArrayList<>();
         ArrayList<String> artists = new ArrayList<>();
