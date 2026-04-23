@@ -68,6 +68,14 @@
                     android:scaleType="fitCenter"
                     android:adjustViewBounds="true"
                     android:src="@android:color/transparent" />
+
+                <com.example.sleppify.AnimatedEqualizerView
+                    android:id="@+id/animatedEqPlayer"
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:layout_gravity="bottom|end"
+                    android:layout_margin="12dp"
+                    app:barColor="@color/stitch_blue" />
             </FrameLayout>
 
             <LinearLayout

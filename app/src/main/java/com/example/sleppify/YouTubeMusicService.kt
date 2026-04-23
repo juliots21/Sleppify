@@ -599,7 +599,11 @@ class YouTubeMusicService @JvmOverloads constructor(
             val playbackInfo = playbackInfoMap[videoId]
             if (playbackInfo != null && !playbackInfo.embeddable) continue
 
-            var duration = playbackInfo?.duration.orEmpty()
+            val durationSeconds = parseYoutubeDurationSeconds(playbackInfo?.duration)
+            if (durationSeconds in 1 until MIN_PUBLIC_MUSIC_DURATION_SECONDS) continue
+            if (!shouldIncludeMusicSearchResult(data.title, data.artist)) continue
+
+            var duration = formatYoutubeDuration(playbackInfo?.duration)
             if (TextUtils.isEmpty(duration)) duration = "--:--"
 
             result.add(PlaylistTrackResult(videoId, data.title, data.artist, duration, data.thumbnailUrl))
@@ -649,6 +653,10 @@ class YouTubeMusicService @JvmOverloads constructor(
                     if (artist.isEmpty()) artist = "Unknown artist"
 
                     val rawDuration = contentDetails?.optString("duration", "")?.trim().orEmpty()
+                    val durationSec = parseYoutubeDurationSeconds(rawDuration)
+                    if (durationSec in 1 until MIN_PUBLIC_MUSIC_DURATION_SECONDS) return@forEachObject
+                    if (!shouldIncludeMusicSearchResult(title, artist)) return@forEachObject
+
                     var duration = formatYoutubeDuration(rawDuration)
                     if (duration.isEmpty()) duration = "--:--"
 

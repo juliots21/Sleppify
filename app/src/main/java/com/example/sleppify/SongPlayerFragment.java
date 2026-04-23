@@ -173,6 +173,7 @@ public class SongPlayerFragment extends Fragment {
 
     private ShapeableImageView ivPlayerCover;
     private ShapeableImageView ivPlayerBackdrop;
+    private AnimatedEqualizerView animatedEqPlayer;
     private FrameLayout flPlayerHero;
     private YouTubePlayerView youtubePlayerView;
     private TextView tvPlayerTitle;
@@ -223,6 +224,10 @@ public class SongPlayerFragment extends Fragment {
 
     private int currentIndex = 0;
     private boolean isPlaying = true;
+
+    public boolean isPlaying() {
+        return isPlaying;
+    }
     private int currentSeconds = 0;
     private int totalSeconds = 1;
     private int lastPersistedSecond = -1;
@@ -242,6 +247,11 @@ public class SongPlayerFragment extends Fragment {
     private final Random random = new Random();
     @NonNull
     private String loadedVideoId = "";
+
+    @NonNull
+    public String getLoadedVideoId() {
+        return loadedVideoId;
+    }
     @NonNull
     private String returnTargetTag = TAG_PLAYLIST_DETAIL;
     private boolean usingOfflineSource = false;
@@ -424,6 +434,7 @@ public class SongPlayerFragment extends Fragment {
 
         ivPlayerCover = view.findViewById(R.id.ivPlayerCover);
         ivPlayerBackdrop = view.findViewById(R.id.ivPlayerBackdrop);
+        animatedEqPlayer = view.findViewById(R.id.animatedEqPlayer);
         flPlayerHero = view.findViewById(R.id.flPlayerHero);
         playerArtworkBootstrapPending = true;
         youtubePlayerView = view.findViewById(R.id.youtubePlayerView);
@@ -672,7 +683,7 @@ public class SongPlayerFragment extends Fragment {
     @Override
     public void onStop() {
         persistPositionForLoadedTrack();
-        persistPlaybackSnapshot(false);
+        persistPlaybackSnapshot(false, true);
         super.onStop();
     }
 
@@ -681,7 +692,7 @@ public class SongPlayerFragment extends Fragment {
         appInBackground = true;
         updateBackPressedCallbackEnabled(true);
         stopLocalProgressTicker();
-        persistPlaybackSnapshot(false);
+        persistPlaybackSnapshot(false, true);
         super.onPause();
     }
 
@@ -3685,7 +3696,9 @@ public class SongPlayerFragment extends Fragment {
             refreshNextUp();
         }
         syncMiniStateWithPlaylist();
-        persistPlaybackSnapshot(false);
+        if (!forceZero) {
+            persistPlaybackSnapshot(false);
+        }
     }
 
     private void setupSocialActions() {
@@ -4192,6 +4205,72 @@ public class SongPlayerFragment extends Fragment {
         return true;
     }
 
+    public void externalInsertNext(
+            @NonNull String videoId,
+            @NonNull String title,
+            @NonNull String artist,
+            @NonNull String duration,
+            @NonNull String imageUrl
+    ) {
+        if (!isAdded()) return;
+        PlayerTrack track = new PlayerTrack(
+                safeValue(videoId),
+                safeValue(title),
+                safeValue(artist),
+                safeValue(duration),
+                safeValue(imageUrl)
+        );
+
+        int insertIndex = Math.max(0, Math.min(currentIndex + 1, tracks.size()));
+        tracks.add(insertIndex, track);
+
+        if (shuffleEnabled && originalQueueOrder.size() > 0) {
+            String currentOriginalVideoId = externalGetCurrentVideoId();
+            int origIndex = -1;
+            for (int i = 0; i < originalQueueOrder.size(); i++) {
+                if (TextUtils.equals(originalQueueOrder.get(i).videoId, currentOriginalVideoId)) {
+                    origIndex = i;
+                    break;
+                }
+            }
+            int origInsertIndex = origIndex >= 0 ? Math.min(origIndex + 1, originalQueueOrder.size()) : originalQueueOrder.size();
+            originalQueueOrder.add(origInsertIndex, track);
+        } else {
+            cacheOriginalQueueOrder();
+        }
+
+        persistPlaybackSnapshot(false);
+        syncMiniStateWithPlaylist();
+    }
+
+    public void externalEnqueue(
+            @NonNull String videoId,
+            @NonNull String title,
+            @NonNull String artist,
+            @NonNull String duration,
+            @NonNull String imageUrl
+    ) {
+        if (!isAdded()) return;
+        PlayerTrack track = new PlayerTrack(
+                safeValue(videoId),
+                safeValue(title),
+                safeValue(artist),
+                safeValue(duration),
+                safeValue(imageUrl)
+        );
+
+        tracks.add(track);
+
+        if (shuffleEnabled && originalQueueOrder.size() > 0) {
+            originalQueueOrder.add(track);
+        } else {
+            cacheOriginalQueueOrder();
+        }
+
+        persistPlaybackSnapshot(false);
+        syncMiniStateWithPlaylist();
+    }
+
     public void externalReplaceQueue(
             @NonNull ArrayList<String> videoIds,
             @NonNull ArrayList<String> titles,
@@ -4577,18 +4656,23 @@ public class SongPlayerFragment extends Fragment {
             return 0;
         }
         int saved = playerStatePrefs.getInt(PREF_PLAYBACK_POS_PREFIX + videoId, 0);
-        if (saved < 0) {
+        if (saved <= 0) {
             return 0;
         }
-        return Math.min(Math.max(maxSeconds - 1, 0), saved);
+        // If we don't have a valid duration yet, just trust the saved value.
+        // Otherwise, clamp it to ensure we don't start past the end.
+        if (maxSeconds <= 5) {
+            return saved;
+        }
+        return Math.min(maxSeconds, saved);
     }
 
     private void persistPositionForLoadedTrack() {
         if (playerStatePrefs == null || TextUtils.isEmpty(loadedVideoId)) {
             return;
         }
-        int safeMax = Math.max(1, totalSeconds);
-        int safeCurrent = Math.max(0, Math.min(safeMax - 1, currentSeconds));
+        int safeMax = Math.max(1, externalGetTotalSeconds());
+        int safeCurrent = Math.max(0, Math.min(safeMax - 1, externalGetCurrentSeconds()));
         playerStatePrefs.edit().putInt(PREF_PLAYBACK_POS_PREFIX + loadedVideoId, safeCurrent).apply();
     }
 
@@ -4606,6 +4690,10 @@ public class SongPlayerFragment extends Fragment {
         btnPlayPause.setImageResource(isPlaying
                 ? R.drawable.ic_player_pause
                 : R.drawable.ic_player_play);
+        
+        if (animatedEqPlayer != null) {
+            animatedEqPlayer.setAnimating(isEffectivePlaying());
+        }
     }
 
     private void updateMediaSessionMetadata() {
@@ -4911,18 +4999,22 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void persistPlaybackSnapshot(boolean forcePaused) {
+        persistPlaybackSnapshot(forcePaused, false);
+    }
+
+    private void persistPlaybackSnapshot(boolean forcePaused, boolean synchronous) {
         if (!isAdded() || tracks.isEmpty()) {
             return;
         }
 
         final List<PlayerTrack> tracksCopy = new ArrayList<>(tracks);
         final int index = currentIndex;
-        final int current = currentSeconds;
-        final int total = totalSeconds;
+        final int current = externalGetCurrentSeconds();
+        final int total = externalGetTotalSeconds();
         final boolean effectivelyPlaying = forcePaused ? false : isEffectivePlaying();
         final Context context = requireContext().getApplicationContext();
 
-        persistenceExecutor.execute(() -> {
+        Runnable task = () -> {
             try {
                 List<PlaybackHistoryStore.QueueTrack> queue = new ArrayList<>(tracksCopy.size());
                 for (PlayerTrack track : tracksCopy) {
@@ -4941,12 +5033,18 @@ public class SongPlayerFragment extends Fragment {
                         Math.max(0, Math.min(index, Math.max(0, tracksCopy.size() - 1))),
                         Math.max(0, current),
                         Math.max(1, total),
-                        effectivelyPlaying
+                        effectivelyPlaying,
+                        synchronous
                 );
-            } catch (Exception e) {
-                Log.e(TAG, "Failed to persist playback snapshot in background", e);
+            } catch (Exception ignored) {
             }
-        });
+        };
+
+        if (synchronous) {
+            task.run();
+        } else {
+            persistenceExecutor.execute(task);
+        }
     }
 
     private void cancelNextUpReveal() {

@@ -1,22 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/rootTrackRow"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:layout_marginBottom="8dp"
     android:background="@drawable/bg_playlist_track_default"
-    android:minHeight="74dp"
-    android:orientation="vertical"
-    android:paddingStart="12dp"
-    android:paddingEnd="2dp"
-    android:paddingVertical="10dp">
+    android:minHeight="84dp"
+    android:paddingStart="2dp"
+    android:paddingEnd="2dp">
 
     <LinearLayout
+        android:id="@+id/llMainTrackRow"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_centerVertical="true"
         android:gravity="center_vertical"
-        android:orientation="horizontal">
+        android:orientation="horizontal"
+        android:paddingVertical="10dp">
 
         <FrameLayout
             android:layout_width="64dp"
@@ -33,21 +34,20 @@
                 android:maxHeight="64dp"
                 android:src="@drawable/ic_music" />
 
-            <LinearLayout
+            <FrameLayout
                 android:id="@+id/llNowPlayingOverlay"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:background="#55233972"
-                android:gravity="center"
-                android:orientation="vertical"
                 android:visibility="gone">
 
-                <ImageView
-                    android:layout_width="20dp"
-                    android:layout_height="20dp"
-                    android:src="@drawable/ic_equalizer"
-                    app:tint="@color/stitch_blue" />
-            </LinearLayout>
+                <com.example.sleppify.AnimatedEqualizerView
+                    android:id="@+id/animatedEq"
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:layout_gravity="bottom|end"
+                    android:layout_margin="2dp"
+                    app:barColor="@color/stitch_blue" />
+            </FrameLayout>
         </FrameLayout>
 
         <LinearLayout
@@ -122,10 +122,10 @@
         android:id="@+id/flOfflineProgress"
         android:layout_width="match_parent"
         android:layout_height="2dp"
-        android:layout_marginTop="6dp"
+        android:layout_alignParentBottom="true"
+        android:layout_marginBottom="2dp"
         android:background="@color/surface_high"
         android:visibility="gone">
-
 
         <View
             android:id="@+id/vOfflineProgressFill"
@@ -135,4 +135,4 @@
             android:scaleX="0" />
     </FrameLayout>
 
-</LinearLayout>
+</RelativeLayout>

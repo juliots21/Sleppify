@@ -1,20 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:clickable="true"
     android:focusable="true"
     android:foreground="?attr/selectableItemBackground"
-    android:orientation="vertical"
-    android:paddingTop="3dp"
-    android:paddingBottom="3dp">
+    android:minHeight="84dp"
+    android:paddingStart="2dp"
+    android:paddingEnd="2dp">
 
     <LinearLayout
+        android:id="@+id/llContentRow"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_centerVertical="true"
         android:gravity="center_vertical"
-        android:minHeight="70dp"
         android:orientation="horizontal">
 
         <FrameLayout
@@ -47,21 +48,20 @@
                 android:maxHeight="64dp"
                 android:src="@drawable/ic_music" />
 
-            <LinearLayout
+            <FrameLayout
                 android:id="@+id/llNowPlayingOverlay"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:background="#55233972"
-                android:gravity="center"
-                android:orientation="vertical"
                 android:visibility="gone">
 
-                <ImageView
-                    android:layout_width="22dp"
-                    android:layout_height="22dp"
-                    android:src="@drawable/ic_equalizer"
-                    app:tint="@color/stitch_blue" />
-            </LinearLayout>
+                <com.example.sleppify.AnimatedEqualizerView
+                    android:id="@+id/animatedEq"
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
+                    android:layout_gravity="bottom|end"
+                    android:layout_margin="4dp"
+                    app:barColor="@color/stitch_blue" />
+            </FrameLayout>
         </FrameLayout>
 
         <LinearLayout
@@ -128,8 +128,9 @@
         android:id="@+id/vTrackDivider"
         android:layout_width="match_parent"
         android:layout_height="1dp"
+        android:layout_below="@id/llContentRow"
         android:layout_marginStart="76dp"
-        android:layout_marginTop="6dp"
+        android:layout_marginTop="8dp"
         android:background="#1FFFFFFF" />
 
-</LinearLayout>
+</RelativeLayout>

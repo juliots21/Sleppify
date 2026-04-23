@@ -70,6 +70,8 @@ class MainActivity : AppCompatActivity() {
         private const val MODULE_CONTENT_FADE_IN_MS = 280L
         
         const val ACTION_PLAY_FROM_SEARCH = "com.example.sleppify.ACTION_PLAY_FROM_SEARCH"
+        const val ACTION_PLAY_NEXT = "com.example.sleppify.ACTION_PLAY_NEXT"
+        const val ACTION_ADD_TO_QUEUE = "com.example.sleppify.ACTION_ADD_TO_QUEUE"
         private const val REQUEST_CODE_RECORD_AUDIO = 4107
     }
 
@@ -218,7 +220,7 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        if (intent.action == ACTION_PLAY_FROM_SEARCH) {
+        if (intent.action == ACTION_PLAY_FROM_SEARCH || intent.action == ACTION_PLAY_NEXT || intent.action == ACTION_ADD_TO_QUEUE) {
             handlePlayFromSearchIntent(intent)
         }
         if (intent.getBooleanExtra("SHOW_SETTINGS", false)) {
@@ -230,7 +232,12 @@ class MainActivity : AppCompatActivity() {
         val music = supportFragmentManager.findFragmentByTag(TAG_MODULE_MUSIC)
         if (music != null && music.javaClass.simpleName == "MusicPlayerFragment") {
             try {
-                val method = music.javaClass.getMethod("playTrackFromSearch", Intent::class.java)
+                val methodName = when (intent.action) {
+                    ACTION_PLAY_NEXT -> "playNextFromSearch"
+                    ACTION_ADD_TO_QUEUE -> "addToQueueFromSearch"
+                    else -> "playTrackFromSearch"
+                }
+                val method = music.javaClass.getMethod(methodName, Intent::class.java)
                 method.invoke(music, intent)
                 if (currentMainNavItemId != R.id.nav_music) {
                     bottomNav.selectedItemId = R.id.nav_music

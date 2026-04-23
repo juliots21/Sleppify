@@ -10,6 +10,8 @@ import android.view.ViewGroup
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.RelativeLayout
+import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -428,9 +430,10 @@ class PlaylistDetailActivity : AppCompatActivity() {
         override fun getItemCount(): Int = items.size
 
         class TrackViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
-            val rootTrackRow: LinearLayout = itemView.findViewById(R.id.rootTrackRow)
+            val rootTrackRow: RelativeLayout = itemView.findViewById(R.id.rootTrackRow)
             val ivTrackArt: ShapeableImageView = itemView.findViewById(R.id.ivTrackArt)
-            val llNowPlayingOverlay: LinearLayout = itemView.findViewById(R.id.llNowPlayingOverlay)
+            val llNowPlayingOverlay: FrameLayout = itemView.findViewById(R.id.llNowPlayingOverlay)
+            val animatedEq: AnimatedEqualizerView = itemView.findViewById(R.id.animatedEq)
             val tvTrackTitle: TextView = itemView.findViewById(R.id.tvTrackTitle)
             val tvTrackSubtitle: TextView = itemView.findViewById(R.id.tvTrackSubtitle)
         }

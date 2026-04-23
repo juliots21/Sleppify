@@ -90,6 +90,19 @@ class PlaybackHistoryStore private constructor() {
             totalSeconds: Int,
             isPlaying: Boolean
         ) {
+            save(context, queue, currentIndex, currentSeconds, totalSeconds, isPlaying, false)
+        }
+
+        @JvmStatic
+        fun save(
+            context: Context,
+            queue: List<QueueTrack>,
+            currentIndex: Int,
+            currentSeconds: Int,
+            totalSeconds: Int,
+            isPlaying: Boolean,
+            synchronous: Boolean
+        ) {
             if (queue.isEmpty()) {
                 return
             }
@@ -100,7 +113,7 @@ class PlaybackHistoryStore private constructor() {
             val safeTotalSeconds = totalSeconds.coerceAtLeast(1)
             val updatedAtMs = System.currentTimeMillis()
 
-            IO_EXECUTOR.execute {
+            val task = Runnable {
                 try {
                     val queueCopy = copyQueue(queue)
                     val snapshot = Snapshot(
@@ -114,18 +127,23 @@ class PlaybackHistoryStore private constructor() {
 
                     val raw = serializeSnapshot(snapshot)
                     if (raw.isEmpty()) {
-                        return@execute
+                        return@Runnable
                     }
 
                     synchronized(CACHE_LOCK) {
                         if (TextUtils.equals(raw, cachedRawSnapshot)) {
                             cachedSnapshot = snapshot
-                            return@execute
+                            return@Runnable
                         }
                     }
 
                     val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    prefs.edit().putString(KEY_SNAPSHOT_JSON, raw).apply()
+                    val editor = prefs.edit().putString(KEY_SNAPSHOT_JSON, raw)
+                    if (synchronous) {
+                        editor.commit()
+                    } else {
+                        editor.apply()
+                    }
 
                     synchronized(CACHE_LOCK) {
                         cachedRawSnapshot = raw
@@ -133,6 +151,12 @@ class PlaybackHistoryStore private constructor() {
                     }
                 } catch (_: Exception) {
                 }
+            }
+
+            if (synchronous) {
+                task.run()
+            } else {
+                IO_EXECUTOR.execute(task)
             }
         }
 

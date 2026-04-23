@@ -70,8 +70,10 @@ class SearchActivity : AppCompatActivity() {
         private const val SEARCH_SCROLL_LOAD_MORE_THRESHOLD = 4
         
         private val DEFAULT_SEARCH_SUGGESTIONS = arrayOf(
-            "musica para dormir", "lofi chill", "lluvia relajante", 
-            "piano instrumental", "white noise", "deep sleep music"
+            "Lofi Chill",
+            "EDM House",
+            "Trap Latino",
+            "Pop Latino"
         )
     }
 
@@ -156,7 +158,10 @@ class SearchActivity : AppCompatActivity() {
 
     private fun setupRecyclerView() {
         val layoutManager = LinearLayoutManager(this)
-        adapter = SearchResultsAdapter { onTrackClicked(it) }
+        adapter = SearchResultsAdapter(
+            onClick = { onTrackClicked(it) },
+            onMoreClick = { track, anchor -> showTrackOptionsBottomSheet(track, anchor) }
+        )
         rvSearchResults.apply {
             this.layoutManager = layoutManager
             setHasFixedSize(true)
@@ -527,6 +532,58 @@ class SearchActivity : AppCompatActivity() {
         overridePendingTransition(R.anim.fade_in, R.anim.fade_out)
     }
 
+    private fun showTrackOptionsBottomSheet(track: YouTubeMusicService.TrackResult, anchor: View) {
+        anchor.performHapticFeedback(android.view.HapticFeedbackConstants.CONTEXT_CLICK)
+        
+        val dialog = com.google.android.material.bottomsheet.BottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.bottom_sheet_track_options, null)
+        dialog.setContentView(view)
+
+        val tvTitle = view.findViewById<TextView>(R.id.tvBsTrackTitle)
+        val tvSubtitle = view.findViewById<TextView>(R.id.tvBsTrackSubtitle)
+        val ivArt = view.findViewById<ImageView>(R.id.ivBsTrackArt)
+        
+        tvTitle.text = track.title ?: "Tema"
+        tvSubtitle.text = track.subtitle ?: "Artista"
+        loadArtworkInto(ivArt, track.thumbnailUrl)
+
+        view.findViewById<View>(R.id.btnBsPlayNext).setOnClickListener {
+            addToQueue(track, true)
+            dialog.dismiss()
+        }
+        view.findViewById<View>(R.id.btnBsAddPrimary).setOnClickListener {
+            addToQueue(track, false)
+            dialog.dismiss()
+        }
+        view.findViewById<View>(R.id.btnBsShare).setOnClickListener {
+            shareTrack(track)
+            dialog.dismiss()
+        }
+
+        dialog.show()
+    }
+
+    private fun addToQueue(track: YouTubeMusicService.TrackResult, playNext: Boolean) {
+        Intent(this, MainActivity::class.java).apply {
+            action = if (playNext) MainActivity.ACTION_PLAY_NEXT else MainActivity.ACTION_ADD_TO_QUEUE
+            flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra(EXTRA_RESULT_TYPE, track.resultType ?: "")
+            putExtra(EXTRA_RESULT_VIDEO_ID, track.videoId ?: "")
+            putExtra(EXTRA_RESULT_TITLE, track.title ?: "")
+            putExtra(EXTRA_RESULT_SUBTITLE, track.subtitle ?: "")
+            putExtra(EXTRA_RESULT_THUMBNAIL, track.thumbnailUrl ?: "")
+            startActivity(this)
+        }
+    }
+
+    private fun shareTrack(track: YouTubeMusicService.TrackResult) {
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, "Escucha ${track.title} de ${track.subtitle} en Sleppify: https://music.youtube.com/watch?v=${track.videoId}")
+        }
+        startActivity(Intent.createChooser(shareIntent, "Compartir canción"))
+    }
+
     private fun setSearchLoadingState(loading: Boolean, msg: String) {
         searching = loading
         val llState = findViewById<LinearLayout>(R.id.llSearchState)
@@ -641,7 +698,10 @@ class SearchActivity : AppCompatActivity() {
 
     // ── Adapters ────────────────────────────────────────
 
-    private inner class SearchResultsAdapter(val onClick: (YouTubeMusicService.TrackResult) -> Unit) : RecyclerView.Adapter<SearchResultsAdapter.TrackViewHolder>() {
+    private inner class SearchResultsAdapter(
+        val onClick: (YouTubeMusicService.TrackResult) -> Unit,
+        val onMoreClick: (YouTubeMusicService.TrackResult, View) -> Unit
+    ) : RecyclerView.Adapter<SearchResultsAdapter.TrackViewHolder>() {
         private val data = mutableListOf<YouTubeMusicService.TrackResult>()
 
         init { setHasStableIds(true) }
@@ -671,6 +731,11 @@ class SearchActivity : AppCompatActivity() {
             loadArtworkInto(holder.thumb, item.thumbnailUrl)
             holder.divider.visibility = if (position == data.size - 1) View.GONE else View.VISIBLE
             holder.itemView.setOnClickListener { onClick(item) }
+            holder.itemView.setOnLongClickListener {
+                onMoreClick(item, it)
+                true
+            }
+            holder.more.setOnClickListener { onMoreClick(item, it) }
         }
 
         override fun getItemCount() = data.size
@@ -680,6 +745,7 @@ class SearchActivity : AppCompatActivity() {
             val title: TextView = v.findViewById(R.id.tvTrackTitle)
             val subtitle: TextView = v.findViewById(R.id.tvTrackSubtitle)
             val divider: View = v.findViewById(R.id.vTrackDivider)
+            val more: ImageView = v.findViewById(R.id.ivTrackMore)
         }
     }
 

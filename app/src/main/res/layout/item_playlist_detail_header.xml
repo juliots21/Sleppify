@@ -13,7 +13,7 @@
 
         <FrameLayout
             android:layout_width="match_parent"
-            android:layout_height="480dp"
+            android:layout_height="wrap_content"
             android:layout_marginBottom="0dp"
             android:clipChildren="false"
             android:clipToPadding="false">
@@ -49,16 +49,17 @@
 
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
+                android:layout_height="wrap_content"
                 android:gravity="center_horizontal"
                 android:orientation="vertical"
-                android:paddingTop="34dp"
+                android:paddingTop="24dp"
                 android:paddingBottom="16dp">
 
                 <FrameLayout
-                    android:layout_width="320dp"
+                    android:layout_width="260dp"
                     android:layout_height="wrap_content"
-                    android:minHeight="200dp">
+                    android:layout_marginTop="16dp"
+                    android:layout_marginBottom="16dp">
 
                     <View
                         android:layout_width="match_parent"
@@ -71,8 +72,6 @@
                         android:id="@+id/ivPlaylistCover"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:minHeight="200dp"
-                        android:background="@color/surface_high"
                         android:scaleType="fitCenter"
                         android:adjustViewBounds="true"
                         android:maxHeight="320dp"
@@ -152,36 +151,13 @@
                         android:textFontWeight="800"
                         android:textStyle="bold"
                         app:cornerRadius="28dp"
-                        app:icon="@android:drawable/ic_media_play"
+                        app:icon="@drawable/ic_player_play"
                         app:iconGravity="textStart"
                         app:iconPadding="8dp"
                         app:iconTint="#101010"
                         app:rippleColor="#33FFFFFF" />
 
-                    <LinearLayout
-                        android:layout_width="56dp"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="10dp"
-                        android:gravity="center_horizontal"
-                        android:orientation="vertical">
 
-                        <ImageButton
-                            android:id="@+id/btnShuffle"
-                            android:layout_width="56dp"
-                            android:layout_height="56dp"
-                            android:background="@drawable/bg_playlist_action_white"
-                            android:padding="14dp"
-                            android:src="@drawable/ic_shuffle_custom"
-                            app:tint="#101010" />
-
-                        <View
-                            android:id="@+id/vHeaderShuffleIndicator"
-                            android:layout_width="6dp"
-                            android:layout_height="6dp"
-                            android:layout_marginTop="3dp"
-                            android:background="@drawable/bg_mode_indicator_dot"
-                            android:visibility="gone" />
-                    </LinearLayout>
 
                     <ImageButton
                         android:id="@+id/btnDownload"

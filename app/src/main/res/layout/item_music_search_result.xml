@@ -1,20 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:clickable="true"
     android:focusable="true"
     android:foreground="?attr/selectableItemBackground"
-    android:orientation="vertical"
-    android:paddingTop="5dp"
-    android:paddingBottom="5dp">
+    android:minHeight="88dp"
+    android:paddingStart="2dp"
+    android:paddingEnd="2dp">
 
     <LinearLayout
+        android:id="@+id/llContentRow"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_centerVertical="true"
         android:gravity="center_vertical"
-        android:minHeight="72dp"
         android:orientation="horizontal">
 
         <FrameLayout
@@ -42,6 +43,21 @@
                 android:adjustViewBounds="true"
                 android:maxHeight="64dp"
                 android:src="@drawable/ic_music" />
+
+            <FrameLayout
+                android:id="@+id/llNowPlayingOverlay"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:visibility="gone">
+
+                <com.example.sleppify.AnimatedEqualizerView
+                    android:id="@+id/animatedEq"
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
+                    android:layout_gravity="bottom|end"
+                    android:layout_margin="4dp"
+                    app:barColor="@color/stitch_blue" />
+            </FrameLayout>
         </FrameLayout>
 
         <LinearLayout
@@ -98,8 +114,9 @@
         android:id="@+id/vTrackDivider"
         android:layout_width="match_parent"
         android:layout_height="1dp"
+        android:layout_below="@id/llContentRow"
         android:layout_marginStart="76dp"
-        android:layout_marginTop="6dp"
+        android:layout_marginTop="8dp"
         android:background="#16FFFFFF" />
 
-</LinearLayout>
+</RelativeLayout>

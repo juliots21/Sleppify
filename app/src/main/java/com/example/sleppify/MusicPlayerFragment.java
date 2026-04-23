@@ -155,12 +155,10 @@ public class MusicPlayerFragment extends Fragment {
         private static final int SEARCH_SUGGESTION_RECENT_LIMIT = 6;
         private static final int SEARCH_SCROLL_LOAD_MORE_THRESHOLD = 4;
         private static final String[] DEFAULT_SEARCH_SUGGESTIONS = new String[] {
-            "musica para dormir",
-            "lofi chill",
-            "lluvia relajante",
-            "piano instrumental",
-            "white noise",
-            "deep sleep music"
+            "Lofi Chill",
+            "EDM House",
+            "Trap Latino",
+            "Pop Latino"
         };
     private static final int LIBRARY_INLINE_SEARCH_MAX_RESULTS = 220;
     private static final int LIBRARY_INLINE_ONLINE_MIN_QUERY_CHARS = 3;
@@ -786,7 +784,7 @@ public class MusicPlayerFragment extends Fragment {
             fabCreatePlaylist.setOnClickListener(v -> showCreatePlaylistDialog());
         }
 
-        adapter = new MusicResultsAdapter(this::openTrack, this::onLibraryPlaylistMorePressed);
+        adapter = new MusicResultsAdapter(this::openTrack, this::onMusicResultMoreClicked);
         musicResultsLayoutManager = new LinearLayoutManager(requireContext());
         rvMusicResults.setLayoutManager(musicResultsLayoutManager);
         rvMusicResults.setAdapter(adapter);
@@ -3913,37 +3911,129 @@ public class MusicPlayerFragment extends Fragment {
     }
 
     private void showSearchTrackOptions(@NonNull YouTubeMusicService.TrackResult track, @NonNull View anchor) {
-        if (!isAdded()) {
-            return;
+        if (!isAdded()) return;
+
+        com.google.android.material.bottomsheet.BottomSheetDialog dialog = new com.google.android.material.bottomsheet.BottomSheetDialog(requireContext());
+        View view = LayoutInflater.from(requireContext()).inflate(R.layout.bottom_sheet_track_options, null);
+        dialog.setContentView(view);
+
+        TextView tvTitle = view.findViewById(R.id.tvBsTrackTitle);
+        TextView tvSubtitle = view.findViewById(R.id.tvBsTrackSubtitle);
+        ImageView ivArt = view.findViewById(R.id.ivBsTrackArt);
+        
+        tvTitle.setText(TextUtils.isEmpty(track.title) ? "Tema" : track.title);
+        String typeLabel = searchTypeLabel(track);
+        String subtitle = TextUtils.isEmpty(track.subtitle) ? typeLabel : typeLabel + " • " + track.subtitle;
+        tvSubtitle.setText(subtitle);
+        loadArtworkInto(ivArt, track.thumbnailUrl);
+
+        View btnPlayNext = view.findViewById(R.id.btnBsPlayNext);
+        View btnAddPrimary = view.findViewById(R.id.btnBsAddPrimary);
+        View btnShare = view.findViewById(R.id.btnBsShare);
+        
+        ImageView ivPlayNext = view.findViewById(R.id.ivBsPlayNextIcon);
+        TextView tvPlayNext = view.findViewById(R.id.tvBsPlayNextLabel);
+        ImageView ivAddPrimary = view.findViewById(R.id.ivBsAddPrimary);
+        TextView tvAddPrimary = view.findViewById(R.id.tvBsAddPrimary);
+        ImageView ivShare = view.findViewById(R.id.ivBsShareIcon);
+        TextView tvShare = view.findViewById(R.id.tvBsShareLabel);
+        
+        // Slot 1: Play Next (if video)
+        if (track.isVideo()) {
+            btnPlayNext.setVisibility(View.VISIBLE);
+            ivPlayNext.setImageResource(R.drawable.ic_stream_play_next);
+            tvPlayNext.setText("Reproducir a\ncontinuación");
+            btnPlayNext.setOnClickListener(v -> {
+                dialog.dismiss();
+                SongPlayerFragment player = findSongPlayerFragment();
+                if (player != null && player.isAdded()) {
+                    player.externalInsertNext(track.contentId, track.title, track.subtitle, "", track.thumbnailUrl);
+                }
+            });
+        } else {
+            btnPlayNext.setVisibility(View.GONE);
         }
 
-        PopupMenu popup = new PopupMenu(requireContext(), anchor);
-        popup.getMenu().add(0, 1, 0, "Reproducir");
-        popup.getMenu().add(0, 2, 1, "Compartir");
+        // Slot 2: Add to Queue (if video)
         if (track.isVideo()) {
-            popup.getMenu().add(0, 3, 2, "Agregar a Favoritos");
-            popup.getMenu().add(0, 4, 3, "Añadir a playlist");
+            btnAddPrimary.setVisibility(View.VISIBLE);
+            ivAddPrimary.setImageResource(R.drawable.ic_stream_queue_add);
+            tvAddPrimary.setText("Agregar a\nla fila");
+            btnAddPrimary.setOnClickListener(v -> {
+                dialog.dismiss();
+                SongPlayerFragment player = findSongPlayerFragment();
+                if (player != null && player.isAdded()) {
+                    player.externalEnqueue(track.contentId, track.title, track.subtitle, "", track.thumbnailUrl);
+                }
+            });
+        } else {
+            btnAddPrimary.setVisibility(View.GONE);
         }
-        popup.setOnMenuItemClickListener(item -> {
-            if (item.getItemId() == 1) {
-                openTrack(track);
-                return true;
-            }
-            if (item.getItemId() == 2) {
-                shareTrackResult(track);
-                return true;
-            }
-            if (item.getItemId() == 3) {
-                addSearchTrackToFavorites(track);
-                return true;
-            }
-            if (item.getItemId() == 4) {
+
+        // Slot 3: Add to Playlist (if video) or Share
+        if (track.isVideo()) {
+            btnShare.setVisibility(View.VISIBLE);
+            ivShare.setImageResource(R.drawable.ic_stream_queue_add);
+            tvShare.setText("Añadir a\nplaylist");
+            btnShare.setOnClickListener(v -> {
+                dialog.dismiss();
                 showAddToPlaylistDialog(track);
-                return true;
+            });
+        } else {
+            btnShare.setVisibility(View.GONE);
+        }
+
+        View btnPlay = view.findViewById(R.id.btnBsPlay);
+        View btnFavorite = view.findViewById(R.id.btnBsFavorite);
+        View btnDownload = view.findViewById(R.id.btnBsDownload);
+        View btnAddToQueue = view.findViewById(R.id.btnBsAddToQueue);
+        
+        btnPlay.setVisibility(View.VISIBLE);
+        if ("playlist".equals(track.resultType)) {
+            TextView tvPlay = btnPlay.findViewById(R.id.tvBsPlayLabel);
+            if (tvPlay != null) {
+                tvPlay.setText("Reproducir playlist");
             }
-            return false;
+        }
+        btnPlay.setOnClickListener(v -> {
+            dialog.dismiss();
+            openTrack(track);
         });
-        popup.show();
+
+        // Slot 4: Share (as list item)
+        btnFavorite.setVisibility(View.VISIBLE);
+        ImageView ivFav = btnFavorite.findViewById(R.id.ivBsFavorite);
+        TextView tvFav = btnFavorite.findViewById(R.id.tvBsFavorite);
+        ivFav.setImageResource(R.drawable.ic_playlist_share);
+        tvFav.setText("Compartir");
+        btnFavorite.setOnClickListener(v -> {
+            dialog.dismiss();
+            shareTrackResult(track);
+        });
+
+        // Slot 5: Favorite (if video)
+        if (track.isVideo()) {
+            btnDownload.setVisibility(View.VISIBLE);
+            ImageView ivDown = btnDownload.findViewById(R.id.ivBsDownload);
+            TextView tvDown = btnDownload.findViewById(R.id.tvBsDownload);
+            ivDown.setImageResource(R.drawable.ic_favorite_star);
+            tvDown.setText("Agregar a Favoritos");
+            btnDownload.setOnClickListener(v -> {
+                dialog.dismiss();
+                addSearchTrackToFavorites(track);
+            });
+        } else {
+            btnDownload.setVisibility(View.GONE);
+        }
+
+        btnAddToQueue.setVisibility(View.GONE); // Redundant now as it is in Slot 2
+
+        View parent = (View) view.getParent();
+        if (parent != null) {
+            parent.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+        }
+
+        dialog.show();
     }
 
     private void showAddToPlaylistDialog(@NonNull YouTubeMusicService.TrackResult track) {
@@ -4582,87 +4672,70 @@ public class MusicPlayerFragment extends Fragment {
         return 1;
     }
 
-    private void onLibraryPlaylistMorePressed(
+    private void onMusicResultMoreClicked(
             @NonNull YouTubeMusicService.TrackResult track,
             @NonNull View anchor
     ) {
-        if (!isAdded() || !"playlist".equals(track.resultType)) {
-            return;
-        }
+        if (!isAdded()) return;
 
         anchor.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK);
         anchor.animate().cancel();
-        anchor.animate()
-                .scaleX(0.88f)
-                .scaleY(0.88f)
-                .setDuration(70L)
-                .withEndAction(() -> anchor.animate()
-                        .scaleX(1f)
-                        .scaleY(1f)
-                        .setDuration(120L)
-                        .start())
-                .start();
+        anchor.animate().scaleX(0.88f).scaleY(0.88f).setDuration(70L)
+            .withEndAction(() -> anchor.animate().scaleX(1f).scaleY(1f).setDuration(120L).start())
+            .start();
 
-        showPlaylistActionTooltip(anchor, track);
+        if ("playlist".equals(track.resultType)) {
+            showPlaylistActionTooltip(anchor, track);
+        } else {
+            showSearchTrackOptions(track, anchor);
+        }
     }
 
-    private void showPlaylistActionTooltip(
-            @NonNull View anchor,
-            @NonNull YouTubeMusicService.TrackResult track
-    ) {
-        if (!isAdded()) {
-            return;
-        }
-
-        dismissPlaylistActionTooltip();
+    private void showPlaylistActionTooltip(@NonNull View anchor, @NonNull YouTubeMusicService.TrackResult track) {
+        if (!isAdded()) return;
 
         String playlistId = track.contentId == null ? "" : track.contentId.trim();
-        if (isPersistedPlaylistOfflineAutoEnabled(playlistId)) {
-            return;
-        }
+        if (isPersistedPlaylistOfflineAutoEnabled(playlistId)) return;
 
-        int popupWidth = dp(188);
-        LinearLayout popupRoot = new LinearLayout(requireContext());
-        popupRoot.setOrientation(LinearLayout.VERTICAL);
-        popupRoot.setPadding(dp(6), dp(6), dp(6), dp(6));
+        com.google.android.material.bottomsheet.BottomSheetDialog dialog = new com.google.android.material.bottomsheet.BottomSheetDialog(requireContext());
+        View view = LayoutInflater.from(requireContext()).inflate(R.layout.bottom_sheet_track_options, null);
+        dialog.setContentView(view);
 
-        GradientDrawable popupBackground = new GradientDrawable();
-        popupBackground.setColor(ContextCompat.getColor(requireContext(), R.color.surface_low));
-        popupBackground.setCornerRadius(dp(14));
-        popupRoot.setBackground(popupBackground);
+        TextView tvTitle = view.findViewById(R.id.tvBsTrackTitle);
+        TextView tvSubtitle = view.findViewById(R.id.tvBsTrackSubtitle);
+        ImageView ivArt = view.findViewById(R.id.ivBsTrackArt);
+        
+        tvTitle.setText(track.title);
+        tvSubtitle.setText(searchTypeLabel(track));
+        loadArtworkInto(ivArt, track.thumbnailUrl);
 
-        PopupWindow popupWindow = new PopupWindow(
-                popupRoot,
-                popupWidth,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                true
-        );
-        popupWindow.setOutsideTouchable(true);
-        popupWindow.setFocusable(false);
-        popupWindow.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-        popupWindow.setElevation(dp(8));
-        popupWindow.setOnDismissListener(() -> {
-            if (playlistActionPopupWindow == popupWindow) {
-                playlistActionPopupWindow = null;
-            }
+        View btnPlayNext = view.findViewById(R.id.btnBsPlayNext);
+        View btnAddPrimary = view.findViewById(R.id.btnBsAddPrimary);
+        View btnShare = view.findViewById(R.id.btnBsShare);
+        ImageView ivAddPrimary = view.findViewById(R.id.ivBsAddPrimary);
+        TextView tvAddPrimary = view.findViewById(R.id.tvBsAddPrimary);
+        
+        btnPlayNext.setVisibility(View.GONE);
+        btnShare.setVisibility(View.GONE);
+        
+        ivAddPrimary.setImageResource(R.drawable.ic_download_bold);
+        tvAddPrimary.setText("Descargar");
+        btnAddPrimary.setOnClickListener(v -> {
+            dialog.dismiss();
+            enqueuePlaylistOfflineDownload(track);
         });
 
-        popupRoot.addView(createPlaylistActionRow(
-                R.drawable.ic_download_bold,
-                "Descargar",
-                () -> enqueuePlaylistOfflineDownload(track),
-                popupWindow
-        ));
+        view.findViewById(R.id.btnBsPlay).setVisibility(View.GONE);
+        view.findViewById(R.id.btnBsFavorite).setVisibility(View.GONE);
+        view.findViewById(R.id.btnBsDownload).setVisibility(View.GONE);
+        view.findViewById(R.id.btnBsAddToQueue).setVisibility(View.GONE);
 
-        playlistActionPopupWindow = popupWindow;
-
-        int xOffset = -popupWidth + anchor.getWidth();
-        int yOffset = dp(8);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-            popupWindow.showAsDropDown(anchor, xOffset, yOffset, Gravity.START);
-        } else {
-            popupWindow.showAsDropDown(anchor, xOffset, yOffset);
+        View parent = (View) view.getParent();
+        if (parent != null) {
+            parent.setBackgroundColor(android.graphics.Color.TRANSPARENT);
         }
+
+        dialog.show();
     }
 
     @NonNull
@@ -5460,6 +5533,32 @@ public class MusicPlayerFragment extends Fragment {
         openTrack(track);
     }
 
+    public void playNextFromSearch(@NonNull Intent data) {
+        String videoId = data.getStringExtra(SearchActivity.EXTRA_RESULT_VIDEO_ID);
+        String title = data.getStringExtra(SearchActivity.EXTRA_RESULT_TITLE);
+        String subtitle = data.getStringExtra(SearchActivity.EXTRA_RESULT_SUBTITLE);
+        String thumbnailUrl = data.getStringExtra(SearchActivity.EXTRA_RESULT_THUMBNAIL);
+        
+        SongPlayerFragment player = findSongPlayerFragment();
+        if (player != null && player.isAdded()) {
+            player.externalInsertNext(videoId, title, subtitle, "", thumbnailUrl);
+            android.widget.Toast.makeText(requireContext(), "Se reproducirá a continuación", android.widget.Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    public void addToQueueFromSearch(@NonNull Intent data) {
+        String videoId = data.getStringExtra(SearchActivity.EXTRA_RESULT_VIDEO_ID);
+        String title = data.getStringExtra(SearchActivity.EXTRA_RESULT_TITLE);
+        String subtitle = data.getStringExtra(SearchActivity.EXTRA_RESULT_SUBTITLE);
+        String thumbnailUrl = data.getStringExtra(SearchActivity.EXTRA_RESULT_THUMBNAIL);
+
+        SongPlayerFragment player = findSongPlayerFragment();
+        if (player != null && player.isAdded()) {
+            player.externalEnqueue(videoId, title, subtitle, "", thumbnailUrl);
+            android.widget.Toast.makeText(requireContext(), "Agregado a la fila", android.widget.Toast.LENGTH_SHORT).show();
+        }
+    }
+
 
     private void openTrack(@NonNull YouTubeMusicService.TrackResult track) {
 
@@ -6181,13 +6280,30 @@ public class MusicPlayerFragment extends Fragment {
                 if (isPlaylistCurrentlyPlaying(playlistId) && !specialPlaylistStyle) {
                     if (holder.llNowPlayingOverlay != null) {
                         holder.llNowPlayingOverlay.setVisibility(View.VISIBLE);
+                        if (holder.animatedEq != null) {
+                            SongPlayerFragment songPlayer = findSongPlayerFragment();
+                            boolean isActuallyPlaying = songPlayer != null && songPlayer.isPlaying();
+                            holder.animatedEq.setAnimating(isActuallyPlaying);
+                        }
                     }
                     holder.tvTrackTitle.setTextColor(activeTitleColor);
+                } else {
+                    if (holder.llNowPlayingOverlay != null) {
+                        holder.llNowPlayingOverlay.setVisibility(View.GONE);
+                        if (holder.animatedEq != null) {
+                            holder.animatedEq.setAnimating(false);
+                        }
+                    }
                 }
 
                 holder.ivTrackMore.setOnClickListener(v -> onTrackMoreClick.onTrackMoreClick(item, holder.ivTrackMore));
+                holder.itemView.setOnLongClickListener(v -> {
+                    onTrackMoreClick.onTrackMoreClick(item, holder.ivTrackMore);
+                    return true;
+                });
             } else {
                 holder.ivTrackMore.setOnClickListener(null);
+                holder.itemView.setOnLongClickListener(null);
             }
 
             holder.itemView.setOnClickListener(v -> onTrackClick.onTrackClick(item));
@@ -6202,9 +6318,22 @@ public class MusicPlayerFragment extends Fragment {
             holder.ivLikedIcon.setVisibility(View.GONE);
             holder.ivPlaylistOfflineAll.setVisibility(View.GONE);
             holder.ivTrackThumb.setVisibility(View.VISIBLE);
+            
+            SongPlayerFragment songPlayer = findSongPlayerFragment();
+            String currentVideoId = songPlayer != null ? songPlayer.getLoadedVideoId() : "";
+            boolean isNowPlaying = !currentVideoId.isEmpty() && TextUtils.equals(currentVideoId, item.contentId);
+            boolean isActuallyPlaying = isNowPlaying && songPlayer != null && songPlayer.isPlaying();
+
             if (holder.llNowPlayingOverlay != null) {
-                holder.llNowPlayingOverlay.setVisibility(View.GONE);
+                holder.llNowPlayingOverlay.setVisibility(isNowPlaying ? View.VISIBLE : View.GONE);
+                if (holder.animatedEq != null) {
+                    holder.animatedEq.setAnimating(isActuallyPlaying);
+                }
             }
+            
+            int activeTitleColor = ContextCompat.getColor(holder.itemView.getContext(), R.color.stitch_blue_light);
+            int defaultTitleColor = ContextCompat.getColor(holder.itemView.getContext(), R.color.text_primary);
+            holder.tvTrackTitle.setTextColor(isNowPlaying ? activeTitleColor : defaultTitleColor);
 
             String title = TextUtils.isEmpty(item.title) ? "Resultado" : item.title;
             holder.tvTrackTitle.setText(title);
@@ -6220,6 +6349,10 @@ public class MusicPlayerFragment extends Fragment {
             holder.vTrackDivider.setVisibility(position == data.size() - 1 ? View.GONE : View.VISIBLE);
             holder.ivTrackMore.setVisibility(View.VISIBLE);
             holder.ivTrackMore.setOnClickListener(v -> showSearchTrackOptions(item, holder.ivTrackMore));
+            holder.itemView.setOnLongClickListener(v -> {
+                showSearchTrackOptions(item, holder.ivTrackMore);
+                return true;
+            });
             holder.itemView.setOnClickListener(v -> onTrackClick.onTrackClick(item));
         }
 
@@ -6298,6 +6431,7 @@ public class MusicPlayerFragment extends Fragment {
             final ImageView ivTrackMore;
             final View vTrackDivider;
             final View llNowPlayingOverlay;
+            final AnimatedEqualizerView animatedEq;
 
             TrackViewHolder(@NonNull View itemView) {
                 super(itemView);
@@ -6310,6 +6444,7 @@ public class MusicPlayerFragment extends Fragment {
                 ivTrackMore = itemView.findViewById(R.id.ivTrackMore);
                 vTrackDivider = itemView.findViewById(R.id.vTrackDivider);
                 llNowPlayingOverlay = itemView.findViewById(R.id.llNowPlayingOverlay);
+                animatedEq = itemView.findViewById(R.id.animatedEq);
             }
         }
     }

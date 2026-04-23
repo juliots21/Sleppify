@@ -28,10 +28,19 @@
         android:required="false" />
 
     <queries>
+        <!-- Standard GMS Package -->
         <package android:name="com.google.android.gms" />
+
+        <!-- Google Sign-In and Credential Manager Service -->
         <intent>
             <action android:name="com.google.android.gms.auth.api.signin.SERVICE" />
         </intent>
+
+        <!-- Identity and Auth API -->
+        <intent>
+            <action android:name="com.google.android.libraries.identity.googleid.signin.SCAN_QR" />
+        </intent>
+
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
