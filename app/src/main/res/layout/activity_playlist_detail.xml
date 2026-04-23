@@ -79,9 +79,10 @@
                 android:orientation="vertical">
 
                 <FrameLayout
-                    android:layout_width="320dp"
-                    android:layout_height="wrap_content"
-                    android:minHeight="200dp">
+                    android:layout_width="260dp"
+                    android:layout_height="260dp"
+                    android:layout_marginTop="16dp"
+                    android:layout_marginBottom="16dp">
 
                     <View
                         android:layout_width="match_parent"
@@ -93,11 +94,8 @@
                     <ImageView
                         android:id="@+id/ivPlaylistCover"
                         android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:minHeight="200dp"
-                        android:scaleType="fitCenter"
-                        android:adjustViewBounds="true"
-                        android:maxHeight="320dp"
+                        android:layout_height="match_parent"
+                        android:scaleType="centerCrop"
                         android:src="@drawable/ic_music" />
                 </FrameLayout>
 

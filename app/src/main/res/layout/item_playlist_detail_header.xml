@@ -5,12 +5,6 @@
     android:layout_height="wrap_content"
     android:orientation="vertical">
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center_horizontal"
-        android:orientation="vertical">
-
         <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -35,14 +29,14 @@
             <View
                 android:id="@+id/vPlaylistBackdropBottomFade"
                 android:layout_width="match_parent"
-                android:layout_height="340dp"
+                android:layout_height="match_parent"
                 android:layout_gravity="bottom"
                 android:background="@drawable/bg_playlist_backdrop_bottom_fade" />
 
             <View
                 android:id="@+id/vPlaylistBackdropAmoledFade"
                 android:layout_width="match_parent"
-                android:layout_height="340dp"
+                android:layout_height="match_parent"
                 android:layout_gravity="bottom"
                 android:background="@drawable/bg_playlist_backdrop_amoled_fade"
                 android:visibility="gone" />
@@ -57,7 +51,7 @@
 
                 <FrameLayout
                     android:layout_width="260dp"
-                    android:layout_height="wrap_content"
+                    android:layout_height="260dp"
                     android:layout_marginTop="16dp"
                     android:layout_marginBottom="16dp">
 
@@ -71,10 +65,8 @@
                     <ImageView
                         android:id="@+id/ivPlaylistCover"
                         android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:scaleType="fitCenter"
-                        android:adjustViewBounds="true"
-                        android:maxHeight="320dp"
+                        android:layout_height="match_parent"
+                        android:scaleType="centerCrop"
                         android:src="@drawable/ic_music" />
                 </FrameLayout>
 
@@ -183,36 +175,6 @@
                     android:textSize="12sp" />
             </LinearLayout>
         </FrameLayout>
-    </LinearLayout>
 
-
-    <LinearLayout
-        android:id="@+id/llOfflineLoadingIndicator"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="3dp"
-        android:layout_marginStart="24dp"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:visibility="gone">
-
-        <ProgressBar
-            android:id="@+id/pbOfflineDownload"
-            style="?android:attr/progressBarStyleSmall"
-            android:layout_width="16dp"
-            android:layout_height="16dp"
-            android:indeterminate="true"
-            android:indeterminateTint="@color/stitch_blue" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:fontFamily="@font/inter_variable"
-            android:text="Descargando..."
-            android:textColor="@color/stitch_blue"
-            android:textSize="12sp"
-            android:textStyle="bold" />
-    </LinearLayout>
 
 </LinearLayout>

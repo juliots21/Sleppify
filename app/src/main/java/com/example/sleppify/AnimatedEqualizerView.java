@@ -34,9 +34,9 @@ public class AnimatedEqualizerView extends View {
                 }
                 
                 if (barHeights[i] < targetHeights[i]) {
-                    barHeights[i] += 0.1f;
+                    barHeights[i] += 0.04f;
                 } else {
-                    barHeights[i] -= 0.1f;
+                    barHeights[i] -= 0.04f;
                 }
                 changed = true;
             }
@@ -44,7 +44,7 @@ public class AnimatedEqualizerView extends View {
             if (changed) {
                 invalidate();
             }
-            handler.postDelayed(this, 30);
+            handler.postDelayed(this, 60);
         }
     };
 

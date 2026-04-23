@@ -78,9 +78,10 @@
             android:clickable="true"
             android:focusable="true">
             <FrameLayout
-                android:layout_width="64dp"
-                android:layout_height="52dp"
-                android:background="@drawable/bg_stitch_glass_card">
+                android:layout_width="match_parent"
+                android:layout_height="64dp"
+                android:layout_marginHorizontal="4dp"
+                android:background="@drawable/bg_bs_action_button">
                 <ImageView
                     android:id="@+id/ivBsPlayNextIcon"
                     android:layout_width="24dp"
@@ -113,9 +114,10 @@
             android:clickable="true"
             android:focusable="true">
             <FrameLayout
-                android:layout_width="64dp"
-                android:layout_height="52dp"
-                android:background="@drawable/bg_stitch_glass_card">
+                android:layout_width="match_parent"
+                android:layout_height="64dp"
+                android:layout_marginHorizontal="4dp"
+                android:background="@drawable/bg_bs_action_button">
                 <ImageView
                     android:id="@+id/ivBsAddPrimary"
                     android:layout_width="24dp"
@@ -148,9 +150,10 @@
             android:clickable="true"
             android:focusable="true">
             <FrameLayout
-                android:layout_width="64dp"
-                android:layout_height="52dp"
-                android:background="@drawable/bg_stitch_glass_card">
+                android:layout_width="match_parent"
+                android:layout_height="64dp"
+                android:layout_marginHorizontal="4dp"
+                android:background="@drawable/bg_bs_action_button">
                 <ImageView
                     android:id="@+id/ivBsShareIcon"
                     android:layout_width="24dp"
@@ -185,6 +188,35 @@
         android:layout_height="wrap_content"
         android:orientation="vertical">
 
+        <!-- Reproducir Playlist -->
+        <LinearLayout
+            android:id="@+id/btnBsPlayPlaylist"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingVertical="14dp"
+            android:background="?attr/selectableItemBackground"
+            android:clickable="true"
+            android:focusable="true"
+            android:visibility="gone">
+            <ImageView
+                android:id="@+id/ivBsPlayPlaylist"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:src="@drawable/ic_player_play"
+                app:tint="@android:color/white"/>
+            <TextView
+                android:id="@+id/tvBsPlayPlaylist"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:text="Reproducir playlist"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp"
+                android:fontFamily="@font/inter_variable"/>
+        </LinearLayout>
+
         <!-- Add to Queue (when Add to playlist is primary) -->
         <LinearLayout
             android:id="@+id/btnBsAddToQueue"
@@ -198,11 +230,13 @@
             android:focusable="true"
             android:visibility="gone">
             <ImageView
+                android:id="@+id/ivBsAddToQueue"
                 android:layout_width="22dp"
                 android:layout_height="22dp"
                 android:src="@drawable/ic_stream_queue_add"
                 app:tint="@android:color/white"/>
             <TextView
+                android:id="@+id/tvBsAddToQueue"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="16dp"
@@ -211,6 +245,7 @@
                 android:textSize="15sp"
                 android:fontFamily="@font/inter_variable"/>
         </LinearLayout>
+
 
         <!-- Play (for MusicPlayerFragment search result) -->
         <LinearLayout
@@ -225,6 +260,7 @@
             android:focusable="true"
             android:visibility="gone">
             <ImageView
+                android:id="@+id/ivBsPlay"
                 android:layout_width="22dp"
                 android:layout_height="22dp"
                 android:src="@drawable/ic_player_play"
@@ -295,6 +331,7 @@
                 android:textSize="15sp"
                 android:fontFamily="@font/inter_variable"/>
         </LinearLayout>
+
 
     </LinearLayout>
 

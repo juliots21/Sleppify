@@ -1,5 +1,6 @@
 package com.example.sleppify;
 
+import com.example.sleppify.BuildConfig;
 import android.Manifest;
 import android.app.Activity;
 import android.app.NotificationChannel;

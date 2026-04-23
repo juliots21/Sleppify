@@ -41,11 +41,8 @@
             <ImageView
                 android:id="@+id/ivTrackThumb"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:minHeight="64dp"
-                android:scaleType="fitCenter"
-                android:adjustViewBounds="true"
-                android:maxHeight="64dp"
+                android:layout_height="match_parent"
+                android:scaleType="centerCrop"
                 android:src="@drawable/ic_music" />
 
             <FrameLayout

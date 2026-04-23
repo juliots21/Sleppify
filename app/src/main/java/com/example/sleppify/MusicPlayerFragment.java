@@ -3938,86 +3938,108 @@ public class MusicPlayerFragment extends Fragment {
         ImageView ivShare = view.findViewById(R.id.ivBsShareIcon);
         TextView tvShare = view.findViewById(R.id.tvBsShareLabel);
         
-        // Slot 1: Play Next (if video)
-        if (track.isVideo()) {
+        // For playlists: show Reproducir playlist and Compartir in top buttons
+        if ("playlist".equals(track.resultType)) {
+            // Slot 1: Reproducir playlist
             btnPlayNext.setVisibility(View.VISIBLE);
-            ivPlayNext.setImageResource(R.drawable.ic_stream_play_next);
-            tvPlayNext.setText("Reproducir a\ncontinuación");
+            ivPlayNext.setImageResource(R.drawable.ic_player_play);
+            tvPlayNext.setText("Reproducir\nplaylist");
             btnPlayNext.setOnClickListener(v -> {
                 dialog.dismiss();
-                SongPlayerFragment player = findSongPlayerFragment();
-                if (player != null && player.isAdded()) {
-                    player.externalInsertNext(track.contentId, track.title, track.subtitle, "", track.thumbnailUrl);
-                }
+                openTrack(track);
             });
-        } else {
-            btnPlayNext.setVisibility(View.GONE);
-        }
 
-        // Slot 2: Add to Queue (if video)
-        if (track.isVideo()) {
-            btnAddPrimary.setVisibility(View.VISIBLE);
-            ivAddPrimary.setImageResource(R.drawable.ic_stream_queue_add);
-            tvAddPrimary.setText("Agregar a\nla fila");
-            btnAddPrimary.setOnClickListener(v -> {
-                dialog.dismiss();
-                SongPlayerFragment player = findSongPlayerFragment();
-                if (player != null && player.isAdded()) {
-                    player.externalEnqueue(track.contentId, track.title, track.subtitle, "", track.thumbnailUrl);
-                }
-            });
-        } else {
+            // Slot 2: (hidden for playlists to keep 2-button layout)
             btnAddPrimary.setVisibility(View.GONE);
-        }
 
-        // Slot 3: Add to Playlist (if video) or Share
-        if (track.isVideo()) {
+            // Slot 3: Compartir
             btnShare.setVisibility(View.VISIBLE);
-            ivShare.setImageResource(R.drawable.ic_stream_queue_add);
-            tvShare.setText("Añadir a\nplaylist");
+            ivShare.setImageResource(R.drawable.ic_playlist_share);
+            tvShare.setText("Compartir");
             btnShare.setOnClickListener(v -> {
                 dialog.dismiss();
-                showAddToPlaylistDialog(track);
+                shareTrackResult(track);
             });
         } else {
-            btnShare.setVisibility(View.GONE);
+            // Slot 1: Play Next (if video)
+            if (track.isVideo()) {
+                btnPlayNext.setVisibility(View.VISIBLE);
+                ivPlayNext.setImageResource(R.drawable.ic_stream_play_next);
+                tvPlayNext.setText("Reproducir a\ncontinuación");
+                btnPlayNext.setOnClickListener(v -> {
+                    dialog.dismiss();
+                    SongPlayerFragment player = findSongPlayerFragment();
+                    if (player != null && player.isAdded()) {
+                        player.externalInsertNext(track.contentId, track.title, track.subtitle, "", track.thumbnailUrl);
+                    }
+                });
+            } else {
+                btnPlayNext.setVisibility(View.GONE);
+            }
+
+            // Slot 2: Add to Queue (if video)
+            if (track.isVideo()) {
+                btnAddPrimary.setVisibility(View.VISIBLE);
+                ivAddPrimary.setImageResource(R.drawable.ic_stream_queue_add);
+                tvAddPrimary.setText("Agregar a\nla fila");
+                btnAddPrimary.setOnClickListener(v -> {
+                    dialog.dismiss();
+                    SongPlayerFragment player = findSongPlayerFragment();
+                    if (player != null && player.isAdded()) {
+                        player.externalEnqueue(track.contentId, track.title, track.subtitle, "", track.thumbnailUrl);
+                    }
+                });
+            } else {
+                btnAddPrimary.setVisibility(View.GONE);
+            }
+
+            // Slot 3: Share (Compartir)
+            btnShare.setVisibility(View.VISIBLE);
+            ivShare.setImageResource(R.drawable.ic_playlist_share);
+            tvShare.setText("Compartir");
+            btnShare.setOnClickListener(v -> {
+                dialog.dismiss();
+                shareTrackResult(track);
+            });
         }
 
+        View btnPlayPlaylist = view.findViewById(R.id.btnBsPlayPlaylist);
         View btnPlay = view.findViewById(R.id.btnBsPlay);
         View btnFavorite = view.findViewById(R.id.btnBsFavorite);
         View btnDownload = view.findViewById(R.id.btnBsDownload);
         View btnAddToQueue = view.findViewById(R.id.btnBsAddToQueue);
         
-        btnPlay.setVisibility(View.VISIBLE);
+        // Reproducir Playlist - hidden when shown in top buttons for playlists
         if ("playlist".equals(track.resultType)) {
-            TextView tvPlay = btnPlay.findViewById(R.id.tvBsPlayLabel);
-            if (tvPlay != null) {
-                tvPlay.setText("Reproducir playlist");
-            }
+            btnPlayPlaylist.setVisibility(View.GONE);
+        } else {
+            btnPlayPlaylist.setVisibility(View.GONE);
         }
-        btnPlay.setOnClickListener(v -> {
-            dialog.dismiss();
-            openTrack(track);
-        });
 
-        // Slot 4: Share (as list item)
-        btnFavorite.setVisibility(View.VISIBLE);
-        ImageView ivFav = btnFavorite.findViewById(R.id.ivBsFavorite);
-        TextView tvFav = btnFavorite.findViewById(R.id.tvBsFavorite);
-        ivFav.setImageResource(R.drawable.ic_playlist_share);
-        tvFav.setText("Compartir");
-        btnFavorite.setOnClickListener(v -> {
-            dialog.dismiss();
-            shareTrackResult(track);
-        });
+        btnPlay.setVisibility(View.GONE);
+        
+        // Slot 4: Add to Playlist (if video) - was Favorite
+        if (track.isVideo()) {
+            btnFavorite.setVisibility(View.VISIBLE);
+            ImageView ivAddList = btnFavorite.findViewById(R.id.ivBsFavorite);
+            TextView tvAddList = btnFavorite.findViewById(R.id.tvBsFavorite);
+            ivAddList.setImageResource(R.drawable.ic_stream_queue_add);
+            tvAddList.setText("Añadir a playlist");
+            btnFavorite.setOnClickListener(v -> {
+                dialog.dismiss();
+                showAddToPlaylistDialog(track);
+            });
+        } else {
+            btnFavorite.setVisibility(View.GONE);
+        }
 
-        // Slot 5: Favorite (if video)
+        // Slot 5: Favorite (if video) - was Download
         if (track.isVideo()) {
             btnDownload.setVisibility(View.VISIBLE);
-            ImageView ivDown = btnDownload.findViewById(R.id.ivBsDownload);
-            TextView tvDown = btnDownload.findViewById(R.id.tvBsDownload);
-            ivDown.setImageResource(R.drawable.ic_favorite_star);
-            tvDown.setText("Agregar a Favoritos");
+            ImageView ivFav = btnDownload.findViewById(R.id.ivBsDownload);
+            TextView tvFav = btnDownload.findViewById(R.id.tvBsDownload);
+            ivFav.setImageResource(R.drawable.ic_favorite_star);
+            tvFav.setText("Agregar a Favoritos");
             btnDownload.setOnClickListener(v -> {
                 dialog.dismiss();
                 addSearchTrackToFavorites(track);
@@ -4026,7 +4048,7 @@ public class MusicPlayerFragment extends Fragment {
             btnDownload.setVisibility(View.GONE);
         }
 
-        btnAddToQueue.setVisibility(View.GONE); // Redundant now as it is in Slot 2
+        btnAddToQueue.setVisibility(View.GONE);
 
         View parent = (View) view.getParent();
         if (parent != null) {

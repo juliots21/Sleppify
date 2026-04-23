@@ -281,15 +281,15 @@ class OfflinePlaylistDownloadWorker(
             Log.d(TAG, "track:newpipe_result id=$id ok=$downloaded")
             if (downloaded) {
                 OfflineRestrictionStore.clearAutomaticNewPipeFailures(context, id)
+            } else if (!networkIssueTracker.hasIssue() && networkIssueTracker.isYouTubeRestricted()) {
+                OfflineRestrictionStore.markRestricted(context, id)
+                restrictedIds.add(id)
+                OfflineRestrictionStore.clearAutomaticNewPipeFailures(context, id)
+                Log.w(TAG, "track:newpipe_youtube_restricted id=$id")
+                return TrackDownloadResult.failed(id, title, noNetworkEncountered)
             } else if (!networkIssueTracker.hasIssue() && !userInitiated) {
                 val failures = OfflineRestrictionStore.incrementAutomaticNewPipeFailure(context, id)
                 Log.w(TAG, "track:newpipe_auto_fail id=$id failures=$failures/$MAX_NEWPIPE_AUTOMATIC_FAILURES")
-                if (failures >= MAX_NEWPIPE_AUTOMATIC_FAILURES) {
-                    OfflineRestrictionStore.markRestricted(context, id)
-                    restrictedIds.add(id)
-                    Log.w(TAG, "track:newpipe_auto_restricted id=$id")
-                    return TrackDownloadResult.failed(id, title, noNetworkEncountered)
-                }
             }
 
             if (!downloaded && !networkIssueTracker.hasIssue() && userInitiated) {
@@ -446,6 +446,9 @@ class OfflinePlaylistDownloadWorker(
                         "newpipe:no_audio_stream (This track might be restricted or region-locked) id=$videoId" +
                                 " url=${sanitizeUrlForLog(sourceUrl)}"
                     )
+                    if (!networkIssueTracker.hasIssue()) {
+                        networkIssueTracker.markYouTubeRestricted()
+                    }
                     continue
                 }
 
@@ -484,7 +487,13 @@ class OfflinePlaylistDownloadWorker(
                 if (isLikelyNetworkException(e)) networkIssueTracker.markIssue()
                 val errorType = e.javaClass.simpleName
                 if ("SignInConfirmNotBotException" == errorType) {
+                    if (!networkIssueTracker.hasIssue()) {
+                        networkIssueTracker.markYouTubeRestricted()
+                    }
                     Log.w(TAG, "newpipe:blocked id=$videoId message=${e.message}")
+                } else if (!networkIssueTracker.hasIssue() && isLikelyYouTubeRestrictionException(e)) {
+                    networkIssueTracker.markYouTubeRestricted()
+                    Log.w(TAG, "newpipe:restricted_exception id=$videoId type=$errorType message=${e.message}")
                 } else {
                     Log.w(
                         TAG,
@@ -497,6 +506,46 @@ class OfflinePlaylistDownloadWorker(
         }
 
         Log.w(TAG, "newpipe:all_candidates_failed id=$videoId")
+        return false
+    }
+
+    private fun isLikelyYouTubeRestrictionException(e: Exception): Boolean {
+        val type = e.javaClass.simpleName
+        if (type.contains("ContentNotAvailable", true) ||
+            type.contains("AgeRestricted", true) ||
+            type.contains("Geographic", true) ||
+            type.contains("Region", true) ||
+            type.contains("Paid", true) ||
+            type.contains("Premium", true) ||
+            type.contains("LoginRequired", true) ||
+            type.contains("ParsingException", true)
+        ) {
+            val msg = e.message?.lowercase(Locale.US).orEmpty()
+            if (msg.contains("unavailable") ||
+                msg.contains("not available") ||
+                msg.contains("not available in") ||
+                msg.contains("region") ||
+                msg.contains("country") ||
+                msg.contains("age") ||
+                msg.contains("restricted") ||
+                msg.contains("members") ||
+                msg.contains("premium") ||
+                msg.contains("sign in")
+            ) {
+                return true
+            }
+        }
+
+        val msg = e.message?.lowercase(Locale.US).orEmpty()
+        if (msg.contains("this video is unavailable") ||
+            msg.contains("video unavailable") ||
+            msg.contains("playback on other websites has been disabled") ||
+            msg.contains("available to youtube premium") ||
+            msg.contains("requires payment")
+        ) {
+            return true
+        }
+
         return false
     }
 
@@ -1417,8 +1466,14 @@ class OfflinePlaylistDownloadWorker(
         @Volatile
         private var issue = false
 
+        @Volatile
+        private var youtubeRestricted = false
+
         fun markIssue() { issue = true }
         fun hasIssue(): Boolean = issue
+
+        fun markYouTubeRestricted() { youtubeRestricted = true }
+        fun isYouTubeRestricted(): Boolean = youtubeRestricted
     }
 
     companion object {

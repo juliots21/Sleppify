@@ -268,8 +268,8 @@
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:clipToPadding="false"
-                android:paddingStart="16dp"
-                android:paddingEnd="16dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="8dp"
                 android:paddingBottom="16dp" />
         </LinearLayout>
     </FrameLayout>

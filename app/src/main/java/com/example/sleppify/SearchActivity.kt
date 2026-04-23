@@ -544,8 +544,11 @@ class SearchActivity : AppCompatActivity() {
         val ivArt = view.findViewById<ImageView>(R.id.ivBsTrackArt)
         
         tvTitle.text = track.title ?: "Tema"
-        tvSubtitle.text = track.subtitle ?: "Artista"
+        val typeLabel = searchTypeLabel(track)
+        tvSubtitle.text = if (track.subtitle.isNullOrEmpty()) typeLabel else "$typeLabel • ${track.subtitle}"
         loadArtworkInto(ivArt, track.thumbnailUrl)
+
+        val isPlaylist = "playlist".equals(track.resultType, ignoreCase = true)
 
         view.findViewById<View>(R.id.btnBsPlayNext).setOnClickListener {
             addToQueue(track, true)
@@ -560,7 +563,50 @@ class SearchActivity : AppCompatActivity() {
             dialog.dismiss()
         }
 
+        // List actions
+        val btnPlayPlaylist = view.findViewById<View>(R.id.btnBsPlayPlaylist)
+        val btnFavorite = view.findViewById<View>(R.id.btnBsFavorite)
+        
+        if (isPlaylist) {
+            btnPlayPlaylist.visibility = View.VISIBLE
+            btnPlayPlaylist.setOnClickListener {
+                onTrackClicked(track)
+                dialog.dismiss()
+            }
+        } else {
+            btnPlayPlaylist.visibility = View.GONE
+        }
+
+        // Add Favorites to list
+        btnFavorite.visibility = View.VISIBLE
+        val ivFav = btnFavorite.findViewById<ImageView>(R.id.ivBsFavorite)
+        val tvFav = btnFavorite.findViewById<TextView>(R.id.tvBsFavorite)
+        ivFav.setImageResource(R.drawable.ic_favorite_star)
+        tvFav.text = "Agregar a Favoritos"
+        btnFavorite.setOnClickListener {
+            addTrackToFavorites(track)
+            dialog.dismiss()
+        }
+
+        // If it's a playlist and we can check its download status, we should show "Eliminar descargas"
+        // But SearchActivity results are mostly online.
+
+        val parent = view.parent as? View
+        parent?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        
         dialog.show()
+    }
+
+    private fun addTrackToFavorites(track: YouTubeMusicService.TrackResult) {
+        if (track.videoId.isNullOrEmpty()) return
+        FavoritesPlaylistStore.upsertFavorite(
+            this,
+            track.videoId,
+            track.title ?: "Tema",
+            track.subtitle ?: "Artista",
+            "--:--",
+            track.thumbnailUrl ?: ""
+        )
     }
 
     private fun addToQueue(track: YouTubeMusicService.TrackResult, playNext: Boolean) {

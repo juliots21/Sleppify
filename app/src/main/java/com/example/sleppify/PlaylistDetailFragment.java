@@ -248,6 +248,7 @@ public class PlaylistDetailFragment extends Fragment {
                 return;
             }
             updateMiniPlayerUi();
+            refreshActiveEqualizerState();
             miniProgressHandler.postDelayed(this, MINI_PROGRESS_TICK_MS);
         }
     };
@@ -683,6 +684,25 @@ public class PlaylistDetailFragment extends Fragment {
         headerAdapter.notifyItemChanged(0);
     }
 
+    private void refreshActiveEqualizerState() {
+        if (trackAdapter == null || rvPlaylistContent == null || currentTrackIndex < 0) {
+            return;
+        }
+        // The active track's position in the ConcatAdapter = headerAdapter(1) + currentTrackIndex
+        int globalPosition = 1 + currentTrackIndex;
+        RecyclerView.ViewHolder vh = rvPlaylistContent.findViewHolderForAdapterPosition(globalPosition);
+        if (vh == null) {
+            return;
+        }
+        AnimatedEqualizerView eq = vh.itemView.findViewById(R.id.animatedEq);
+        if (eq == null) {
+            return;
+        }
+        SongPlayerFragment songPlayer = findSongPlayerFragment();
+        boolean isActuallyPlaying = songPlayer != null && songPlayer.isPlaying();
+        eq.setAnimating(isActuallyPlaying);
+    }
+
     private void refreshVisibleTrackRows() {
         if (trackAdapter == null) {
             return;
@@ -1055,44 +1075,34 @@ public class PlaylistDetailFragment extends Fragment {
         
         int targetWidth;
         int targetHeight;
-        boolean hasTargetSize = false;
-        int rawWidth = 0;
-        int rawHeight = 0;
 
         if (fixedSizeDp > 0) {
             targetWidth = Math.round(fixedSizeDp * density);
             targetHeight = targetWidth;
         } else {
             ViewGroup.LayoutParams params = target.getLayoutParams();
-            rawWidth = resolveTargetDimension(target.getWidth(), params == null ? 0 : params.width);
-            rawHeight = resolveTargetDimension(target.getHeight(), params == null ? 0 : params.height);
-            hasTargetSize = rawWidth > 0 && rawHeight > 0;
+            int rawWidth = resolveTargetDimension(target.getWidth(), params == null ? 0 : params.width);
+            int rawHeight = resolveTargetDimension(target.getHeight(), params == null ? 0 : params.height);
+            boolean hasTargetSize = rawWidth > 0 && rawHeight > 0;
 
             if (hasTargetSize) {
                 targetWidth = bucketArtworkDimension(rawWidth);
                 targetHeight = bucketArtworkDimension(rawHeight);
             } else {
-                // If not measured, use a sensible default for unmeasured views 
-                // instead of full-screen to avoid memory spikes during initialization.
                 targetWidth = Math.round(160 * density); 
                 targetHeight = targetWidth;
             }
         }
 
+        // Use a fixed decode size for smart crop so the crop result is always
+        // identical between thumbnail and full load — preventing the visible
+        // "re-crop flash" that happens when Glide thumbnail loads a smaller
+        // bitmap that produces different crop margins.
         if (YouTubeImageProcessor.shouldProcess(safeUrl)) {
-            if (fixedSizeDp > 0) {
-                int displayPx = Math.round(fixedSizeDp * density);
-                int side = YouTubeImageProcessor.decodeDimensionForSmartCrop(displayPx);
-                targetWidth = side;
-                targetHeight = side;
-            } else if (hasTargetSize) {
-                targetWidth = YouTubeImageProcessor.decodeDimensionForSmartCrop(rawWidth);
-                targetHeight = YouTubeImageProcessor.decodeDimensionForSmartCrop(rawHeight);
-            } else {
-                int side = YouTubeImageProcessor.decodeDimensionForSmartCrop(targetWidth);
-                targetWidth = side;
-                targetHeight = side;
-            }
+            int side = YouTubeImageProcessor.decodeDimensionForSmartCrop(
+                    fixedSizeDp > 0 ? Math.round(fixedSizeDp * density) : targetWidth);
+            targetWidth = side;
+            targetHeight = side;
         }
 
         String signature = safeUrl + "|" + targetWidth + "x" + targetHeight;
@@ -1102,15 +1112,17 @@ public class PlaylistDetailFragment extends Fragment {
         }
         target.setTag(R.id.tag_artwork_signature, signature);
 
+        boolean offlineOnly = !hasValidatedInternet(context);
+
         Glide.with(target)
             .load(safeUrl)
             .transform(new YouTubeCropTransformation())
             .format(DecodeFormat.PREFER_RGB_565)
             .diskCacheStrategy(DiskCacheStrategy.ALL)
+            .onlyRetrieveFromCache(offlineOnly)
             .placeholder(R.drawable.ic_music)
             .error(R.drawable.ic_music)
             .override(targetWidth, targetHeight)
-            .thumbnail(0.15f)
             .dontAnimate()
             .into(target);
     }
@@ -2866,13 +2878,15 @@ public class PlaylistDetailFragment extends Fragment {
             queueTrackAtEnd(position);
         });
         
-        ivShare.setImageResource(R.drawable.ic_favorite_star);
-        tvShare.setText("Agregar a\nFavoritos");
+        // Slot 3: Share (Compartir)
+        ivShare.setImageResource(R.drawable.ic_playlist_share);
+        tvShare.setText("Compartir");
         btnShare.setOnClickListener(v -> {
             dialog.dismiss();
-            addTrackToFavoritesFromRow(position);
+            shareTrack(selectedTrack);
         });
 
+        View btnPlayPlaylist = view.findViewById(R.id.btnBsPlayPlaylist);
         View btnPlay = view.findViewById(R.id.btnBsPlay);
         View btnFavorite = view.findViewById(R.id.btnBsFavorite);
         View btnDownload = view.findViewById(R.id.btnBsDownload);
@@ -2880,10 +2894,25 @@ public class PlaylistDetailFragment extends Fragment {
         ImageView ivDownload = view.findViewById(R.id.ivBsDownload);
         TextView tvDownload = view.findViewById(R.id.tvBsDownload);
         
+        // Play playlist option hidden in playlist-details (redundant with main button)
+        btnPlayPlaylist.setVisibility(View.GONE);
+
         btnPlay.setVisibility(View.GONE);
         btnAddToQueue.setVisibility(View.GONE);
-        btnFavorite.setVisibility(View.GONE);
         
+        // Favorite (now in list)
+        btnFavorite.setVisibility(View.VISIBLE);
+        ImageView ivFav = btnFavorite.findViewById(R.id.ivBsFavorite);
+        TextView tvFav = btnFavorite.findViewById(R.id.tvBsFavorite);
+        ivFav.setImageResource(R.drawable.ic_favorite_star);
+        tvFav.setText("Agregar a Favoritos");
+        btnFavorite.setOnClickListener(v -> {
+            dialog.dismiss();
+            addTrackToFavoritesFromRow(position);
+        });
+        
+        // Download / Delete track download
+        btnDownload.setVisibility(View.VISIBLE);
         if (hasOfflineAudio) {
             ivDownload.setImageResource(R.drawable.ic_delete_modern);
             tvDownload.setText("Eliminar descarga");
@@ -2901,12 +2930,64 @@ public class PlaylistDetailFragment extends Fragment {
             }
         });
 
+        // Delete Playlist Downloads (if fully downloaded)
+        if (isPlaylistFullyDownloaded()) {
+            btnAddToQueue.setVisibility(View.VISIBLE);
+            ImageView ivDelAll = btnAddToQueue.findViewById(R.id.ivBsAddToQueue);
+            TextView tvDelAll = btnAddToQueue.findViewById(R.id.tvBsAddToQueue);
+            ivDelAll.setImageResource(R.drawable.ic_delete_modern);
+            tvDelAll.setText("Eliminar descargas de playlist");
+            btnAddToQueue.setOnClickListener(v -> {
+                dialog.dismiss();
+                removeAllPlaylistDownloads();
+            });
+        }
+
         View parent = (View) view.getParent();
         if (parent != null) {
             parent.setBackgroundColor(android.graphics.Color.TRANSPARENT);
         }
 
         dialog.show();
+    }
+
+    private boolean isPlaylistFullyDownloaded() {
+        if (currentTracks.isEmpty()) return false;
+        Context context = getContext();
+        if (context == null) return false;
+        for (PlaylistTrack track : currentTracks) {
+            if (!OfflineAudioStore.hasValidatedOfflineAudio(context, track.videoId, track.duration)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void removeAllPlaylistDownloads() {
+        if (currentTracks.isEmpty()) return;
+        Context appContext = requireContext().getApplicationContext();
+        ArrayList<String> idsToDelete = new ArrayList<>();
+        for (PlaylistTrack track : currentTracks) {
+            idsToDelete.add(track.videoId);
+        }
+        OfflineAudioStore.deleteOfflineAudio(appContext, idsToDelete);
+        
+        if (trackAdapter != null) {
+            trackAdapter.invalidateTrackStateCache();
+            trackAdapter.notifyDataSetChanged();
+        }
+        
+        maybeUpdateOfflineReadyState();
+        maybeAutoDownloadForCurrentPlaylist();
+    }
+
+    private void shareTrack(PlaylistTrack track) {
+        if (track == null) return;
+        String shareText = "Escucha " + track.title + " de " + track.artist + " en Sleppify: https://music.youtube.com/watch?v=" + track.videoId;
+        Intent intent = new Intent(Intent.ACTION_SEND);
+        intent.setType("text/plain");
+        intent.putExtra(Intent.EXTRA_TEXT, shareText);
+        startActivity(Intent.createChooser(intent, "Compartir canción"));
     }
 
 
@@ -4300,7 +4381,6 @@ public class PlaylistDetailFragment extends Fragment {
             holder.tvGoogleProfileName.setText(headerProfileName);
             holder.tvPlaylistInfo.setText(headerPlaylistInfo);
             holder.tvTracksState.setText(TextUtils.isEmpty(offlineHeaderTracksState) ? headerTracksState : offlineHeaderTracksState);
-            holder.llOfflineLoadingIndicator.setVisibility((offlineDownloadRunning || offlineDownloadQueued) ? View.VISIBLE : View.GONE);
             holder.vPlaylistBackdropScrim.setVisibility(amoledModeEnabled ? View.GONE : View.VISIBLE);
             holder.vPlaylistBackdropBottomFade.setVisibility(amoledModeEnabled ? View.GONE : View.VISIBLE);
             holder.vPlaylistBackdropAmoledFade.setVisibility(amoledModeEnabled ? View.VISIBLE : View.GONE);
@@ -4321,8 +4401,13 @@ public class PlaylistDetailFragment extends Fragment {
             }
 
             if (!TextUtils.isEmpty(headerPlaylistThumbnail)) {
-                loadArtworkInto(holder.ivPlaylistCover, headerPlaylistThumbnail);
-                loadArtworkInto(holder.ivPlaylistBackdrop, headerPlaylistThumbnail);
+                String currentCoverSig = (String) holder.ivPlaylistCover.getTag(R.id.tag_artwork_signature);
+                String expectedSig = headerPlaylistThumbnail.trim();
+                boolean coverChanged = currentCoverSig == null || !currentCoverSig.startsWith(expectedSig);
+                if (coverChanged) {
+                    loadArtworkInto(holder.ivPlaylistCover, headerPlaylistThumbnail);
+                    loadArtworkInto(holder.ivPlaylistBackdrop, headerPlaylistThumbnail);
+                }
             } else {
                 holder.ivPlaylistCover.setImageResource(R.drawable.ic_music);
                 holder.ivPlaylistBackdrop.setImageResource(R.drawable.ic_music);
@@ -4364,7 +4449,6 @@ public class PlaylistDetailFragment extends Fragment {
             final TextView tvTracksState;
             final MaterialButton btnListenNow;
             final ImageButton btnDownload;
-            final View llOfflineLoadingIndicator;
 
             HeaderViewHolder(@NonNull View itemView) {
                 super(itemView);
@@ -4380,7 +4464,6 @@ public class PlaylistDetailFragment extends Fragment {
                 tvTracksState = itemView.findViewById(R.id.tvTracksState);
                 btnListenNow = itemView.findViewById(R.id.btnListenNow);
                 btnDownload = itemView.findViewById(R.id.btnDownload);
-                llOfflineLoadingIndicator = itemView.findViewById(R.id.llOfflineLoadingIndicator);
             }
         }
     }
@@ -4524,14 +4607,10 @@ public class PlaylistDetailFragment extends Fragment {
         }
 
         void setActiveIndex(int activeIndex) {
-            if (this.activeIndex == activeIndex) {
-                return;
-            }
-
             int previous = this.activeIndex;
             this.activeIndex = activeIndex;
 
-            if (previous >= 0 && previous < getItemCount()) {
+            if (previous >= 0 && previous < getItemCount() && previous != activeIndex) {
                 notifyItemChanged(previous);
             }
             if (activeIndex >= 0 && activeIndex < getItemCount()) {
@@ -4698,9 +4777,10 @@ public class PlaylistDetailFragment extends Fragment {
         public TrackViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
             View view = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_playlist_track, parent, false);
             RecyclerView.LayoutParams params = (RecyclerView.LayoutParams) view.getLayoutParams();
-            int side = Math.round(parent.getResources().getDisplayMetrics().density * 12f);
-            params.leftMargin = side;
-            params.rightMargin = side;
+            int leftSide = Math.round(parent.getResources().getDisplayMetrics().density * 12f);
+            int rightSide = Math.round(parent.getResources().getDisplayMetrics().density * 8f);
+            params.leftMargin = leftSide;
+            params.rightMargin = rightSide;
             view.setLayoutParams(params);
             return new TrackViewHolder(view);
         }
@@ -4764,7 +4844,7 @@ public class PlaylistDetailFragment extends Fragment {
             }
 
             if (!TextUtils.isEmpty(track.imageUrl)) {
-                loadArtworkInto(holder.ivTrackArt, track.imageUrl, 48);
+                loadArtworkInto(holder.ivTrackArt, track.imageUrl, 44);
             } else {
                 holder.ivTrackArt.setImageResource(R.drawable.ic_music);
             }
@@ -4789,8 +4869,7 @@ public class PlaylistDetailFragment extends Fragment {
             ViewGroup.LayoutParams layoutParams = holder.itemView.getLayoutParams();
             if (layoutParams instanceof RecyclerView.LayoutParams) {
                 RecyclerView.LayoutParams recyclerParams = (RecyclerView.LayoutParams) layoutParams;
-                int top = Math.round(holder.itemView.getResources().getDisplayMetrics().density * (position == 0 ? 10f : 0f));
-                recyclerParams.topMargin = top;
+                recyclerParams.topMargin = 0;
                 holder.itemView.setLayoutParams(recyclerParams);
             }
 
