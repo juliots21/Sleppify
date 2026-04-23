@@ -165,6 +165,7 @@ public class PlaylistDetailFragment extends Fragment {
     private ImageButton btnMiniPlayPause;
 
     private final YouTubeMusicService youTubeMusicService = new YouTubeMusicService();
+    private final ExecutorService urlPrefetchExecutor = Executors.newFixedThreadPool(2);
     private final List<PlaylistTrack> originalTracks = new ArrayList<>();
     private final List<PlaylistTrack> currentTracks = new ArrayList<>();
     private final List<PlaylistTrack> playbackQueueTracks = new ArrayList<>();
@@ -488,6 +489,7 @@ public class PlaylistDetailFragment extends Fragment {
     @Override
     public void onDestroy() {
         offlineReadyStateExecutor.shutdownNow();
+        urlPrefetchExecutor.shutdownNow();
         super.onDestroy();
     }
 
@@ -974,15 +976,37 @@ public class PlaylistDetailFragment extends Fragment {
                 break;
             }
         }
+    }
 
-        if (pendingUrls.isEmpty()) {
+    private void prefetchStreamUrlsForTracks(@NonNull List<PlaylistTrack> tracks, int limit) {
+        if (!isAdded() || !isInternetAvailable()) {
             return;
         }
 
-        miniProgressHandler.postDelayed(
-                () -> scheduleArtworkPrefetchBatch(pendingUrls, 0, generation),
-                ARTWORK_PREFETCH_INITIAL_DELAY_MS
-        );
+        int count = 0;
+        for (PlaylistTrack track : tracks) {
+            if (track == null || TextUtils.isEmpty(track.videoId)) {
+                continue;
+            }
+            // Skip if already has offline audio
+            if (OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), track.videoId, track.duration)) {
+                continue;
+            }
+            
+            final String videoId = track.videoId;
+            urlPrefetchExecutor.submit(() -> {
+                try {
+                    // This will cache the URL in InnertubeResolver
+                    YouTubeStreamResolver.resolveStreamUrl(videoId);
+                } catch (Exception ignored) {
+                }
+            });
+            
+            count++;
+            if (count >= limit) {
+                break;
+            }
+        }
     }
 
     private void scheduleArtworkPrefetchBatch(
@@ -2390,6 +2414,9 @@ public class PlaylistDetailFragment extends Fragment {
         trackAdapter.submitTracks(currentTracks);
         rebuildPlaybackQueue();
 
+        // Prefetch stream URLs for first few tracks to reduce playback start delay
+        prefetchStreamUrlsForTracks(currentTracks, 5);
+
         int totalSeconds = 0;
         for (PlaylistTrack track : currentTracks) {
             totalSeconds += parseDurationSeconds(track.duration);
@@ -2930,18 +2957,16 @@ public class PlaylistDetailFragment extends Fragment {
             }
         });
 
-        // Delete Playlist Downloads (if fully downloaded)
-        if (isPlaylistFullyDownloaded()) {
-            btnAddToQueue.setVisibility(View.VISIBLE);
-            ImageView ivDelAll = btnAddToQueue.findViewById(R.id.ivBsAddToQueue);
-            TextView tvDelAll = btnAddToQueue.findViewById(R.id.tvBsAddToQueue);
-            ivDelAll.setImageResource(R.drawable.ic_delete_modern);
-            tvDelAll.setText("Eliminar descargas de playlist");
-            btnAddToQueue.setOnClickListener(v -> {
-                dialog.dismiss();
-                removeAllPlaylistDownloads();
-            });
-        }
+        // Add to Playlist (local only)
+        btnAddToQueue.setVisibility(View.VISIBLE);
+        ImageView ivAddPlaylist = btnAddToQueue.findViewById(R.id.ivBsAddToQueue);
+        TextView tvAddPlaylist = btnAddToQueue.findViewById(R.id.tvBsAddToQueue);
+        ivAddPlaylist.setImageResource(R.drawable.ic_stream_queue_add);
+        tvAddPlaylist.setText("Añadir a playlist");
+        btnAddToQueue.setOnClickListener(v -> {
+            dialog.dismiss();
+            showAddToLocalPlaylistDialog(selectedTrack);
+        });
 
         View parent = (View) view.getParent();
         if (parent != null) {
@@ -2951,34 +2976,34 @@ public class PlaylistDetailFragment extends Fragment {
         dialog.show();
     }
 
-    private boolean isPlaylistFullyDownloaded() {
-        if (currentTracks.isEmpty()) return false;
-        Context context = getContext();
-        if (context == null) return false;
-        for (PlaylistTrack track : currentTracks) {
-            if (!OfflineAudioStore.hasValidatedOfflineAudio(context, track.videoId, track.duration)) {
-                return false;
-            }
-        }
-        return true;
-    }
+    private void showAddToLocalPlaylistDialog(@NonNull PlaylistTrack track) {
+        if (!isAdded()) return;
 
-    private void removeAllPlaylistDownloads() {
-        if (currentTracks.isEmpty()) return;
-        Context appContext = requireContext().getApplicationContext();
-        ArrayList<String> idsToDelete = new ArrayList<>();
-        for (PlaylistTrack track : currentTracks) {
-            idsToDelete.add(track.videoId);
+        List<String> localNames = CustomPlaylistsStore.INSTANCE.getAllPlaylistNames(requireContext());
+
+        if (localNames.isEmpty()) {
+            android.widget.Toast.makeText(requireContext(), "No tienes playlists. Crea una primero.", android.widget.Toast.LENGTH_SHORT).show();
+            return;
         }
-        OfflineAudioStore.deleteOfflineAudio(appContext, idsToDelete);
-        
-        if (trackAdapter != null) {
-            trackAdapter.invalidateTrackStateCache();
-            trackAdapter.notifyDataSetChanged();
-        }
-        
-        maybeUpdateOfflineReadyState();
-        maybeAutoDownloadForCurrentPlaylist();
+
+        String[] array = localNames.toArray(new String[0]);
+        new com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
+            .setTitle("Añadir a playlist")
+            .setItems(array, (dialog, which) -> {
+                String selected = localNames.get(which);
+                CustomPlaylistsStore.INSTANCE.addTrackToPlaylist(
+                    requireContext(),
+                    selected,
+                    track.videoId,
+                    TextUtils.isEmpty(track.title) ? "Tema" : track.title,
+                    track.artist == null ? "" : track.artist,
+                    track.duration == null ? "" : track.duration,
+                    track.imageUrl == null ? "" : track.imageUrl
+                );
+                android.widget.Toast.makeText(requireContext(), "Añadida a: " + selected, android.widget.Toast.LENGTH_SHORT).show();
+            })
+            .setNegativeButton("Cancelar", null)
+            .show();
     }
 
     private void shareTrack(PlaylistTrack track) {

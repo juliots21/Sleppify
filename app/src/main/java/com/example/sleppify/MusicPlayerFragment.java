@@ -4607,7 +4607,15 @@ public class MusicPlayerFragment extends Fragment {
                 currentTrack = new PlaybackHistoryStore.QueueTrack(playerVideoId, "Reproduciendo", "", "", "");
             }
 
-            currentSeconds = Math.max(0, songPlayer.externalGetCurrentSeconds());
+            int playerSeconds = songPlayer.externalGetCurrentSeconds();
+            // If player shows 0 but snapshot has a position, use snapshot (player hasn't loaded saved position yet)
+            PlaybackHistoryStore.QueueTrack snapshotTrack = snapshot.currentTrack();
+            if (playerSeconds == 0 && snapshot.currentSeconds > 0 && snapshotTrack != null
+                    && TextUtils.equals(playerVideoId, snapshotTrack.videoId)) {
+                currentSeconds = Math.max(0, snapshot.currentSeconds);
+            } else {
+                currentSeconds = Math.max(0, playerSeconds);
+            }
             totalSeconds = Math.max(1, songPlayer.externalGetTotalSeconds());
             miniPlaying = songPlayer.externalIsPlaying();
         } else if (currentTrack != null && totalSeconds <= 1) {
@@ -4717,7 +4725,7 @@ public class MusicPlayerFragment extends Fragment {
         if (!isAdded()) return;
 
         String playlistId = track.contentId == null ? "" : track.contentId.trim();
-        if (isPersistedPlaylistOfflineAutoEnabled(playlistId)) return;
+        boolean isOfflineEnabled = isPersistedPlaylistOfflineAutoEnabled(playlistId);
 
         com.google.android.material.bottomsheet.BottomSheetDialog dialog = new com.google.android.material.bottomsheet.BottomSheetDialog(requireContext());
         View view = LayoutInflater.from(requireContext()).inflate(R.layout.bottom_sheet_track_options, null);
@@ -4731,26 +4739,59 @@ public class MusicPlayerFragment extends Fragment {
         tvSubtitle.setText(searchTypeLabel(track));
         loadArtworkInto(ivArt, track.thumbnailUrl);
 
+        // Top 3 buttons: Play, Share, Download/Delete Downloads
         View btnPlayNext = view.findViewById(R.id.btnBsPlayNext);
         View btnAddPrimary = view.findViewById(R.id.btnBsAddPrimary);
         View btnShare = view.findViewById(R.id.btnBsShare);
+        ImageView ivPlayNext = view.findViewById(R.id.ivBsPlayNextIcon);
+        TextView tvPlayNext = view.findViewById(R.id.tvBsPlayNextLabel);
         ImageView ivAddPrimary = view.findViewById(R.id.ivBsAddPrimary);
         TextView tvAddPrimary = view.findViewById(R.id.tvBsAddPrimary);
+        ImageView ivShare = view.findViewById(R.id.ivBsShareIcon);
+        TextView tvShare = view.findViewById(R.id.tvBsShareLabel);
         
-        btnPlayNext.setVisibility(View.GONE);
-        btnShare.setVisibility(View.GONE);
-        
-        ivAddPrimary.setImageResource(R.drawable.ic_download_bold);
-        tvAddPrimary.setText("Descargar");
-        btnAddPrimary.setOnClickListener(v -> {
+        // Button 1: Reproducir playlist
+        btnPlayNext.setVisibility(View.VISIBLE);
+        ivPlayNext.setImageResource(R.drawable.ic_player_play);
+        tvPlayNext.setText("Reproducir");
+        btnPlayNext.setOnClickListener(v -> {
             dialog.dismiss();
-            enqueuePlaylistOfflineDownload(track);
+            playPlaylistFromStart(track);
         });
+        
+        // Button 2: Compartir
+        btnShare.setVisibility(View.VISIBLE);
+        ivShare.setImageResource(R.drawable.ic_playlist_share);
+        tvShare.setText("Compartir");
+        btnShare.setOnClickListener(v -> {
+            dialog.dismiss();
+            shareTrackResult(track);
+        });
+        
+        // Button 3: Descargar o Eliminar descargas
+        btnAddPrimary.setVisibility(View.VISIBLE);
+        if (isOfflineEnabled) {
+            ivAddPrimary.setImageResource(R.drawable.ic_download_bold);
+            tvAddPrimary.setText("Eliminar\ndescargas");
+            btnAddPrimary.setOnClickListener(v -> {
+                dialog.dismiss();
+                deletePlaylistDownloads(track);
+            });
+        } else {
+            ivAddPrimary.setImageResource(R.drawable.ic_download_bold);
+            tvAddPrimary.setText("Descargar");
+            btnAddPrimary.setOnClickListener(v -> {
+                dialog.dismiss();
+                enqueuePlaylistOfflineDownload(track);
+            });
+        }
 
+        // Hide other buttons
         view.findViewById(R.id.btnBsPlay).setVisibility(View.GONE);
         view.findViewById(R.id.btnBsFavorite).setVisibility(View.GONE);
         view.findViewById(R.id.btnBsDownload).setVisibility(View.GONE);
         view.findViewById(R.id.btnBsAddToQueue).setVisibility(View.GONE);
+        view.findViewById(R.id.btnBsPlayPlaylist).setVisibility(View.GONE);
 
         View parent = (View) view.getParent();
         if (parent != null) {
@@ -4758,6 +4799,213 @@ public class MusicPlayerFragment extends Fragment {
         }
 
         dialog.show();
+    }
+
+    private void playPlaylistFromStart(@NonNull YouTubeMusicService.TrackResult playlistTrack) {
+        if (!isAdded()) return;
+
+        // 1) Local/custom playlist by name
+        java.util.List<String> customPlaylists = CustomPlaylistsStore.INSTANCE.getAllPlaylistNames(requireContext());
+        for (String customName : customPlaylists) {
+            if (customName.equalsIgnoreCase(playlistTrack.title)) {
+                java.util.List<FavoritesPlaylistStore.FavoriteTrack> tracks =
+                        CustomPlaylistsStore.INSTANCE.getTracksFromPlaylist(requireContext(), customName);
+                if (tracks.isEmpty()) {
+                    android.widget.Toast.makeText(requireContext(), "La playlist está vacía", android.widget.Toast.LENGTH_SHORT).show();
+                    return;
+                }
+
+                ArrayList<String> ids = new ArrayList<>();
+                ArrayList<String> titles = new ArrayList<>();
+                ArrayList<String> artists = new ArrayList<>();
+                ArrayList<String> durations = new ArrayList<>();
+                ArrayList<String> images = new ArrayList<>();
+                for (FavoritesPlaylistStore.FavoriteTrack t : tracks) {
+                    if (t == null || TextUtils.isEmpty(t.videoId)) continue;
+                    ids.add(t.videoId);
+                    titles.add(TextUtils.isEmpty(t.title) ? "Tema" : t.title);
+                    artists.add(t.artist == null ? "" : t.artist);
+                    durations.add(TextUtils.isEmpty(t.duration) ? "--:--" : t.duration);
+                    images.add(t.imageUrl == null ? "" : t.imageUrl);
+                }
+
+                if (ids.isEmpty()) {
+                    android.widget.Toast.makeText(requireContext(), "La playlist está vacía", android.widget.Toast.LENGTH_SHORT).show();
+                    return;
+                }
+
+                startPlaybackQueue(ids, titles, artists, durations, images, 0);
+                return;
+            }
+        }
+
+        // 2) YouTube playlist by id
+        String playlistId = playlistTrack.contentId == null ? "" : playlistTrack.contentId.trim();
+        if (TextUtils.isEmpty(playlistId)) {
+            android.widget.Toast.makeText(requireContext(), "Playlist inválida", android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        String token = resolveAccessTokenForPlaylistDetail();
+        if (TextUtils.isEmpty(token)) {
+            android.widget.Toast.makeText(requireContext(), "Inicia sesión para reproducir esta playlist", android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        youTubeMusicService.fetchPlaylistTracks(token, playlistId, 250, new YouTubeMusicService.PlaylistTracksCallback() {
+            @Override
+            public void onSuccess(java.util.List<YouTubeMusicService.PlaylistTrackResult> tracks) {
+                if (!isAdded()) return;
+
+                if (tracks == null || tracks.isEmpty()) {
+                    android.widget.Toast.makeText(requireContext(), "La playlist está vacía", android.widget.Toast.LENGTH_SHORT).show();
+                    return;
+                }
+
+                ArrayList<String> ids = new ArrayList<>();
+                ArrayList<String> titles = new ArrayList<>();
+                ArrayList<String> artists = new ArrayList<>();
+                ArrayList<String> durations = new ArrayList<>();
+                ArrayList<String> images = new ArrayList<>();
+                for (YouTubeMusicService.PlaylistTrackResult t : tracks) {
+                    if (t == null || TextUtils.isEmpty(t.videoId)) continue;
+                    ids.add(t.videoId);
+                    titles.add(TextUtils.isEmpty(t.title) ? "Tema" : t.title);
+                    artists.add(t.artist == null ? "" : t.artist);
+                    durations.add(TextUtils.isEmpty(t.duration) ? "--:--" : t.duration);
+                    images.add(t.thumbnailUrl == null ? "" : t.thumbnailUrl);
+                }
+
+                if (ids.isEmpty()) {
+                    android.widget.Toast.makeText(requireContext(), "La playlist está vacía", android.widget.Toast.LENGTH_SHORT).show();
+                    return;
+                }
+
+                startPlaybackQueue(ids, titles, artists, durations, images, 0);
+            }
+
+            @Override
+            public void onError(String error) {
+                if (!isAdded()) return;
+                android.widget.Toast.makeText(requireContext(), "No se pudo cargar la playlist", android.widget.Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    private void startPlaybackQueue(
+            @NonNull ArrayList<String> ids,
+            @NonNull ArrayList<String> titles,
+            @NonNull ArrayList<String> artists,
+            @NonNull ArrayList<String> durations,
+            @NonNull ArrayList<String> images,
+            int selectedIndex
+    ) {
+        if (!isAdded() || ids.isEmpty()) return;
+
+        int index = Math.max(0, Math.min(selectedIndex, ids.size() - 1));
+
+        if (llMiniPlayer != null) {
+            llMiniPlayer.setVisibility(View.GONE);
+        }
+
+        clearPersistedPositionForVideoId(ids.get(index));
+
+        SongPlayerFragment existingPlayer = findSongPlayerFragment();
+        if (existingPlayer != null && existingPlayer.isAdded()) {
+            existingPlayer.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
+            existingPlayer.externalReplaceQueueFromStart(ids, titles, artists, durations, images, index, true);
+
+            getParentFragmentManager()
+                    .beginTransaction()
+                    .setReorderingAllowed(true)
+                    // custom animations removed
+                    .hide(this)
+                    .show(existingPlayer)
+                    .commit();
+        } else {
+            SongPlayerFragment playerFragment = SongPlayerFragment.newInstance(
+                    ids,
+                    titles,
+                    artists,
+                    durations,
+                    images,
+                    index,
+                    true
+            );
+            playerFragment.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
+
+            getParentFragmentManager()
+                    .beginTransaction()
+                    .setReorderingAllowed(true)
+                    // custom animations removed
+                    .hide(this)
+                    .add(R.id.fragmentContainer, playerFragment, "song_player")
+                    .commit();
+        }
+
+        invalidateMiniSnapshotCache();
+    }
+
+    private void showDeletePlaylistConfirmDialog(@NonNull YouTubeMusicService.TrackResult playlistTrack) {
+        if (!isAdded()) return;
+        
+        new androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setTitle("Eliminar playlist")
+            .setMessage("¿Estás seguro de que quieres eliminar la playlist \"" + playlistTrack.title + "\"?")
+            .setPositiveButton("Eliminar", (dialog, which) -> {
+                boolean deleted = CustomPlaylistsStore.INSTANCE.deletePlaylist(requireContext(), playlistTrack.title);
+                if (deleted) {
+                    // Refresh library
+                    renderLibraryResults();
+                    android.widget.Toast.makeText(requireContext(), "Playlist eliminada", android.widget.Toast.LENGTH_SHORT).show();
+                } else {
+                    android.widget.Toast.makeText(requireContext(), "No se pudo eliminar la playlist", android.widget.Toast.LENGTH_SHORT).show();
+                }
+            })
+            .setNegativeButton("Cancelar", null)
+            .show();
+    }
+
+    private void deletePlaylistDownloads(@NonNull YouTubeMusicService.TrackResult playlistTrack) {
+        if (!isAdded()) return;
+        
+        String playlistId = playlistTrack.contentId == null ? "" : playlistTrack.contentId.trim();
+        if (playlistId.isEmpty()) return;
+        
+        // Get tracks from this playlist and delete their downloads
+        java.util.List<String> trackIds = new java.util.ArrayList<>();
+        
+        // Check if it's a custom playlist
+        java.util.List<String> customPlaylists = CustomPlaylistsStore.INSTANCE.getAllPlaylistNames(requireContext());
+        boolean isCustomPlaylist = false;
+        for (String name : customPlaylists) {
+            if (name.equalsIgnoreCase(playlistTrack.title)) {
+                isCustomPlaylist = true;
+                java.util.List<FavoritesPlaylistStore.FavoriteTrack> tracks = 
+                    CustomPlaylistsStore.INSTANCE.getTracksFromPlaylist(requireContext(), name);
+                for (FavoritesPlaylistStore.FavoriteTrack track : tracks) {
+                    if (!track.videoId.isEmpty()) {
+                        trackIds.add(track.videoId);
+                    }
+                }
+                break;
+            }
+        }
+        
+        // Delete offline audio for all tracks
+        int deleted = OfflineAudioStore.deleteOfflineAudio(requireContext(), trackIds);
+        
+        // Clear offline enabled state for this playlist
+        persistPlaylistOfflineAutoEnabled(playlistId, false);
+        persistPlaylistOfflineComplete(playlistId, false);
+        
+        // Refresh UI
+        if (adapter != null) {
+            adapter.invalidatePlaylistOfflineState(playlistId);
+        }
+        
+        String message = deleted > 0 ? "Eliminadas " + deleted + " descargas" : "No hay descargas para eliminar";
+        android.widget.Toast.makeText(requireContext(), message, android.widget.Toast.LENGTH_SHORT).show();
     }
 
     @NonNull

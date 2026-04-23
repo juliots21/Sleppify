@@ -20,12 +20,16 @@ object InnertubeResolver {
     
     // Una caché simple en memoria de corto plazo para URLs resueltas (evita re-resolución inmediata)
     private val urlCache = mutableMapOf<String, CachedUrl>()
-    private const val CACHE_EXPIRY_MS = 2 * 60 * 60 * 1000 // 2 horas (YouTube expira links rápido)
+    private const val CACHE_EXPIRY_MS = 6 * 60 * 60 * 1000 // 6 horas (links de YouTube duran más de lo esperado)
+    
+    // Retry configuration
+    private const val MAX_RETRY_ATTEMPTS = 3
+    private const val INITIAL_RETRY_DELAY_MS = 500L
 
     data class CachedUrl(val url: String, val timestamp: Long)
 
     /**
-     * Resuelve el enlace directo de audio.
+     * Resuelve el enlace directo de audio con retry automático.
      */
     @JvmStatic
     fun resolveStreamUrl(videoId: String?): String? {
@@ -38,44 +42,83 @@ object InnertubeResolver {
             return cached.url
         }
 
-        try {
-            val responseBody = performRequest(videoId) ?: return null
-            val json = JSONObject(responseBody)
-            
-            // Buscar en streamingData.adaptiveFormats
-            val streamingData = json.optJSONObject("streamingData") ?: return null
-            val adaptiveFormats = streamingData.optJSONArray("adaptiveFormats") ?: return null
-            
-            var bestUrl: String? = null
-            var bestBitrate = -1
-
-            for (i in 0 until adaptiveFormats.length()) {
-                val format = adaptiveFormats.getJSONObject(i)
-                val mimeType = format.optString("mimeType", "")
+        // Retry loop with exponential backoff
+        var lastException: Exception? = null
+        for (attempt in 1..MAX_RETRY_ATTEMPTS) {
+            try {
+                val result = resolveStreamUrlInternal(videoId)
+                if (result != null) {
+                    return result
+                }
                 
-                // Buscamos flujos de solo audio
-                if (mimeType.startsWith("audio/")) {
-                    val bitrate = format.optInt("bitrate", 0)
-                    val url = format.optString("url")
-                    
-                    // Priorizamos audio/mp4 o audio/webm con bitrate alto
-                    if (!url.isNullOrEmpty() && bitrate > bestBitrate) {
-                        bestBitrate = bitrate
-                        bestUrl = url
+                if (attempt < MAX_RETRY_ATTEMPTS) {
+                    val delay = INITIAL_RETRY_DELAY_MS * attempt
+                    Log.d(TAG, "Retry $attempt/$MAX_RETRY_ATTEMPTS for $videoId, delay=${delay}ms")
+                    Thread.sleep(delay)
+                }
+            } catch (e: Exception) {
+                lastException = e
+                if (attempt < MAX_RETRY_ATTEMPTS) {
+                    val delay = INITIAL_RETRY_DELAY_MS * attempt
+                    Log.w(TAG, "Attempt $attempt failed for $videoId: ${e.message}, retrying in ${delay}ms")
+                    try {
+                        Thread.sleep(delay)
+                    } catch (_: InterruptedException) {
+                        break
                     }
                 }
             }
-
-            if (bestUrl != null) {
-                urlCache[videoId] = CachedUrl(bestUrl, System.currentTimeMillis())
-            }
-
-            return bestUrl
-        } catch (e: Exception) {
-            Log.e(TAG, "Error resolviendo InnerTube para $videoId: ${e.message}")
         }
+        
+        Log.e(TAG, "All $MAX_RETRY_ATTEMPTS attempts failed for $videoId", lastException)
         return null
     }
+    
+    private fun resolveStreamUrlInternal(videoId: String): String? {
+        val responseBody = performRequest(videoId) ?: return null
+        val json = JSONObject(responseBody)
+        
+        // Buscar en streamingData.adaptiveFormats
+        val streamingData = json.optJSONObject("streamingData") ?: return null
+        val adaptiveFormats = streamingData.optJSONArray("adaptiveFormats") 
+            ?: streamingData.optJSONArray("formats") 
+            ?: return null
+        
+        // Coleccionar todos los formatos de audio disponibles
+        val audioFormats = mutableListOf<AudioFormat>()
+
+        for (i in 0 until adaptiveFormats.length()) {
+            val format = adaptiveFormats.getJSONObject(i)
+            val mimeType = format.optString("mimeType", "")
+            
+            // Buscamos flujos de solo audio
+            if (mimeType.startsWith("audio/")) {
+                val bitrate = format.optInt("bitrate", 0)
+                val url = format.optString("url", "")
+                
+                if (url.isNotEmpty()) {
+                    audioFormats.add(AudioFormat(url, bitrate, mimeType))
+                }
+            }
+        }
+
+        if (audioFormats.isEmpty()) {
+            Log.w(TAG, "No audio formats found for $videoId")
+            return null
+        }
+
+        // Ordenar por bitrate (mayor calidad primero)
+        audioFormats.sortByDescending { it.bitrate }
+        
+        // Intentar el mejor formato disponible
+        val bestFormat = audioFormats.first()
+        Log.d(TAG, "Selected audio format: bitrate=${bestFormat.bitrate}, mime=${bestFormat.mimeType} for $videoId")
+        
+        urlCache[videoId] = CachedUrl(bestFormat.url, System.currentTimeMillis())
+        return bestFormat.url
+    }
+    
+    data class AudioFormat(val url: String, val bitrate: Int, val mimeType: String)
 
     private fun performRequest(videoId: String): String? {
         var connection: HttpURLConnection? = null
@@ -84,8 +127,8 @@ object InnertubeResolver {
             connection = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 doOutput = true
-                connectTimeout = 10000
-                readTimeout = 15000
+                connectTimeout = 8000  // Reduced from 10000 for faster failure
+                readTimeout = 12000    // Reduced from 15000 for faster failure
                 setRequestProperty("Content-Type", "application/json")
                 setRequestProperty("User-Agent", "com.google.android.apps.youtube.music/6.42.51 (Linux; U; Android 14; es_US; Pixel 7 Pro; Build/UQ1A.240205.002; Cronet/121.0.6167.71)")
             }

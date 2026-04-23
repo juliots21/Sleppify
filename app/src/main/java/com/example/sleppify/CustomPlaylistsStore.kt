@@ -112,4 +112,25 @@ object CustomPlaylistsStore {
         }
         return tracks
     }
+
+    fun deletePlaylist(context: Context, name: String): Boolean {
+        val trimmed = name.trim()
+        if (TextUtils.isEmpty(trimmed)) return false
+        
+        val prefs = getPrefs(context)
+        val names = getAllPlaylistNames(context).toMutableList()
+        val index = names.indexOfFirst { it.equals(trimmed, ignoreCase = true) }
+        if (index < 0) return false
+        
+        // Remove from names list
+        names.removeAt(index)
+        prefs.edit().putString(KEY_PLAYLIST_NAMES, JSONArray(names).toString()).apply()
+        
+        // Remove playlist tracks data
+        val key = CUSTOM_PLAYLIST_PREFIX + trimmed
+        prefs.edit().remove(key).apply()
+        
+        // Note: Cloud sync deletion can be added here when implemented
+        return true
+    }
 }
