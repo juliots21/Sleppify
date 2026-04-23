@@ -36,27 +36,8 @@ class AudioEffectsService : Service() {
 
         when (action) {
             ACTION_APPLY -> {
-                val sessionId = intent.getIntExtra(EXTRA_AUDIO_SESSION_ID, GLOBAL_SESSION_ID)
+                val sessionId = intent?.getIntExtra(EXTRA_AUDIO_SESSION_ID, GLOBAL_SESSION_ID) ?: GLOBAL_SESSION_ID
                 applyEffects(sessionId)
-            }
-            ACTION_START_FOREGROUND -> {
-                val notificationId = intent.getIntExtra(EXTRA_NOTIFICATION_ID, 0)
-                val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableExtra(EXTRA_NOTIFICATION, android.app.Notification::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableExtra(EXTRA_NOTIFICATION)
-                }
-                if (notification != null && notificationId != 0) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        startForeground(notificationId, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
-                    } else {
-                        startForeground(notificationId, notification)
-                    }
-                }
-            }
-            ACTION_STOP_FOREGROUND -> {
-                stopForeground(intent.getBooleanExtra(EXTRA_REMOVE_NOTIFICATION, true))
             }
             ACTION_STOP -> {
                 releaseEngine()
@@ -309,13 +290,8 @@ class AudioEffectsService : Service() {
 
         const val ACTION_APPLY = "com.example.sleppify.action.APPLY_EFFECTS"
         const val ACTION_STOP = "com.example.sleppify.action.STOP_EFFECTS"
-        const val ACTION_START_FOREGROUND = "com.example.sleppify.action.START_FOREGROUND"
-        const val ACTION_STOP_FOREGROUND = "com.example.sleppify.action.STOP_FOREGROUND"
 
         const val EXTRA_AUDIO_SESSION_ID = "extra_audio_session_id"
-        const val EXTRA_NOTIFICATION_ID = "extra_notification_id"
-        const val EXTRA_NOTIFICATION = "extra_notification"
-        const val EXTRA_REMOVE_NOTIFICATION = "extra_remove_notification"
 
         const val PREFS_NAME = "global_eq_prefs"
 
@@ -353,39 +329,9 @@ class AudioEffectsService : Service() {
             return cutoffHz.coerceIn(BASS_FREQUENCY_MIN_HZ, BASS_FREQUENCY_MAX_HZ)
         }
 
-        @JvmStatic
-        fun startForeground(context: Context, notificationId: Int, notification: android.app.Notification) {
-            val intent = Intent(context, AudioEffectsService::class.java).apply {
-                action = ACTION_START_FOREGROUND
-                putExtra(EXTRA_NOTIFICATION_ID, notificationId)
-                putExtra(EXTRA_NOTIFICATION, notification)
-            }
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    context.startForegroundService(intent)
-                } else {
-                    context.startService(intent)
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "startForeground:failed", e)
-            }
-        }
-
-        @JvmStatic
-        fun stopForeground(context: Context, removeNotification: Boolean) {
-            val intent = Intent(context, AudioEffectsService::class.java).apply {
-                action = ACTION_STOP_FOREGROUND
-                putExtra(EXTRA_REMOVE_NOTIFICATION, removeNotification)
-            }
-            try {
-                context.startService(intent)
-            } catch (e: Exception) {
-                Log.w(TAG, "stopForeground:failed", e)
-            }
-        }
-
         /**
-         * Sends an apply intent to the service, optionally with a specific audio session.
+         * Starts the EQ engine as a plain background service (no foreground, no notification).
+         * Uses startService() on all API levels — session 0 DSP does not require foreground.
          */
         @JvmStatic
         @JvmOverloads
@@ -394,8 +340,6 @@ class AudioEffectsService : Service() {
             val enabled = prefs.getBoolean(KEY_ENABLED, false)
 
             if (!enabled) {
-                // Do not attempt to start foreground service if EQ is disabled.
-                // Just send a stop signal to clean up if it was running.
                 sendStop(context)
                 return
             }
@@ -405,11 +349,7 @@ class AudioEffectsService : Service() {
                 putExtra(EXTRA_AUDIO_SESSION_ID, audioSessionId)
             }
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    context.startForegroundService(intent)
-                } else {
-                    context.startService(intent)
-                }
+                context.startService(intent)
             } catch (e: Exception) {
                 Log.w(TAG, "sendApply:failed", e)
             }

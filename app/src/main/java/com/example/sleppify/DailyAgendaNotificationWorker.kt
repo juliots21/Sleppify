@@ -23,9 +23,7 @@ import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicReference
 
 class DailyAgendaNotificationWorker(context: Context, workerParams: WorkerParameters) : Worker(context, workerParams) {
 
@@ -62,46 +60,10 @@ class DailyAgendaNotificationWorker(context: Context, workerParams: WorkerParame
             return Result.success()
         }
 
-        val profileName = resolveProfileName(context)
-        val todaySnapshot = buildTodaySnapshot(todayTasks)
-
-        if (GeminiIntelligenceService.isSuspended()) {
-            val fallback = buildFallbackSummary(todayTasks)
-            notifyTodaySummary(context, fallback, todayTasks.size)
-            return Result.success()
-        }
-
-        val aiMessageRef = AtomicReference<String?>(null)
-        val latch = CountDownLatch(1)
-
-        GeminiIntelligenceService().generateTodayAgendaSummary(
-            profileName,
-            todaySnapshot,
-            object : GeminiIntelligenceService.TodayAgendaSummaryCallback {
-                override fun onSuccess(message: String) {
-                    aiMessageRef.set(message)
-                    latch.countDown()
-                }
-
-                override fun onError(error: String) {
-                    latch.countDown()
-                }
-            }
-        )
-
-        val completed = try {
-            latch.await(25, TimeUnit.SECONDS)
-        } catch (_: InterruptedException) {
-            Thread.currentThread().interrupt()
-            false
-        }
-
-        var aiMessage = aiMessageRef.get()
-        if (!completed || aiMessage.isNullOrBlank()) {
-            aiMessage = buildFallbackSummary(todayTasks)
-        }
-
-        notifyTodaySummary(context, aiMessage, todayTasks.size)
+        // AI is intentionally NOT invoked from background workers. Per product rule,
+        // the only allowed Gemini triggers are pull-to-refresh and task creation.
+        val summary = buildFallbackSummary(todayTasks)
+        notifyTodaySummary(context, summary, todayTasks.size)
         return Result.success()
     }
 

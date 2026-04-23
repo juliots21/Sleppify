@@ -5,9 +5,6 @@ import android.text.TextUtils
 import androidx.work.Data
 import androidx.work.Worker
 import androidx.work.WorkerParameters
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicReference
 
 class TaskReminderPrepareWorker(context: Context, workerParams: WorkerParameters) : Worker(context, workerParams) {
 
@@ -35,51 +32,10 @@ class TaskReminderPrepareWorker(context: Context, workerParams: WorkerParameters
             return Result.success()
         }
 
-        val profileName = resolveProfileName(context)
-        val snapshot = buildTaskSnapshot(taskTitle!!, taskDesc, taskTime, dateKey)
-
-        if (GeminiIntelligenceService.isSuspended()) {
-            val fallback = buildFallbackSummary(taskTitle, taskDesc, taskTime)
-            cachePrefs.edit()
-                .putString(TaskReminderConstants.KEY_SUMMARY_PREFIX + reminderId, fallback)
-                .putLong(TaskReminderConstants.KEY_SUMMARY_TS_PREFIX + reminderId, System.currentTimeMillis())
-                .apply()
-            return Result.success()
-        }
-
-        val aiMessageRef = AtomicReference<String?>(null)
-        val latch = CountDownLatch(1)
-
-        GeminiIntelligenceService().generateTodayAgendaSummary(
-            profileName,
-            snapshot,
-            object : GeminiIntelligenceService.TodayAgendaSummaryCallback {
-                override fun onSuccess(message: String) {
-                    aiMessageRef.set(message)
-                    latch.countDown()
-                }
-
-                override fun onError(error: String) {
-                    latch.countDown()
-                }
-            }
-        )
-
-        val completed = try {
-            latch.await(20, TimeUnit.SECONDS)
-        } catch (_: InterruptedException) {
-            Thread.currentThread().interrupt()
-            return Result.retry()
-        }
-
-        var summary = aiMessageRef.get()
-        if (!completed || summary.isNullOrBlank()) {
-            val nowMs = System.currentTimeMillis()
-            if (notifyAtMs > nowMs + 15_000L) {
-                return Result.retry()
-            }
-            summary = buildFallbackSummary(taskTitle, taskDesc, taskTime)
-        }
+        // AI is intentionally NOT invoked from background workers. Per product rule,
+        // the only allowed Gemini triggers are pull-to-refresh and task creation.
+        // This worker now always builds a local fallback summary.
+        val summary = buildFallbackSummary(taskTitle!!, taskDesc, taskTime)
 
         cachePrefs.edit()
             .putString(TaskReminderConstants.KEY_SUMMARY_PREFIX + reminderId, summary)

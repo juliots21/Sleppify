@@ -41,10 +41,42 @@ class GeminiIntelligenceService {
         private val KEY_ROTATION_CURSOR = AtomicInteger(0)
 
         // CIRCUIT BREAKER STATE
-        private var serviceSuspendedUntilMs: Long = 0
+        @Volatile private var serviceSuspendedUntilMs: Long = 0
         private val KEY_COOLDOWNS = ConcurrentHashMap<Int, Long>()
         private const val GLOBAL_COOLDOWN_MS = 5 * 60 * 1000L // 5 minutes
         private const val KEY_COOLDOWN_MS = 3 * 60 * 1000L    // 3 minutes
+
+        // USER-INITIATED CALL BUDGET GATE
+        // The only way to reach the network is via explicit user action
+        // (pull-to-refresh or creating a task), which "arms" a budget.
+        // Every network call consumes exactly one unit. No units left => no call.
+        private val armedBudget = AtomicInteger(0)
+
+        /**
+         * Arms up to [n] future network calls. Callers must invoke this from an
+         * explicit user action (pull-to-refresh or task creation). Also clears
+         * the global suspension so the user can retry after quota cooldowns.
+         */
+        @JvmStatic
+        fun armCalls(n: Int) {
+            if (n <= 0) return
+            armedBudget.updateAndGet { current -> (current + n).coerceAtMost(32) }
+            serviceSuspendedUntilMs = 0
+        }
+
+        @JvmStatic
+        fun clearArmedCalls() { armedBudget.set(0) }
+
+        @JvmStatic
+        fun armedCallsRemaining(): Int = armedBudget.get()
+
+        private fun consumeArmedCall(): Boolean {
+            while (true) {
+                val c = armedBudget.get()
+                if (c <= 0) return false
+                if (armedBudget.compareAndSet(c, c - 1)) return true
+            }
+        }
 
         @JvmStatic
         fun isSuspended(): Boolean = System.currentTimeMillis() < serviceSuspendedUntilMs
@@ -204,9 +236,15 @@ class GeminiIntelligenceService {
         onError: (String) -> Unit
     ) {
         serviceScope.launch {
+            if (!consumeArmedCall()) {
+                Log.w(TAG, "AI call blocked (no armed budget). Skipping $label.")
+                withContext(Dispatchers.Main) { onError("IA solo se actualiza al crear una tarea o al hacer pull to refresh.") }
+                return@launch
+            }
+
             if (isSuspended()) {
                 Log.w(TAG, "AI Service suspended. Skipping $label.")
-                onError("IA en pausa temporal (Cuota agotada)")
+                withContext(Dispatchers.Main) { onError("IA en pausa temporal (Cuota agotada)") }
                 return@launch
             }
 
@@ -214,18 +252,20 @@ class GeminiIntelligenceService {
                 performRotationRequest(promptText, label)
             }
 
-            when (result) {
-                is RequestResponse.Success -> {
-                    try {
-                        val parsed = parser(result.text)
-                        onSuccess(parsed)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "$label parse error: ${e.message}")
-                        onError(parseErr)
+            withContext(Dispatchers.Main) {
+                when (result) {
+                    is RequestResponse.Success -> {
+                        try {
+                            val parsed = parser(result.text)
+                            onSuccess(parsed)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "$label parse error: ${e.message}")
+                            onError(parseErr)
+                        }
                     }
-                }
-                is RequestResponse.Error -> {
-                    onError(result.message)
+                    is RequestResponse.Error -> {
+                        onError(result.message)
+                    }
                 }
             }
         }
@@ -238,23 +278,18 @@ class GeminiIntelligenceService {
         val now = System.currentTimeMillis()
         var consecutiveConnErrors = 0
 
-        // Limit rotation to first 2 available keys to prevent API saturation
-        val maxRotationAttempts = 2
+        // Rotation is user-gated upstream (armCalls). Try every available key.
         var attempts = 0
         for (model in MODELS) {
             for (offset in API_KEYS.indices) {
-                if (attempts >= maxRotationAttempts) {
-                    Log.w(TAG, "Reached max rotation attempts ($maxRotationAttempts). Stopping.")
-                    break
-                }
                 val keyIdx = (startIdx + offset) % API_KEYS.size
-                
+
                 // Key cooldown check
                 if ((KEY_COOLDOWNS[keyIdx] ?: 0) > now) continue
 
                 attempts++
                 val apiKey = API_KEYS[keyIdx]
-                Log.d(TAG, "Trying $label [model=$model, key=$keyIdx, attempt=$attempts/$maxRotationAttempts]...")
+                Log.d(TAG, "Trying $label [model=$model, key=$keyIdx, attempt=$attempts]...")
 
                 val result = tryOneRequest(model, apiKey, promptText)
                 if (result.isSuccess) {
@@ -280,7 +315,6 @@ class GeminiIntelligenceService {
                     if (result.code > 0) lastHttpError = "Error HTTP ${result.code}"
                 }
             }
-            if (attempts >= maxRotationAttempts) break
         }
         return RequestResponse.Error(lastHttpError)
     }

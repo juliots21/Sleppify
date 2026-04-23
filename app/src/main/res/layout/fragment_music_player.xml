@@ -85,100 +85,6 @@
                 app:tint="@color/text_secondary" />
     </LinearLayout>
 
-    <HorizontalScrollView
-        android:id="@+id/hsvLibraryFilters"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:elevation="4dp"
-        android:background="@color/surface_dark"
-        android:scrollbars="none"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/llLibraryInlineSearch">
-
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:background="@drawable/bg_music_chip_active"
-                android:paddingHorizontal="14dp"
-                android:paddingVertical="8dp"
-                android:text="Playlists"
-                android:textColor="#13254A"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:alpha="0.48"
-                android:background="@drawable/bg_music_chip_inactive"
-                android:clickable="false"
-                android:enabled="false"
-                android:focusable="false"
-                android:importantForAccessibility="no"
-                android:paddingHorizontal="14dp"
-                android:paddingVertical="8dp"
-                android:text="Artists"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:alpha="0.48"
-                android:background="@drawable/bg_music_chip_inactive"
-                android:clickable="false"
-                android:enabled="false"
-                android:focusable="false"
-                android:importantForAccessibility="no"
-                android:paddingHorizontal="14dp"
-                android:paddingVertical="8dp"
-                android:text="Albums"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:alpha="0.48"
-                android:background="@drawable/bg_music_chip_inactive"
-                android:clickable="false"
-                android:enabled="false"
-                android:focusable="false"
-                android:importantForAccessibility="no"
-                android:paddingHorizontal="14dp"
-                android:paddingVertical="8dp"
-                android:text="Podcasts"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-        </LinearLayout>
-    </HorizontalScrollView>
-
-    <View
-        android:id="@+id/vLibraryTopSolid"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:background="@color/surface_dark"
-        android:clickable="false"
-        android:elevation="3dp"
-        android:focusable="false"
-        android:importantForAccessibility="no"
-        app:layout_constraintBottom_toBottomOf="@id/hsvLibraryFilters"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
 
     <LinearLayout
         android:id="@+id/llMusicState"
@@ -191,7 +97,7 @@
         android:orientation="horizontal"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/hsvLibraryFilters">
+        app:layout_constraintTop_toBottomOf="@id/llLibraryInlineSearch">
 
         <ProgressBar
             android:id="@+id/progressMusic"
@@ -364,7 +270,7 @@
         android:layout_height="0dp"
         android:layout_marginTop="10dp"
         android:clipToPadding="false"
-        android:paddingBottom="12dp"
+        android:paddingBottom="96dp"
         app:layout_constraintBottom_toTopOf="@id/llMiniPlayer"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"

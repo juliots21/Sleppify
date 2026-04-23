@@ -271,7 +271,8 @@ class MainActivity : AppCompatActivity() {
         if (loginGateContainer?.visibility == View.VISIBLE && !signedIn) return
 
         showMainShell()
-        if (signedIn) prefetchSmartSuggestions(false)
+        // AI prefetch deliberately disabled here: the only allowed triggers are
+        // pull-to-refresh in the agenda and task creation (see WeeklySchedulerFragment).
     }
 
     private fun applyThemeModeFromSettings() {
@@ -479,7 +480,7 @@ class MainActivity : AppCompatActivity() {
                 notifyHydrationCompleted()
                 syncAudioEffectsServiceFromPreferences(true)
                 syncDailyAgendaNotificationSchedule(true)
-                prefetchSmartSuggestions(true)
+                // AI prefetch intentionally removed here to avoid burning quota on sync.
                 onSuccess?.run()
             }
         }

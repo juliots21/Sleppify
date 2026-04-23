@@ -505,7 +505,6 @@ public class MusicPlayerFragment extends Fragment {
     private LinearLayout llSearchRow;
     private View llLibraryInlineSearch;
     private View tvLibraryTitle;
-    private View hsvLibraryFilters;
     private View llMusicState;
     private View hsvFilterChips;
     private View llSearchOverlay;
@@ -761,7 +760,6 @@ public class MusicPlayerFragment extends Fragment {
 
         llLibraryInlineSearch = view.findViewById(R.id.llLibraryInlineSearch);
         tvLibraryTitle = view.findViewById(R.id.tvLibraryTitle);
-        hsvLibraryFilters = view.findViewById(R.id.hsvLibraryFilters);
         llMusicState = view.findViewById(R.id.llMusicState);
         ivLibraryQuickClear = view.findViewById(R.id.ivLibraryQuickClear);
         etLibraryQuickSearch = view.findViewById(R.id.etLibraryQuickSearch);
@@ -876,8 +874,11 @@ public class MusicPlayerFragment extends Fragment {
 
         llMiniPlayer.setOnClickListener(v -> openPlayerFromMiniBar());
         btnMiniPlayPause.setOnClickListener(v -> toggleMiniPlayback());
-        maybeRestoreHiddenMiniPlayerFromPausedSnapshot();
-        updateMiniPlayerUi();
+        view.post(() -> {
+            if (!isAdded() || isRemoving() || isDetached()) return;
+            maybeRestoreHiddenMiniPlayerFromPausedSnapshot();
+            updateMiniPlayerUi();
+        });
         startMiniProgressTicker();
     }
 
@@ -1074,10 +1075,12 @@ public class MusicPlayerFragment extends Fragment {
                 .setReorderingAllowed(true)
                 .add(R.id.fragmentContainer, playerFragment, "song_player")
                 .hide(playerFragment)
-                .commitNow();
-        restoringHiddenMiniPlayerFromSnapshot = false;
-        invalidateMiniSnapshotCache();
-        updateMiniPlayerUi();
+                .runOnCommit(() -> {
+                    restoringHiddenMiniPlayerFromSnapshot = false;
+                    invalidateMiniSnapshotCache();
+                    updateMiniPlayerUi();
+                })
+                .commit();
     }
 
     private void switchScreen(@NonNull ScreenMode mode) {
@@ -1876,7 +1879,6 @@ public class MusicPlayerFragment extends Fragment {
         featuredTrack = null;
         llFeaturedResult.setVisibility(View.GONE);
         if (tvLibraryTitle != null) tvLibraryTitle.setVisibility(View.VISIBLE);
-        if (hsvLibraryFilters != null) hsvLibraryFilters.setVisibility(View.VISIBLE);
         if (llLibraryInlineSearch != null) llLibraryInlineSearch.setVisibility(View.VISIBLE);
         llLibraryEmptyState.setVisibility(View.GONE);
         updateLibraryInlineClearButton();
@@ -1913,7 +1915,6 @@ public class MusicPlayerFragment extends Fragment {
 
     private void showLibraryEmptyState() {
         if (tvLibraryTitle != null) tvLibraryTitle.setVisibility(View.GONE);
-        if (hsvLibraryFilters != null) hsvLibraryFilters.setVisibility(View.GONE);
         if (llLibraryInlineSearch != null) llLibraryInlineSearch.setVisibility(View.GONE);
         if (ivLibraryQuickClear != null) ivLibraryQuickClear.setVisibility(View.GONE);
         llMusicStateVisible(false);
@@ -1974,8 +1975,7 @@ public class MusicPlayerFragment extends Fragment {
         libraryInlinePendingReveal = false;
 
         if (tvLibraryTitle != null) tvLibraryTitle.setVisibility(View.VISIBLE);
-        if (hsvLibraryFilters != null) hsvLibraryFilters.setVisibility(View.VISIBLE);
-        if (llLibraryInlineSearch != null) llLibraryInlineSearch.setVisibility(View.VISIBLE);
+        llLibraryInlineSearch.setVisibility(View.VISIBLE);
         llLibraryEmptyState.setVisibility(View.GONE);
         updateLibraryInlineClearButton();
 
@@ -2005,7 +2005,6 @@ public class MusicPlayerFragment extends Fragment {
         }
 
         if (tvLibraryTitle != null) tvLibraryTitle.setVisibility(View.VISIBLE);
-        if (hsvLibraryFilters != null) hsvLibraryFilters.setVisibility(View.VISIBLE);
         if (llLibraryInlineSearch != null) llLibraryInlineSearch.setVisibility(View.VISIBLE);
         llLibraryEmptyState.setVisibility(View.GONE);
         updateLibraryInlineClearButton();
@@ -2112,7 +2111,6 @@ public class MusicPlayerFragment extends Fragment {
         }
 
         if (tvLibraryTitle != null) tvLibraryTitle.setVisibility(View.VISIBLE);
-        if (hsvLibraryFilters != null) hsvLibraryFilters.setVisibility(View.VISIBLE);
         if (llLibraryInlineSearch != null) llLibraryInlineSearch.setVisibility(View.VISIBLE);
         llLibraryEmptyState.setVisibility(View.GONE);
         updateLibraryInlineClearButton();
@@ -2153,7 +2151,6 @@ public class MusicPlayerFragment extends Fragment {
         }
 
         if (tvLibraryTitle != null) tvLibraryTitle.setVisibility(View.VISIBLE);
-        if (hsvLibraryFilters != null) hsvLibraryFilters.setVisibility(View.VISIBLE);
         if (llLibraryInlineSearch != null) llLibraryInlineSearch.setVisibility(View.VISIBLE);
         llLibraryEmptyState.setVisibility(View.GONE);
         updateLibraryInlineClearButton();
@@ -3997,7 +3994,7 @@ public class MusicPlayerFragment extends Fragment {
         }
 
         String[] array = displayNames.toArray(new String[0]);
-        new androidx.appcompat.app.AlertDialog.Builder(requireContext(), R.style.Theme_Sleppify)
+        new com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
             .setTitle("Añadir a playlist")
             .setItems(array, (dialog, which) -> {
                 if (which < localNames.size()) {
@@ -5789,7 +5786,7 @@ public class MusicPlayerFragment extends Fragment {
         int padding = (int) (16 * getResources().getDisplayMetrics().density);
         input.setPadding(padding, padding, padding, padding);
 
-        new androidx.appcompat.app.AlertDialog.Builder(requireContext(), R.style.Theme_Sleppify)
+        new com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
                 .setTitle("Crear nueva playlist")
                 .setView(input)
                 .setPositiveButton("Crear", (dialog, which) -> {
@@ -5798,7 +5795,7 @@ public class MusicPlayerFragment extends Fragment {
                         boolean success = CustomPlaylistsStore.INSTANCE.createPlaylist(requireContext(), name);
                         if (success) {
                             android.widget.Toast.makeText(requireContext(), "Playlist creada", android.widget.Toast.LENGTH_SHORT).show();
-                            fetchLibraryPlaylists(true); // reload playlists
+                            fetchLibraryPlaylists(true);
                         } else {
                             android.widget.Toast.makeText(requireContext(), "La playlist ya existe", android.widget.Toast.LENGTH_SHORT).show();
                         }

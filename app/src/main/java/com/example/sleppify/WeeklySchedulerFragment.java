@@ -95,8 +95,8 @@ public class WeeklySchedulerFragment extends Fragment {
     private static final String DEFAULT_TASK_CATEGORY = "";
     private static final String PENDING_TASK_CATEGORY = "Generando categoria con IA...";
     private static final String FALLBACK_TASK_CATEGORY = "Otros";
-    private static final String TASK_METADATA_ERROR_DESCRIPTION = "Sin descripción";
-    private static final String TASK_METADATA_ERROR_CATEGORY = "Fallback";
+    private static final String TASK_METADATA_ERROR_DESCRIPTION = "Descripción pendiente por generar con IA";
+    private static final String TASK_METADATA_ERROR_CATEGORY = "Pendiente";
     private static final int TASK_METADATA_MAX_RETRIES = 2;
     private static final int TASK_METADATA_BACKFILL_LIMIT = 6;
     private static final int TASK_METADATA_PULL_REFRESH_LIMIT = 24;
@@ -438,6 +438,8 @@ public class WeeklySchedulerFragment extends Fragment {
         }
 
         setAgendaPullRefreshState(true);
+        // Only allowed entry point (besides task creation) that may hit the AI network.
+        GeminiIntelligenceService.armCalls(TASK_METADATA_PULL_REFRESH_LIMIT + 1);
         forceRefreshIntelligentNotesOnPullRefresh();
         if (cloudSyncManager.isCloudEnabledForCurrentUser()) {
             cloudSyncManager.refreshAgendaFromCloud((success, message) -> {
@@ -995,6 +997,12 @@ public class WeeklySchedulerFragment extends Fragment {
                 persistAgenda();
                 renderFutureTasksLayer();
 
+                // Task creation is one of the two allowed AI triggers. Fire it here.
+                // If keys are burned, the service will return an error immediately and
+                // enrichTaskWithAiMetadataInBackground.onError will apply a local fallback.
+                // Later, pull-to-refresh will detect the fallback (placeholder) and upgrade it.
+                requestTaskMetadataEnrichment(saveKey, createdTask, allowDescriptionOverride);
+
                 selectDayByDate(saveKey, dialogDate[0]);
                 bottomSheetDialog.dismiss();
             }
@@ -1008,9 +1016,23 @@ public class WeeklySchedulerFragment extends Fragment {
             @NonNull Task task,
             boolean allowDescriptionOverride
     ) {
+        requestTaskMetadataEnrichment(dateKey, task, allowDescriptionOverride, true);
+    }
+
+    private void requestTaskMetadataEnrichment(
+            @NonNull String dateKey,
+            @NonNull Task task,
+            boolean allowDescriptionOverride,
+            boolean armBudget
+    ) {
         String requestKey = buildTaskMetadataRequestKey(dateKey, task);
         if (!pendingTaskMetadataRequests.add(requestKey)) {
             return;
+        }
+        if (armBudget) {
+            // Task creation is the only path that arms its own call;
+            // pull-to-refresh arms the full batch budget before backfill begins.
+            GeminiIntelligenceService.armCalls(1);
         }
         enrichTaskWithAiMetadataInBackground(dateKey, task, allowDescriptionOverride, 0, requestKey);
     }
@@ -1133,6 +1155,8 @@ public class WeeklySchedulerFragment extends Fragment {
         boolean changed = false;
 
         if (allowDescriptionOverride && isPlaceholderDescription(task.desc)) {
+            // Single clean fallback. Detected as placeholder so pull-to-refresh will
+            // replace it with real AI output once tokens are available again.
             String fallbackDescription = TASK_METADATA_ERROR_DESCRIPTION;
             if (!TextUtils.equals(task.desc, fallbackDescription)) {
                 task.desc = fallbackDescription;
@@ -1255,7 +1279,11 @@ public class WeeklySchedulerFragment extends Fragment {
         String lower = normalized.toLowerCase(SPANISH_LOCALE);
         return lower.startsWith("organizar y completar:")
                 || lower.equals("organizar esta tarea y completarla durante el dia.")
-                || lower.equals("organizar esta tarea y completarla durante el dia");
+                || lower.equals("organizar esta tarea y completarla durante el dia")
+                || lower.startsWith("completar ") && lower.endsWith(" con un paso concreto y medible.")
+                || lower.equals("definir un siguiente paso claro y completar esta tarea hoy.")
+                || lower.equals("descripcion pendiente por generar con ia")
+                || lower.equals("descripción pendiente por generar con ia");
     }
 
     private boolean isPlaceholderCategory(@Nullable String category) {
@@ -1288,6 +1316,7 @@ public class WeeklySchedulerFragment extends Fragment {
             || "general".equals(lower)
             || "misc".equals(lower)
             || "sin".equals(lower)
+            || "pendiente".equals(lower)
             || lower.startsWith("generando");
     }
 
@@ -1335,7 +1364,7 @@ public class WeeklySchedulerFragment extends Fragment {
                     continue;
                 }
 
-                requestTaskMetadataEnrichment(dateKey, task, isPlaceholderDescription(task.desc));
+                requestTaskMetadataEnrichment(dateKey, task, isPlaceholderDescription(task.desc), false);
                 requested++;
                 if (maxRequests > 0 && requested >= maxRequests) {
                     return;

@@ -3534,9 +3534,11 @@ public class PlaylistDetailFragment extends Fragment {
                 .setReorderingAllowed(true)
                 .add(R.id.fragmentContainer, playerFragment, "song_player")
                 .hide(playerFragment)
-                .commitNow();
-        restoringHiddenPlayerFromSnapshot = false;
-        updateMiniPlayerUi();
+                .runOnCommit(() -> {
+                    restoringHiddenPlayerFromSnapshot = false;
+                    updateMiniPlayerUi();
+                })
+                .commit();
 
         currentTrackIndex = displayIndex;
         miniPlaying = snapshot.isPlaying;
@@ -3737,23 +3739,31 @@ public class PlaylistDetailFragment extends Fragment {
         );
         playerFragment.externalSetReturnTargetTag(TAG_PLAYLIST_DETAIL);
 
+        final ArrayList<String> replayIds = ids;
+        final ArrayList<String> replayTitles = titles;
+        final ArrayList<String> replayArtists = artists;
+        final ArrayList<String> replayDurations = durations;
+        final ArrayList<String> replayImages = images;
+        final int replaySnapshotIndex = snapshotIndex;
+        final boolean replayStartPlaying = startPlaying;
         getParentFragmentManager()
                 .beginTransaction()
                 .setReorderingAllowed(true)
                 .add(R.id.fragmentContainer, playerFragment, "song_player")
                 .hide(playerFragment)
-                .commitNow();
-
-        playerFragment.externalReplaceQueue(
-                ids,
-                titles,
-                artists,
-                durations,
-                images,
-                snapshotIndex,
-                startPlaying
-        );
-        updateMiniPlayerUi();
+                .runOnCommit(() -> {
+                    playerFragment.externalReplaceQueue(
+                            replayIds,
+                            replayTitles,
+                            replayArtists,
+                            replayDurations,
+                            replayImages,
+                            replaySnapshotIndex,
+                            replayStartPlaying
+                    );
+                    updateMiniPlayerUi();
+                })
+                .commit();
 
         int displayIndex = findTrackIndexFromSnapshot(currentTracks, snapshot);
         currentTrackIndex = displayIndex;

@@ -1179,7 +1179,6 @@ public class SongPlayerFragment extends Fragment {
                 updateMediaSessionState();
                 updateMediaNotification();
                 persistPlaybackSnapshot(false);
-                AudioEffectsService.stopForeground(persistentAppContext, false);
             }
 
             @Override
@@ -1931,6 +1930,7 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
+        int resumeSeconds = currentSeconds; // preserve any position loaded by bindCurrentTrack(true)
         currentSeconds = 0;
         totalSeconds = 1;
         
@@ -1943,10 +1943,13 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
-        // Bind metadata immediately and FORCE currentSeconds=0
+        // Bind metadata. forceZero=true resets UI to 0, but we restore resume position after.
         // NOTE: Do NOT call showPlayerArtworkLoadingState() here — keep old cover visible
         // until the new one loads via Glide, preventing the black flash.
         bindCurrentTrackInternal(false, true);
+        if (resumeSeconds > 0) {
+            currentSeconds = resumeSeconds;
+        }
         
         cancelOfflineCrossfade();
         resetPlaybackStateForNewTrack();
@@ -2160,11 +2163,10 @@ public class SongPlayerFragment extends Fragment {
                 .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                 .build());
 
-        // Publish audio session to DSP engine for EQ processing
+        // Re-affirm EQ on the global session (session 0) — no per-player sessionId needed.
         try {
-            int sessionId = player.getAudioSessionId();
-            if (sessionId > 0 && isAdded()) {
-                AudioEffectsService.sendApply(requireContext().getApplicationContext(), sessionId);
+            if (isAdded()) {
+                AudioEffectsService.sendApply(requireContext().getApplicationContext());
             }
         } catch (Exception ignored) {
         }
@@ -4720,11 +4722,7 @@ public class SongPlayerFragment extends Fragment {
             }
 
         android.app.Notification notification = builder.build();
-        if (isPlaying) {
-            AudioEffectsService.startForeground(persistentAppContext, MEDIA_NOTIFICATION_ID, notification);
-        } else {
-            NotificationManagerCompat.from(persistentAppContext).notify(MEDIA_NOTIFICATION_ID, notification);
-        }
+        NotificationManagerCompat.from(persistentAppContext).notify(MEDIA_NOTIFICATION_ID, notification);
     }
 
     private void clearMediaNotification() {
