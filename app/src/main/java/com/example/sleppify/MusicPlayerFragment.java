@@ -1074,12 +1074,10 @@ public class MusicPlayerFragment extends Fragment {
                 .setReorderingAllowed(true)
                 .add(R.id.fragmentContainer, playerFragment, "song_player")
                 .hide(playerFragment)
-                .runOnCommit(() -> {
-                    restoringHiddenMiniPlayerFromSnapshot = false;
-                    invalidateMiniSnapshotCache();
-                    updateMiniPlayerUi();
-                })
-                .commit();
+                .commitNow();
+        restoringHiddenMiniPlayerFromSnapshot = false;
+        invalidateMiniSnapshotCache();
+        updateMiniPlayerUi();
     }
 
     private void switchScreen(@NonNull ScreenMode mode) {
@@ -4230,7 +4228,6 @@ public class MusicPlayerFragment extends Fragment {
         } else {
             transaction
                     .hide(playerFragment)
-                    .runOnCommit(this::updateMiniPlayerUi)
                     .commit();
         }
 
@@ -4295,7 +4292,6 @@ public class MusicPlayerFragment extends Fragment {
                 .setReorderingAllowed(true)
                 .add(R.id.fragmentContainer, playerFragment, "song_player")
                 .hide(playerFragment)
-                .runOnCommit(this::updateMiniPlayerUi)
                 .commit();
 
         invalidateMiniSnapshotCache();

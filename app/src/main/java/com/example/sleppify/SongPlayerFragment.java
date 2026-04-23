@@ -413,17 +413,9 @@ public class SongPlayerFragment extends Fragment {
 
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
-        
-        // Lightweight internal enter animation (YouTube Music style slide-up)
-        int screenHeight = getResources().getDisplayMetrics().heightPixels;
-        view.setTranslationY(screenHeight);
-        view.setAlpha(0f);
-        view.animate()
-            .translationY(0f)
-            .alpha(1f)
-            .setDuration(320)
-            .setInterpolator(new androidx.interpolator.view.animation.FastOutSlowInInterpolator())
-            .start();
+
+        view.setTranslationY(0f);
+        view.setAlpha(1f);
 
         persistentAppContext = requireContext().getApplicationContext();
         if (getActivity() instanceof MainActivity) {
@@ -600,13 +592,11 @@ public class SongPlayerFragment extends Fragment {
 
         currentIndex = Math.max(0, Math.min(currentIndex, tracks.size() - 1));
         bindCurrentTrack(true);
-        
-        // Eliminate the hardcoded 320ms asynchronous delay to prevent freezing behavior
-        localProgressHandler.post(() -> {
-            if (!isAdded()) return;
+
+        if (isAdded()) {
             prewarmYouTubePlayerIfNeeded();
             playCurrentTrack();
-        });
+        }
 
         view.findViewById(R.id.btnPrev).setOnClickListener(v -> moveTrack(-1));
         view.findViewById(R.id.btnNext).setOnClickListener(v -> moveTrack(1));
@@ -3283,13 +3273,7 @@ public class SongPlayerFragment extends Fragment {
             loadPlayerBackdrop(current, bootstrapArtwork);
         };
 
-        long delay = bootstrapArtwork ? PLAYER_BACKDROP_DEFER_LOAD_MS : 0L;
-        if (delay <= 0L) {
-            // Direct call: no extra frame delay for non-bootstrap loads
-            deferredBackdropLoadRunnable.run();
-        } else {
-            localProgressHandler.postDelayed(deferredBackdropLoadRunnable, delay);
-        }
+        deferredBackdropLoadRunnable.run();
     }
 
     private void revealBackdropWithFade() {
@@ -3303,11 +3287,7 @@ public class SongPlayerFragment extends Fragment {
         if (targetAlpha <= 0f) {
             targetAlpha = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? 0.68f : 0.35f;
         }
-        ivPlayerBackdrop.setAlpha(0f);
-        ivPlayerBackdrop.animate()
-                .alpha(targetAlpha)
-                .setDuration(PLAYER_BACKDROP_FADE_IN_DURATION_MS)
-                .start();
+        ivPlayerBackdrop.setAlpha(targetAlpha);
     }
 
     private void clearMediaNotificationArtwork() {
@@ -3483,13 +3463,9 @@ public class SongPlayerFragment extends Fragment {
                 
                 // Process the bitmap using the intelligent smart-crop utility
                 Bitmap processedResource = YouTubeImageProcessor.smartCrop(resource);
-                
-                boolean wasEmpty = ivPlayerCover.getDrawable() == null;
+
                 ivPlayerCover.setImageBitmap(processedResource);
-                if (wasEmpty && bootstrapArtwork) {
-                    ivPlayerCover.setAlpha(0f);
-                    ivPlayerCover.animate().alpha(1f).setDuration(PLAYER_BACKDROP_FADE_IN_DURATION_MS).start();
-                }
+                ivPlayerCover.setAlpha(1f);
                 adjustPlayerHeroForCover(processedResource);
                 cacheMediaNotificationArtwork(requestVideoId, processedResource);
                 updateMediaSessionMetadata();
@@ -3686,11 +3662,9 @@ public class SongPlayerFragment extends Fragment {
         boolean bootstrapArtwork = playerArtworkBootstrapPending;
         if (bootstrapArtwork) {
             showPlayerArtworkLoadingState();
-            localProgressHandler.postDelayed(() -> {
-                if (!isAdded()) return;
-                loadPlayerCover(track, bootstrapArtwork);
-                scheduleBackdropLoad(track, bootstrapArtwork);
-            }, 280L);
+            if (!isAdded()) return;
+            loadPlayerCover(track, bootstrapArtwork);
+            scheduleBackdropLoad(track, bootstrapArtwork);
         } else {
             loadPlayerCover(track, bootstrapArtwork);
             scheduleBackdropLoad(track, bootstrapArtwork);
@@ -4443,9 +4417,6 @@ public class SongPlayerFragment extends Fragment {
 
         androidx.fragment.app.FragmentTransaction transaction = fm.beginTransaction()
                 .setReorderingAllowed(true);
-        if (animate) {
-            transaction.setCustomAnimations(0, R.anim.player_screen_exit);
-        }
 
         if (target != null && target != this && target.isAdded()) {
             transaction
@@ -4455,8 +4426,8 @@ public class SongPlayerFragment extends Fragment {
             transaction.remove(this);
         }
 
-        transaction.runOnCommit(() -> collapsingToMiniMode = false);
         transaction.commit();
+        collapsingToMiniMode = false;
         return true;
     }
 
@@ -5023,9 +4994,8 @@ public class SongPlayerFragment extends Fragment {
 
         rvNextUp.setNestedScrollingEnabled(false);
         if (rvNextUp.getVisibility() != View.VISIBLE) {
-            rvNextUp.setAlpha(0f);
             rvNextUp.setVisibility(View.VISIBLE);
-            rvNextUp.animate().alpha(1f).setDuration(PLAYER_BACKDROP_FADE_IN_DURATION_MS).start();
+            rvNextUp.setAlpha(1f);
         }
 
         nextUpAdapter.notifyDataSetChanged();

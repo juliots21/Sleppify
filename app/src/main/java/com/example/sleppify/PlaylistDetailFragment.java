@@ -3534,11 +3534,9 @@ public class PlaylistDetailFragment extends Fragment {
                 .setReorderingAllowed(true)
                 .add(R.id.fragmentContainer, playerFragment, "song_player")
                 .hide(playerFragment)
-                .runOnCommit(() -> {
-                    restoringHiddenPlayerFromSnapshot = false;
-                    updateMiniPlayerUi();
-                })
-                .commit();
+                .commitNow();
+        restoringHiddenPlayerFromSnapshot = false;
+        updateMiniPlayerUi();
 
         currentTrackIndex = displayIndex;
         miniPlaying = snapshot.isPlaying;
@@ -3675,7 +3673,6 @@ public class PlaylistDetailFragment extends Fragment {
         } else {
             transaction
                     .hide(playerFragment)
-                    .runOnCommit(this::updateMiniPlayerUi)
                     .commit();
         }
 
@@ -3745,19 +3742,18 @@ public class PlaylistDetailFragment extends Fragment {
                 .setReorderingAllowed(true)
                 .add(R.id.fragmentContainer, playerFragment, "song_player")
                 .hide(playerFragment)
-            .runOnCommit(() -> {
-                playerFragment.externalReplaceQueue(
-                    ids,
-                    titles,
-                    artists,
-                    durations,
-                    images,
-                    snapshotIndex,
-                    startPlaying
-                );
-                updateMiniPlayerUi();
-            })
-                .commit();
+                .commitNow();
+
+        playerFragment.externalReplaceQueue(
+                ids,
+                titles,
+                artists,
+                durations,
+                images,
+                snapshotIndex,
+                startPlaying
+        );
+        updateMiniPlayerUi();
 
         int displayIndex = findTrackIndexFromSnapshot(currentTracks, snapshot);
         currentTrackIndex = displayIndex;
@@ -3827,7 +3823,6 @@ public class PlaylistDetailFragment extends Fragment {
                 .setReorderingAllowed(true)
                 .add(R.id.fragmentContainer, playerFragment, "song_player")
                 .hide(playerFragment)
-                .runOnCommit(this::updateMiniPlayerUi)
                 .commit();
 
         currentTrackIndex = position;
