@@ -18,7 +18,7 @@ import android.graphics.RenderEffect;
 import android.graphics.Shader;
 import android.graphics.drawable.Drawable;
 import android.media.AudioAttributes;
-import android.media.MediaPlayer;
+// android.media.ExoMediaPlayer replaced by ExoExoMediaPlayer adapter (see ExoExoMediaPlayer.java)
 import android.net.Uri;
 import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
@@ -39,6 +39,7 @@ import android.view.ViewParent;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.SeekBar;
+import com.bumptech.glide.Glide;
 import com.bumptech.glide.load.engine.DiskCacheStrategy;
 import com.example.sleppify.utils.YouTubeCropTransformation;
 import com.example.sleppify.utils.YouTubeImageProcessor;
@@ -68,19 +69,7 @@ import androidx.recyclerview.widget.RecyclerView;
 import android.support.v4.media.MediaMetadataCompat;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.support.v4.media.session.PlaybackStateCompat;
-
-import com.bumptech.glide.Glide;
-import com.bumptech.glide.load.DecodeFormat;
-import com.bumptech.glide.load.engine.DiskCacheStrategy;
-import com.bumptech.glide.request.target.CustomTarget;
-import com.bumptech.glide.request.transition.Transition;
 import com.google.android.material.imageview.ShapeableImageView;
-import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants;
-import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.YouTubePlayer;
-import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.listeners.AbstractYouTubePlayerListener;
-import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.options.IFramePlayerOptions;
-import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.utils.YouTubePlayerUtils;
-import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.views.YouTubePlayerView;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -140,18 +129,18 @@ public class SongPlayerFragment extends Fragment {
     private static final long TRACK_ERROR_RETRY_DELAY_MS = 750L;
     private static final int MAX_TRACK_ERROR_RETRY = 1;
     private static final int MAX_PLAYER_ENGINE_RECOVERY_RETRY = 4;
-    private static final int MAX_EMBED_RETRY_PER_TRACK = 1;
     private static final int COVER_TAPS_TO_UNLOCK_VIDEO_CONTROLS = 5;
     private static final long COVER_TAP_RESET_WINDOW_MS = 2000L;
     private static final int CONNECT_TIMEOUT_MS = 14000;
     private static final int READ_TIMEOUT_MS = 22000;
     private static final long SOURCE_PREPARE_TIMEOUT_MS = 30000L;
-    private static final long YOUTUBE_INIT_TIMEOUT_MS = 8000L;
     private static final long SOCIAL_STATS_FETCH_DEFER_MS = 1800L;
     private static final long PLAYBACK_BOOTSTRAP_GRACE_MS = 1800L;
     private static final int MAX_PLAYBACK_SOURCE_RETRY = 1;
     private static final long PLAYBACK_SOURCE_RETRY_DELAY_MS = 350L;
-    private static final String STREAM_HTTP_USER_AGENT = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36";
+    // Match the primary InnerTube client (ANDROID_MUSIC) so the streaming server sees a
+    // consistent identity between the URL resolution and the playback request.
+    private static final String STREAM_HTTP_USER_AGENT = "com.google.android.apps.youtube.music/7.02.52 (Linux; U; Android 14; es_US; Pixel 7 Pro; Build/UQ1A.240205.002; Cronet/121.0.6167.71)";
     private static final String AUDIUS_API_BASE_URL = "https://discoveryprovider.audius.co/v1";
     private static final String AUDIUS_APP_NAME = "sleppify";
     private static final int AUDIUS_SEARCH_LIMIT = 6;
@@ -176,7 +165,6 @@ public class SongPlayerFragment extends Fragment {
     private ShapeableImageView ivPlayerBackdrop;
     private AnimatedEqualizerView animatedEqPlayer;
     private FrameLayout flPlayerHero;
-    private YouTubePlayerView youtubePlayerView;
     private TextView tvPlayerTitle;
     private TextView tvPlayerArtist;
     private TextView tvActionLikeCount;
@@ -205,14 +193,10 @@ public class SongPlayerFragment extends Fragment {
 
     @Nullable
     private OnBackPressedCallback backPressedCallback;
-
     @Nullable
-    private YouTubePlayer youTubePlayer;
-    private boolean youtubePlayerInitStarted;
+    private ExoMediaPlayer localExoMediaPlayer;
     @Nullable
-    private MediaPlayer localMediaPlayer;
-    @Nullable
-    private MediaPlayer localCrossfadeIncomingPlayer;
+    private ExoMediaPlayer localCrossfadeIncomingPlayer;
     @Nullable
     private MediaSessionCompat mediaSession;
     @Nullable
@@ -220,7 +204,6 @@ public class SongPlayerFragment extends Fragment {
     @Nullable
     private SharedPreferences settingsPrefs;
 
-    private boolean playerReady = false;
     private boolean userSeeking = false;
 
     private int currentIndex = 0;
@@ -244,6 +227,13 @@ public class SongPlayerFragment extends Fragment {
     private long lastHandledEndedAtMs = 0L;
     @NonNull
     private String lastHandledEndedVideoId = "";
+    /**
+     * Tracks the videoId for which we already consumed a one-shot InnerTube re-resolution
+     * retry after an ExoPlayer failure. If another error occurs for the same videoId,
+     * we skip to the next track instead of retrying indefinitely.
+     */
+    @Nullable
+    private String lastReresolveVideoId;
     @NonNull
     private final Random random = new Random();
     @NonNull
@@ -256,8 +246,6 @@ public class SongPlayerFragment extends Fragment {
     @NonNull
     private String returnTargetTag = TAG_PLAYLIST_DETAIL;
     private boolean usingOfflineSource = false;
-    private boolean usingYoutubeFallbackSource = false;
-    private boolean youtubePlaybackActive = false;
     private final Handler localProgressHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService streamResolverExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService socialStatsExecutor = Executors.newSingleThreadExecutor();
@@ -272,8 +260,6 @@ public class SongPlayerFragment extends Fragment {
     private Future<?> pendingStreamResolverFuture;
     @Nullable
     private Runnable sourcePrepareTimeoutRunnable;
-    @Nullable
-    private Runnable youtubeInitTimeoutRunnable;
     private boolean localSourcePreparing = false;
     private boolean localCrossfadeInProgress = false;
     private Context persistentAppContext;
@@ -297,17 +283,11 @@ public class SongPlayerFragment extends Fragment {
     private int playerEngineRecoveryAttempts = 0;
     private int coverTapCount = 0;
     private long lastCoverTapAtMs = 0L;
-    private boolean videoModeEnabled = false;
-    private boolean embedControlsUnlocked = false;
-    private final Set<String> sessionEmbedBlockedVideoIds = new HashSet<>();
     private final Set<String> audiusFallbackAttemptedVideoIds = new HashSet<>();
     @NonNull
     private String pendingSocialStatsVideoId = "";
     @Nullable
     private Runnable pendingSocialStatsFetchRunnable;
-    @NonNull
-    private String embedRetryVideoId = "";
-    private int embedRetryCount = 0;
     @Nullable
     private CustomTarget<Bitmap> playerCoverTarget;
     private CustomTarget<Bitmap> notificationArtworkTarget;
@@ -336,13 +316,13 @@ public class SongPlayerFragment extends Fragment {
     private final Runnable localProgressTicker = new Runnable() {
         @Override
         public void run() {
-            if (!isAdded() || localMediaPlayer == null || !usingOfflineSource || userSeeking) {
+            if (!isAdded() || localExoMediaPlayer == null || !usingOfflineSource || userSeeking) {
                 return;
             }
 
             try {
-                int positionMs = Math.max(0, localMediaPlayer.getCurrentPosition());
-                int durationMs = Math.max(1, localMediaPlayer.getDuration());
+                int positionMs = Math.max(0, localExoMediaPlayer.getCurrentPosition());
+                int durationMs = Math.max(1, localExoMediaPlayer.getDuration());
 
                 maybeStartOfflineCrossfade(positionMs, durationMs);
 
@@ -456,12 +436,6 @@ public class SongPlayerFragment extends Fragment {
         animatedEqPlayer = view.findViewById(R.id.animatedEqPlayer);
         flPlayerHero = view.findViewById(R.id.flPlayerHero);
         playerArtworkBootstrapPending = true;
-        youtubePlayerView = view.findViewById(R.id.youtubePlayerView);
-        if (youtubePlayerView != null) {
-            youtubePlayerView.setVisibility(View.VISIBLE);
-            youtubePlayerView.setAlpha(1f);
-            youtubePlayerView.setClickable(false);
-        }
         tvPlayerTitle = view.findViewById(R.id.tvPlayerTitle);
         tvPlayerArtist = view.findViewById(R.id.tvPlayerArtist);
         actionLike = view.findViewById(R.id.actionLike);
@@ -488,8 +462,6 @@ public class SongPlayerFragment extends Fragment {
         playerStatePrefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
         settingsPrefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Activity.MODE_PRIVATE);
         loadPlaybackModesFromSettings();
-        refreshVideoModePreference();
-        setupCoverTapUnlockGesture();
         setupSocialActions();
         updatePlayerSurfaceForSource();
 
@@ -624,7 +596,6 @@ public class SongPlayerFragment extends Fragment {
         bindCurrentTrack(true);
 
         if (isAdded()) {
-            prewarmYouTubePlayerIfNeeded();
             playCurrentTrack();
         }
 
@@ -654,29 +625,16 @@ public class SongPlayerFragment extends Fragment {
             @Override
             public void onStopTrackingTouch(SeekBar seekBar) {
                 boolean shouldRecover = false;
-                if (usingOfflineSource && localMediaPlayer != null) {
+                if (usingOfflineSource && localExoMediaPlayer != null) {
                     try {
-                        localMediaPlayer.seekTo(Math.max(0, currentSeconds) * 1000);
+                        localExoMediaPlayer.seekTo(Math.max(0, currentSeconds) * 1000);
                     } catch (Exception ignored) {
                         shouldRecover = true;
                     }
                     if (isPlaying) {
                         try {
-                            localMediaPlayer.start();
+                            localExoMediaPlayer.start();
                             startLocalProgressTicker();
-                        } catch (Exception ignored) {
-                            shouldRecover = true;
-                        }
-                    }
-                } else if (usingYoutubeFallbackSource && playerReady && youTubePlayer != null) {
-                    try {
-                        youTubePlayer.seekTo(currentSeconds);
-                    } catch (Exception ignored) {
-                        shouldRecover = true;
-                    }
-                    if (isPlaying) {
-                        try {
-                            youTubePlayer.play();
                         } catch (Exception ignored) {
                             shouldRecover = true;
                         }
@@ -720,7 +678,6 @@ public class SongPlayerFragment extends Fragment {
         super.onResume();
         appInBackground = false;
         updateBackPressedCallbackEnabled(isHidden());
-        refreshVideoModePreference();
         ensureNotificationPermissionForPlayback();
         resetPlayerScrollToTop();
         ensureActivePlaybackIfExpected("onResume");
@@ -735,7 +692,7 @@ public class SongPlayerFragment extends Fragment {
             ((MainActivity) getActivity()).setContainerOverlayMode(!hidden);
         }
         if (hidden) {
-            if (!(usingOfflineSource && localMediaPlayer != null && isPlaying)) {
+            if (!(usingOfflineSource && localExoMediaPlayer != null && isPlaying)) {
                 stopLocalProgressTicker();
             }
         } else {
@@ -752,7 +709,7 @@ public class SongPlayerFragment extends Fragment {
         long now = SystemClock.elapsedRealtime();
         boolean bootstrapWindow = (now - lastPlaybackStartRequestAtMs) < PLAYBACK_BOOTSTRAP_GRACE_MS;
 
-        if (usingOfflineSource && localMediaPlayer != null) {
+        if (usingOfflineSource && localExoMediaPlayer != null) {
             if (localSourcePreparing && bootstrapWindow) {
                 Log.d(TAG, "ensureActivePlaybackIfExpected: waiting local prepare. reason=" + reason);
                 return;
@@ -760,7 +717,7 @@ public class SongPlayerFragment extends Fragment {
 
             boolean alreadyPlaying = false;
             try {
-                alreadyPlaying = localMediaPlayer.isPlaying();
+                alreadyPlaying = localExoMediaPlayer.isPlaying();
             } catch (Exception ignored) {
             }
 
@@ -770,7 +727,7 @@ public class SongPlayerFragment extends Fragment {
             }
 
             try {
-                localMediaPlayer.start();
+                localExoMediaPlayer.start();
                 startLocalProgressTicker();
                 Log.d(TAG, "ensureActivePlaybackIfExpected: restarted local playback. reason=" + reason);
             } catch (Exception e) {
@@ -782,27 +739,6 @@ public class SongPlayerFragment extends Fragment {
                 playCurrentTrack();
             }
             return;
-        }
-
-        if (usingYoutubeFallbackSource) {
-            if (playerReady && youTubePlayer != null) {
-                try {
-                    youTubePlayer.play();
-                } catch (Exception e) {
-                    if (bootstrapWindow) {
-                        Log.d(TAG, "ensureActivePlaybackIfExpected: youtube still bootstrapping. reason=" + reason);
-                        return;
-                    }
-                    Log.w(TAG, "ensureActivePlaybackIfExpected: youtube play failed, reloading track. reason=" + reason, e);
-                    playCurrentTrack();
-                }
-                return;
-            }
-
-            if (youtubePlayerInitStarted && bootstrapWindow) {
-                Log.d(TAG, "ensureActivePlaybackIfExpected: waiting youtube init. reason=" + reason);
-                return;
-            }
         }
 
         if (!hasPendingStreamResolution()) {
@@ -820,15 +756,12 @@ public class SongPlayerFragment extends Fragment {
         if (!isPlaying) {
             return false;
         }
-        if (usingOfflineSource && localMediaPlayer != null) {
+        if (usingOfflineSource && localExoMediaPlayer != null) {
             try {
-                return localMediaPlayer.isPlaying();
+                return localExoMediaPlayer.isPlaying();
             } catch (Exception ignored) {
                 return false;
             }
-        }
-        if (usingYoutubeFallbackSource) {
-            return youtubePlaybackActive;
         }
         return false;
     }
@@ -841,14 +774,13 @@ public class SongPlayerFragment extends Fragment {
         cancelPlaybackErrorRetry();
         cancelDeferredBackdropLoad();
         cancelNextUpReveal();
-        cancelYouTubeInitTimeout();
         cancelPendingSocialStatsFetch();
         cancelPendingStreamResolver();
         clearPlayerCoverRequest();
         clearPlayerBackdropRequest();
         resetPlayerHeroContainerHeight();
         stopLocalProgressTicker();
-        releaseLocalMediaPlayer();
+        releaseLocalExoMediaPlayer();
         if (getActivity() instanceof MainActivity) {
             ((MainActivity) getActivity()).setContainerOverlayMode(false);
         }
@@ -859,78 +791,9 @@ public class SongPlayerFragment extends Fragment {
             backPressedCallback.remove();
             backPressedCallback = null;
         }
-        if (youtubePlayerView != null) {
-            pauseYouTubePlaybackEngine("onDestroyView");
-            youtubePlayerView.release();
-            youtubePlayerView = null;
-        }
-        youTubePlayer = null;
         settingsPrefs = null;
         flPlayerHero = null;
-        youtubePlayerInitStarted = false;
-        usingYoutubeFallbackSource = false;
-        youtubePlaybackActive = false;
-        playerReady = false;
         super.onDestroyView();
-    }
-
-    private void refreshVideoModePreference() {
-        boolean enabled = settingsPrefs != null
-                && settingsPrefs.getBoolean(CloudSyncManager.KEY_PLAYER_VIDEO_MODE_ENABLED, false);
-        videoModeEnabled = enabled;
-        if (!videoModeEnabled) {
-            embedControlsUnlocked = false;
-        }
-        updatePlayerSurfaceForSource();
-    }
-
-    private void setupCoverTapUnlockGesture() {
-        if (ivPlayerCover == null) {
-            return;
-        }
-
-        ivPlayerCover.setClickable(true);
-        ivPlayerCover.setFocusable(true);
-        ivPlayerCover.setOnClickListener(v -> handleCoverTapUnlock());
-    }
-
-    private void handleCoverTapUnlock() {
-        if (!usingYoutubeFallbackSource) {
-            return;
-        }
-
-        long now = SystemClock.elapsedRealtime();
-        if ((now - lastCoverTapAtMs) > COVER_TAP_RESET_WINDOW_MS) {
-            coverTapCount = 0;
-        }
-        lastCoverTapAtMs = now;
-        coverTapCount++;
-
-        if (coverTapCount < COVER_TAPS_TO_UNLOCK_VIDEO_CONTROLS) {
-            return;
-        }
-
-        coverTapCount = 0;
-        if (!videoModeEnabled) {
-            if (isAdded()) {
-                
-            }
-            return;
-        }
-
-        if (!embedControlsUnlocked) {
-            embedControlsUnlocked = true;
-            updatePlayerSurfaceForSource();
-            if (isAdded()) {
-                
-            }
-        }
-    }
-
-    private void resetCoverTapUnlockState() {
-        coverTapCount = 0;
-        lastCoverTapAtMs = 0L;
-        embedControlsUnlocked = false;
     }
 
     private void resetPlayerScrollToTop() {
@@ -942,214 +805,6 @@ public class SongPlayerFragment extends Fragment {
                 svSongPlayerContent.scrollTo(0, 0);
             }
         });
-    }
-
-    private void prewarmYouTubePlayerIfNeeded() {
-        if (!isAdded() || youtubePlayerView == null || tracks.isEmpty()) {
-            return;
-        }
-        if (!isNetworkAvailable()) {
-            return;
-        }
-        if (youtubePlayerInitStarted || playerReady || youTubePlayer != null) {
-            return;
-        }
-        if (currentIndex < 0 || currentIndex >= tracks.size()) {
-            return;
-        }
-
-        PlayerTrack track = tracks.get(currentIndex);
-        if (track == null || TextUtils.isEmpty(track.videoId)) {
-            return;
-        }
-
-        Log.d(TAG, "prewarmYouTubePlayerIfNeeded: bootstrap anticipado videoId=" + track.videoId);
-        setupYouTubePlayer();
-    }
-
-    private void setupYouTubePlayer() {
-        if (youtubePlayerView == null) {
-            return;
-        }
-        if (youtubePlayerInitStarted) {
-            return;
-        }
-        youtubePlayerInitStarted = true;
-        cancelYouTubeInitTimeout();
-        getLifecycle().addObserver(youtubePlayerView);
-
-        youtubePlayerView.enableBackgroundPlayback(true);
-
-        IFramePlayerOptions options = new IFramePlayerOptions.Builder(requireContext())
-            .controls(1)
-                .rel(0)
-                .fullscreen(0)
-                .build();
-
-        youtubePlayerView.initialize(new AbstractYouTubePlayerListener() {
-            @Override
-            public void onReady(@NonNull YouTubePlayer initializedPlayer) {
-                cancelYouTubeInitTimeout();
-                playerReady = true;
-                youTubePlayer = initializedPlayer;
-                if (!usingYoutubeFallbackSource) {
-                    return;
-                }
-                if (tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) {
-                    return;
-                }
-                playWithYouTubePlayer(tracks.get(currentIndex));
-            }
-
-            @Override
-            public void onStateChange(@NonNull YouTubePlayer initializedPlayer, @NonNull PlayerConstants.PlayerState state) {
-                if (!usingYoutubeFallbackSource) {
-                    return;
-                }
-                if (state == PlayerConstants.PlayerState.ENDED) {
-                    youtubePlaybackActive = false;
-                    handleTrackEnded();
-                    return;
-                }
-                if (state == PlayerConstants.PlayerState.PLAYING) {
-                    youtubePlaybackActive = true;
-                    cancelAutoplayRecovery();
-                    resetPlaybackErrorState();
-                    resetEmbedErrorAutoskipWindow();
-                    playerEngineRecoveryAttempts = 0;
-                    String currentVideoId = loadedVideoId;
-                    if (TextUtils.isEmpty(currentVideoId)
-                            && currentIndex >= 0
-                            && currentIndex < tracks.size()) {
-                        currentVideoId = tracks.get(currentIndex).videoId;
-                    }
-                    isPlaying = true;
-                    pauseRequestedByUser = false;
-                    updatePlayPauseIcon();
-                    updateMediaSessionState();
-                    updateMediaNotification();
-                    persistPlaybackSnapshot(false);
-                    return;
-                }
-                if (state == PlayerConstants.PlayerState.PAUSED) {
-                    youtubePlaybackActive = false;
-                    if (!pauseRequestedByUser
-                            && !usingOfflineSource
-                            && totalSeconds > 1
-                            && currentSeconds >= Math.max(0, totalSeconds - ENDED_FALLBACK_THRESHOLD_SECONDS)) {
-                        handleTrackEnded();
-                        return;
-                    }
-
-                    if (appInBackground && !pauseRequestedByUser) {
-                        long now = SystemClock.elapsedRealtime();
-                        if ((now - lastBackgroundResumeAttemptMs) > 1200L) {
-                            lastBackgroundResumeAttemptMs = now;
-                            initializedPlayer.play();
-                            return;
-                        }
-                    }
-                    isPlaying = false;
-                    updatePlayPauseIcon();
-                    persistPositionForLoadedTrack();
-                    updateMediaSessionState();
-                    updateMediaNotification();
-                    persistPlaybackSnapshot(false);
-                }
-            }
-
-            @Override
-            public void onCurrentSecond(@NonNull YouTubePlayer initializedPlayer, float second) {
-                if (!isAdded() || userSeeking || usingOfflineSource || !usingYoutubeFallbackSource || !youtubePlaybackActive) {
-                    return;
-                }
-
-                int newCurrent = Math.max(0, Math.round(second));
-                if (newCurrent == currentSeconds) {
-                    return;
-                }
-                currentSeconds = newCurrent;
-                tvCurrentTime.setText(formatSeconds(currentSeconds));
-
-                int safeTotal = Math.max(1, totalSeconds);
-                if (currentSeconds > safeTotal) {
-                    safeTotal = currentSeconds + 1;
-                }
-                int progress = Math.round((currentSeconds / (float) safeTotal) * 1000f);
-                sbPlaybackProgress.setProgress(Math.max(0, Math.min(1000, progress)));
-
-                if (currentSeconds != lastPersistedSecond && currentSeconds % 2 == 0) {
-                    lastPersistedSecond = currentSeconds;
-                    persistPositionForLoadedTrack();
-                    updateMediaSessionState();
-                    persistPlaybackSnapshot(false);
-                }
-
-                maybeKeepEqAlive();
-            }
-
-            @Override
-            public void onVideoDuration(@NonNull YouTubePlayer initializedPlayer, float duration) {
-                if (!isAdded() || usingOfflineSource || !usingYoutubeFallbackSource) {
-                    return;
-                }
-
-                int resolvedDuration = Math.max(1, Math.round(duration));
-                totalSeconds = resolvedDuration;
-                tvTotalTime.setText(formatSeconds(totalSeconds));
-
-                if (currentSeconds > totalSeconds) {
-                    currentSeconds = Math.max(0, totalSeconds - 1);
-                }
-
-                if (!userSeeking) {
-                    int progress = Math.round((Math.max(0, currentSeconds) / (float) totalSeconds) * 1000f);
-                    sbPlaybackProgress.setProgress(Math.max(0, Math.min(1000, progress)));
-                }
-
-                persistResolvedDurationForCurrentFavorite();
-
-                updateMediaSessionMetadata();
-                updateMediaSessionState();
-                updateMediaNotification();
-            }
-
-            @Override
-            public void onError(@NonNull YouTubePlayer initializedPlayer, @NonNull PlayerConstants.PlayerError error) {
-                if (!isAdded()) {
-                    return;
-                }
-                if (!usingYoutubeFallbackSource) {
-                    return;
-                }
-                handlePlaybackError(error);
-            }
-        }, true, options);
-        scheduleYouTubeInitTimeout();
-    }
-
-    private void scheduleYouTubeInitTimeout() {
-        cancelYouTubeInitTimeout();
-        youtubeInitTimeoutRunnable = () -> {
-            youtubeInitTimeoutRunnable = null;
-            if (!isAdded() || playerReady || youTubePlayer != null) {
-                return;
-            }
-
-            Log.w(TAG, "setupYouTubePlayer: init timeout, retrying engine bootstrap");
-            youtubePlayerInitStarted = false;
-            if (usingYoutubeFallbackSource) {
-                recoverYouTubePlayerEngine(true);
-            }
-        };
-        localProgressHandler.postDelayed(youtubeInitTimeoutRunnable, YOUTUBE_INIT_TIMEOUT_MS);
-    }
-
-    private void cancelYouTubeInitTimeout() {
-        if (youtubeInitTimeoutRunnable != null) {
-            localProgressHandler.removeCallbacks(youtubeInitTimeoutRunnable);
-            youtubeInitTimeoutRunnable = null;
-        }
     }
 
     private void setupMediaSession() {
@@ -1169,17 +824,6 @@ public class SongPlayerFragment extends Fragment {
                 if (tracks.isEmpty()) {
                     return;
                 }
-                
-                // Task 16 Fix: Bring app to foreground if playing YouTube in background
-                if (usingYoutubeFallbackSource && !isAdded()) {
-                    try {
-                        Intent intent = new Intent(persistentAppContext, MainActivity.class);
-                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                        persistentAppContext.startActivity(intent);
-                    } catch (Exception e) {
-                        Log.e(TAG, "media-session:failed_to_restart_activity", e);
-                    }
-                }
 
                 pauseRequestedByUser = false;
                 isPlaying = true;
@@ -1193,15 +837,10 @@ public class SongPlayerFragment extends Fragment {
             @Override
             public void onPause() {
                 pauseRequestedByUser = true;
-                if (usingOfflineSource && localMediaPlayer != null) {
+                if (usingOfflineSource && localExoMediaPlayer != null) {
                     try {
-                        localMediaPlayer.pause();
+                        localExoMediaPlayer.pause();
                         stopLocalProgressTicker();
-                    } catch (Exception ignored) {
-                    }
-                } else if (usingYoutubeFallbackSource && playerReady && youTubePlayer != null) {
-                    try {
-                        youTubePlayer.pause();
                     } catch (Exception ignored) {
                     }
                 }
@@ -1231,14 +870,9 @@ public class SongPlayerFragment extends Fragment {
             @Override
             public void onSeekTo(long pos) {
                 currentSeconds = Math.max(0, (int) (pos / 1000L));
-                if (usingOfflineSource && localMediaPlayer != null) {
+                if (usingOfflineSource && localExoMediaPlayer != null) {
                     try {
-                        localMediaPlayer.seekTo(currentSeconds * 1000);
-                    } catch (Exception ignored) {
-                    }
-                } else if (usingYoutubeFallbackSource && playerReady && youTubePlayer != null) {
-                    try {
-                        youTubePlayer.seekTo(currentSeconds);
+                        localExoMediaPlayer.seekTo(currentSeconds * 1000);
                     } catch (Exception ignored) {
                     }
                 }
@@ -1279,7 +913,6 @@ public class SongPlayerFragment extends Fragment {
         }
 
         if (!fromCompletion) {
-            resetEmbedErrorAutoskipWindow();
             persistPositionForLoadedTrack();
         }
 
@@ -1416,15 +1049,7 @@ public class SongPlayerFragment extends Fragment {
                     return;
                 }
 
-                if (playerReady && youTubePlayer != null) {
-                    try {
-                        youTubePlayer.play();
-                    } catch (Exception ignored) {
-                        playCurrentTrack();
-                    }
-                } else {
-                    playCurrentTrack();
-                }
+                playCurrentTrack();
             }
         };
         localProgressHandler.postDelayed(autoplayRecoveryRunnable, AUTOPLAY_RECOVERY_DELAY_MS);
@@ -1445,203 +1070,9 @@ public class SongPlayerFragment extends Fragment {
         OfflineRestrictionStore.markRestricted(requireContext(), videoId);
     }
 
-    private void handlePlaybackError(@NonNull PlayerConstants.PlayerError error) {
-        cancelAutoplayRecovery();
-
-        String currentVideoId = loadedVideoId;
-        if (TextUtils.isEmpty(currentVideoId)
-                && currentIndex >= 0
-                && currentIndex < tracks.size()) {
-            currentVideoId = tracks.get(currentIndex).videoId;
-        }
-
-        if (TextUtils.isEmpty(currentVideoId)) {
-            stopPlaybackAfterErrors("No se pudo reproducir este tema de YouTube.");
-            return;
-        }
-
-        if (TextUtils.equals(currentVideoId, lastErroredVideoId)) {
-            sameTrackErrorCount++;
-        } else {
-            lastErroredVideoId = currentVideoId;
-            sameTrackErrorCount = 1;
-        }
-
-        Log.w(
-                TAG,
-                "PlaybackError error=" + error
-                        + " videoId=" + currentVideoId
-                        + " sameTrackCount=" + sameTrackErrorCount
-                        + " engineRecoveryAttempts=" + playerEngineRecoveryAttempts
-        );
-
-        if (error == PlayerConstants.PlayerError.VIDEO_NOT_PLAYABLE_IN_EMBEDDED_PLAYER) {
-            markTrackAsRestricted(currentVideoId);
-            clearPersistedPositionFor(currentVideoId);
-
-            if (consumeEmbedRetryForTrack(currentVideoId)) {
-                currentSeconds = 0;
-                lastPersistedSecond = -1;
-                recoverYouTubePlayerEngine(true);
-                return;
-            }
-
-            if (tryAutoSkipAfterEmbedRestriction(currentVideoId)) {
-                return;
-            }
-
-            stopPlaybackAfterErrors("Este video no permite reproducción embebida en la app.");
-            return;
-        }
-
-        if (error == PlayerConstants.PlayerError.UNKNOWN) {
-            if (consumeEmbedRetryForTrack(currentVideoId)) {
-                currentSeconds = 0;
-                lastPersistedSecond = -1;
-                recoverYouTubePlayerEngine(true);
-                return;
-            }
-
-            stopPlaybackAfterErrors("No se pudo reproducir en el reproductor interno de YouTube.");
-            return;
-        }
-
-        if (shouldRecoverPlayerEngine(error)
-                && playerEngineRecoveryAttempts < MAX_PLAYER_ENGINE_RECOVERY_RETRY) {
-            playerEngineRecoveryAttempts++;
-            recoverYouTubePlayerEngine(playerEngineRecoveryAttempts > 1);
-            return;
-        }
-
-        if (sameTrackErrorCount <= MAX_TRACK_ERROR_RETRY) {
-            schedulePlaybackRetry(currentVideoId);
-            return;
-        }
-
-        stopPlaybackAfterErrors(buildPlaybackErrorMessage(error));
-    }
-
-    private boolean shouldRecoverPlayerEngine(@NonNull PlayerConstants.PlayerError error) {
-        return error == PlayerConstants.PlayerError.HTML_5_PLAYER;
-    }
-
-    private void recoverYouTubePlayerEngine() {
-        recoverYouTubePlayerEngine(false);
-    }
-
-    private void recoverYouTubePlayerEngine(boolean forceHardRebuild) {
-        cancelPlaybackErrorRetry();
-        if (!isAdded() || youtubePlayerView == null || usingOfflineSource) {
-            return;
-        }
-
-        if (forceHardRebuild) {
-            if (!rebuildYouTubePlayerView()) {
-                if (currentIndex >= 0 && currentIndex < tracks.size()) {
-                    schedulePlaybackRetry(tracks.get(currentIndex).videoId);
-                }
-                return;
-            }
-
-            playerReady = false;
-            youTubePlayer = null;
-            setupYouTubePlayer();
-            return;
-        }
-
-        if (!playerReady || youTubePlayer == null) {
-            if (currentIndex >= 0 && currentIndex < tracks.size()) {
-                schedulePlaybackRetry(tracks.get(currentIndex).videoId);
-            }
-            return;
-        }
-
-        if (currentIndex < 0 || currentIndex >= tracks.size()) {
-            return;
-        }
-
-        PlayerTrack track = tracks.get(currentIndex);
-        if (TextUtils.isEmpty(track.videoId)) {
-            return;
-        }
-
-        float startAt = Math.max(0f, currentSeconds);
-        try {
-            if (isPlaying) {
-                if (isResumed()) {
-                    youTubePlayer.loadVideo(track.videoId, startAt);
-                } else {
-                    YouTubePlayerUtils.loadOrCueVideo(youTubePlayer, getLifecycle(), track.videoId, startAt);
-                }
-            } else {
-                youTubePlayer.cueVideo(track.videoId, startAt);
-            }
-        } catch (Exception ignored) {
-            schedulePlaybackRetry(track.videoId);
-        }
-    }
-
-    private boolean rebuildYouTubePlayerView() {
-        if (!isAdded() || youtubePlayerView == null) {
-            return false;
-        }
-
-        cancelYouTubeInitTimeout();
-
-        ViewParent parent = youtubePlayerView.getParent();
-        if (!(parent instanceof ViewGroup)) {
-            Log.w(TAG, "No se pudo reconstruir YouTubePlayerView: parent invalido");
-            return false;
-        }
-
-        ViewGroup container = (ViewGroup) parent;
-        int childIndex = container.indexOfChild(youtubePlayerView);
-        int viewId = youtubePlayerView.getId();
-        ViewGroup.LayoutParams params = youtubePlayerView.getLayoutParams();
-
-        try {
-            youtubePlayerView.release();
-        } catch (Exception ignored) {
-        }
-
-        container.removeView(youtubePlayerView);
-
-        YouTubePlayerView freshPlayerView = new YouTubePlayerView(requireContext());
-        freshPlayerView.setId(viewId);
-        freshPlayerView.setEnableAutomaticInitialization(false);
-
-        if (params == null) {
-            params = new ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT
-            );
-        }
-
-        if (childIndex < 0 || childIndex > container.getChildCount()) {
-            childIndex = 0;
-        }
-
-        container.addView(freshPlayerView, childIndex, params);
-        youtubePlayerView = freshPlayerView;
-        youtubePlayerInitStarted = false;
-        return true;
-    }
-
     @NonNull
-    private String buildPlaybackErrorMessage(@NonNull PlayerConstants.PlayerError error) {
-        switch (error) {
-            case VIDEO_NOT_FOUND:
-                return "Este video ya no esta disponible en YouTube.";
-            case VIDEO_NOT_PLAYABLE_IN_EMBEDDED_PLAYER:
-                return "Ese video tiene una restriccion de YouTube para reproducirse dentro de la app.";
-            case INVALID_PARAMETER_IN_REQUEST:
-                return "No se pudo cargar este tema. Prueba con otra canción.";
-            case HTML_5_PLAYER:
-                return "Fallo el reproductor de YouTube. Intenta reproducir de nuevo.";
-            case UNKNOWN:
-            default:
-                return "No se pudo reproducir este tema de YouTube.";
-        }
+    private String buildPlaybackErrorMessage() {
+        return "No se pudo reproducir este tema.";
     }
 
     private void schedulePlaybackRetry(@NonNull String videoId) {
@@ -1683,14 +1114,13 @@ public class SongPlayerFragment extends Fragment {
         cancelPlaybackErrorRetry();
         lastErroredVideoId = "";
         sameTrackErrorCount = 0;
+        lastReresolveVideoId = null;
     }
 
     private void stopPlaybackAfterErrors(@NonNull String message) {
         cancelPlaybackErrorRetry();
         isPlaying = false;
         pauseRequestedByUser = false;
-        usingYoutubeFallbackSource = false;
-        youtubePlaybackActive = false;
         updatePlayerSurfaceForSource();
         Log.e(TAG, "Playback stopped after errors. videoId=" + loadedVideoId + " message=" + message);
         updatePlayPauseIcon();
@@ -1702,70 +1132,13 @@ public class SongPlayerFragment extends Fragment {
         }
     }
 
-    private boolean tryAutoSkipAfterEmbedRestriction(@NonNull String blockedVideoId) {
-        sessionEmbedBlockedVideoIds.add(blockedVideoId);
-
-        if (tracks.size() <= 1) {
-            return false;
-        }
-
-        int startIndex = currentIndex;
-        for (int step = 1; step < tracks.size(); step++) {
-            int candidateIndex = (startIndex + step) % tracks.size();
-            PlayerTrack candidate = tracks.get(candidateIndex);
-            if (candidate == null || TextUtils.isEmpty(candidate.videoId)) {
-                continue;
-            }
-            if (sessionEmbedBlockedVideoIds.contains(candidate.videoId)) {
-                continue;
-            }
-
-            currentIndex = candidateIndex;
-            clearPersistedPositionFor(candidate.videoId);
-            currentSeconds = 0;
-            lastPersistedSecond = -1;
-            isPlaying = true;
-            bindCurrentTrack(true);
-            playCurrentTrack();
-            cancelAutoplayRecovery();
-            syncMiniStateWithPlaylist();
-            return true;
-        }
-
-        return false;
-    }
-
-    private void resetEmbedErrorAutoskipWindow() {
-        sessionEmbedBlockedVideoIds.clear();
-        resetEmbedRetryState();
-    }
-
-    private boolean consumeEmbedRetryForTrack(@NonNull String videoId) {
-        if (!TextUtils.equals(embedRetryVideoId, videoId)) {
-            embedRetryVideoId = videoId;
-            embedRetryCount = 0;
-        }
-
-        if (embedRetryCount >= MAX_EMBED_RETRY_PER_TRACK) {
-            return false;
-        }
-
-        embedRetryCount++;
-        return true;
-    }
-
-    private void resetEmbedRetryState() {
-        embedRetryVideoId = "";
-        embedRetryCount = 0;
-    }
-
     private void togglePlayback() {
-        if (usingOfflineSource && localMediaPlayer != null) {
+        if (usingOfflineSource && localExoMediaPlayer != null) {
             if (isPlaying) {
                 cancelOfflineCrossfade();
                 pauseRequestedByUser = true;
                 try {
-                    localMediaPlayer.pause();
+                    localExoMediaPlayer.pause();
                 } catch (Exception ignored) {
                 }
                 stopLocalProgressTicker();
@@ -1775,36 +1148,8 @@ public class SongPlayerFragment extends Fragment {
                 pauseRequestedByUser = false;
                 isPlaying = true;
                 try {
-                    localMediaPlayer.start();
+                    localExoMediaPlayer.start();
                     startLocalProgressTicker();
-                } catch (Exception ignored) {
-                    playCurrentTrack();
-                }
-            }
-
-            updatePlayPauseIcon();
-            updateMediaSessionState();
-            updateMediaNotification();
-            syncMiniStateWithPlaylist();
-            persistPlaybackSnapshot(false);
-            return;
-        }
-
-        if (usingYoutubeFallbackSource && playerReady && youTubePlayer != null) {
-            if (isPlaying) {
-                pauseRequestedByUser = true;
-                isPlaying = false;
-                youtubePlaybackActive = false;
-                try {
-                    youTubePlayer.pause();
-                } catch (Exception ignored) {
-                }
-                persistPositionForLoadedTrack();
-            } else {
-                pauseRequestedByUser = false;
-                isPlaying = true;
-                try {
-                    youTubePlayer.play();
                 } catch (Exception ignored) {
                     playCurrentTrack();
                 }
@@ -1986,11 +1331,9 @@ public class SongPlayerFragment extends Fragment {
         cancelOfflineCrossfade();
         resetPlaybackStateForNewTrack();
         lastPlaybackStartRequestAtMs = SystemClock.elapsedRealtime();
-        usingYoutubeFallbackSource = false;
 
         String previousLoadedVideoId = loadedVideoId;
         if (!TextUtils.equals(previousLoadedVideoId, track.videoId)) {
-            resetCoverTapUnlockState();
         }
 
         cancelPlaybackErrorRetry();
@@ -2040,6 +1383,10 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void resolveAndPlayOnlineTrack(@NonNull PlayerTrack track, long requestToken) {
+        resolveAndPlayOnlineTrack(track, requestToken, false);
+    }
+
+    private void resolveAndPlayOnlineTrack(@NonNull PlayerTrack track, long requestToken, boolean forceAlternativeClient) {
         if (!isNetworkAvailable()) {
             markPlaybackUnavailable("Sin conexión a internet.");
             return;
@@ -2049,7 +1396,9 @@ public class SongPlayerFragment extends Fragment {
         // no need to wipe it here — keep old cover visible while resolving.
 
         pendingStreamResolverFuture = streamResolverExecutor.submit(() -> {
-            String resolvedUrl = YouTubeStreamResolver.resolveStreamUrl(track.videoId);
+            String resolvedUrl = forceAlternativeClient
+                    ? InnertubeResolver.resolveStreamUrl(track.videoId, true)
+                    : YouTubeStreamResolver.resolveStreamUrl(track.videoId);
             
             localProgressHandler.post(() -> {
                 if (requestToken != activePlaybackRequestToken || !isAdded()) return;
@@ -2058,11 +1407,11 @@ public class SongPlayerFragment extends Fragment {
                 if (!TextUtils.isEmpty(resolvedUrl)) {
                     startMediaPlaybackFromSource(track, resolvedUrl, requestToken, () -> {
                         // If direct playback fails, fallback to WebView
-                        tryYouTubeFallbackForCurrentTrack("Fallo de reproducción directa: usando fallback embebido.", false);
+                        tryReresolveOrSkipCurrentTrack("Fallo de reproducción directa: re-resolviendo.", false);
                     });
                 } else {
                     // Resolution failed, fallback to WebView
-                    tryYouTubeFallbackForCurrentTrack("No se pudo resolver el stream directo. Usando fallback embebido.", false);
+                    tryReresolveOrSkipCurrentTrack("No se pudo resolver el stream directo. Reintentando.", false);
                 }
             });
         });
@@ -2118,11 +1467,7 @@ public class SongPlayerFragment extends Fragment {
             Log.d(TAG, "attemptPlaybackFromSources: exhausted sources for videoId=" + track.videoId
                     + " (stream directo agotado)");
 
-            if (isNetworkAvailable()
-                    && tryYouTubeFallbackForCurrentTrack(
-                    "No se encontro audio directo. Usando reproductor de YouTube embebido.",
-                    false
-            )) {
+            if (isNetworkAvailable() && tryReresolveOrSkipCurrentTrack("No se encontro audio directo.", false)) {
                 return;
             }
 
@@ -2180,16 +1525,14 @@ public class SongPlayerFragment extends Fragment {
         Log.d(TAG, "startMediaPlaybackFromSource: source=" + maskUrlForLog(source)
             + " videoId=" + track.videoId
             + " token=" + requestToken);
-        pauseYouTubePlaybackEngine("switch_to_direct_source");
         stopLocalProgressTicker();
-        releaseLocalMediaPlayer();
+        releaseLocalExoMediaPlayer();
         usingOfflineSource = true;
-        usingYoutubeFallbackSource = false;
         localSourcePreparing = true;
         updatePlayerSurfaceForSource();
 
-        MediaPlayer player = new MediaPlayer();
-        localMediaPlayer = player;
+        ExoMediaPlayer player = new ExoMediaPlayer(requireContext().getApplicationContext());
+        localExoMediaPlayer = player;
         player.setAudioAttributes(new AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
                 .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
@@ -2210,12 +1553,12 @@ public class SongPlayerFragment extends Fragment {
             Log.d(TAG, "onPrepared: videoId=" + track.videoId + " token=" + requestToken);
 
             if (!isAdded()
-                    || localMediaPlayer != mp
+                    || localExoMediaPlayer != mp
                     || requestToken != activePlaybackRequestToken
                     || !TextUtils.equals(track.videoId, loadedVideoId)) {
                 Log.d(TAG, "onPrepared: released stale player for videoId=" + track.videoId
                         + " token=" + requestToken);
-                releaseSingleMediaPlayer(mp);
+                releaseSingleExoMediaPlayer(mp);
                 return;
             }
 
@@ -2254,11 +1597,11 @@ public class SongPlayerFragment extends Fragment {
                     prefetchNextTrackStream();
                 } catch (Exception startError) {
                     Log.e(TAG, "onPrepared: start failed for videoId=" + track.videoId, startError);
-                    if (localMediaPlayer == mp) {
-                        releaseLocalMediaPlayer();
+                    if (localExoMediaPlayer == mp) {
+                        releaseLocalExoMediaPlayer();
                         usingOfflineSource = false;
                     } else {
-                        releaseSingleMediaPlayer(mp);
+                        releaseSingleExoMediaPlayer(mp);
                     }
                     onFailure.run();
                     return;
@@ -2289,12 +1632,12 @@ public class SongPlayerFragment extends Fragment {
                     + " videoId=" + track.videoId
                     + " token=" + requestToken);
 
-            if (localMediaPlayer == mp) {
+            if (localExoMediaPlayer == mp) {
                 stopLocalProgressTicker();
-                releaseLocalMediaPlayer();
+                releaseLocalExoMediaPlayer();
                 usingOfflineSource = false;
             } else {
-                releaseSingleMediaPlayer(mp);
+                releaseSingleExoMediaPlayer(mp);
             }
 
             if (requestToken != activePlaybackRequestToken) {
@@ -2322,11 +1665,11 @@ public class SongPlayerFragment extends Fragment {
             localSourcePreparing = false;
             Log.e(TAG, "startMediaPlaybackFromSource: setDataSource/prepareAsync failed for source="
                     + maskUrlForLog(source), e);
-            if (localMediaPlayer == player) {
-                releaseLocalMediaPlayer();
+            if (localExoMediaPlayer == player) {
+                releaseLocalExoMediaPlayer();
                 usingOfflineSource = false;
             } else {
-                releaseSingleMediaPlayer(player);
+                releaseSingleExoMediaPlayer(player);
             }
             onFailure.run();
             return;
@@ -2369,7 +1712,7 @@ public class SongPlayerFragment extends Fragment {
         // showPlayerArtworkLoadingState() moved to playCurrentTrack() to avoid race conditions
     }
 
-    private void releaseSingleMediaPlayer(@Nullable MediaPlayer player) {
+    private void releaseSingleExoMediaPlayer(@Nullable ExoMediaPlayer player) {
         if (player == null) {
             return;
         }
@@ -2408,24 +1751,7 @@ public class SongPlayerFragment extends Fragment {
         return pendingStreamResolverFuture != null && !pendingStreamResolverFuture.isDone();
     }
 
-    private void pauseYouTubePlaybackEngine(@NonNull String reason) {
-        if (youTubePlayer == null) {
-            return;
-        }
-
-        try {
-            youTubePlayer.pause();
-            Log.d(TAG, "pauseYouTubePlaybackEngine: paused reason=" + reason);
-        } catch (Exception e) {
-            Log.w(TAG, "pauseYouTubePlaybackEngine: pause failed reason=" + reason, e);
-        }
-    }
-
-    private boolean tryYouTubeFallbackForCurrentTrack(@NonNull String reason) {
-        return tryYouTubeFallbackForCurrentTrack(reason, false);
-    }
-
-    private boolean tryYouTubeFallbackForCurrentTrack(@NonNull String reason, boolean forceAttempt) {
+    private boolean tryReresolveOrSkipCurrentTrack(@NonNull String reason, boolean forceAttempt) {
         if (!isAdded() || !isNetworkAvailable()) {
             return false;
         }
@@ -2438,40 +1764,37 @@ public class SongPlayerFragment extends Fragment {
             return false;
         }
 
-        if (!forceAttempt
-                && usingYoutubeFallbackSource
-                && playerReady
-                && youTubePlayer != null
-                && TextUtils.equals(track.videoId, loadedVideoId)) {
-            if (isPlaying) {
-                try {
-                    youTubePlayer.play();
-                } catch (Exception ignored) {
-                }
-            }
+        // If this video already consumed its single re-resolution retry, skip to next track.
+        if (TextUtils.equals(lastReresolveVideoId, track.videoId)) {
+            Log.w(TAG, "tryYouTubeFallbackForCurrentTrack: re-resolve already attempted for "
+                    + track.videoId + ", skipping to next. reason=" + reason);
+            lastReresolveVideoId = null;
+            handleTrackEnded();
             return true;
         }
 
-        playerEngineRecoveryAttempts = 0;
-        resetPlaybackErrorState();
-        resetEmbedRetryState();
-        Log.w(TAG, "tryYouTubeFallbackForCurrentTrack: starting embedded YouTube playback. reason="
+        Log.w(TAG, "tryYouTubeFallbackForCurrentTrack: invalidating URL cache and re-resolving. reason="
                 + reason + " videoId=" + track.videoId);
+        lastReresolveVideoId = track.videoId;
+
+        // Drop cached URL so the next resolveStreamUrl fetches a fresh one.
+        InnertubeResolver.invalidate(track.videoId);
 
         cancelSourcePrepareTimeout();
+        cancelPendingStreamResolver();
         stopLocalProgressTicker();
-        releaseLocalMediaPlayer();
+        releaseLocalExoMediaPlayer();
         usingOfflineSource = false;
-        usingYoutubeFallbackSource = true;
-        youtubePlaybackActive = false;
-        updatePlayerSurfaceForSource();
-        updatePlayPauseIcon();
-        updateMediaSessionState();
-        updateMediaNotification();
-        syncMiniStateWithPlaylist();
-        persistPlaybackSnapshot(false);
 
-        playWithYouTubePlayer(track);
+        // Clear any prefetched URL for this track (it may also be stale).
+        if (TextUtils.equals(track.videoId, prefetchedNextVideoId)) {
+            prefetchedNextVideoId = null;
+            prefetchedNextUrl = null;
+        }
+
+        // Retry forcing the alternative client chain (TVHTML5_SIMPLYEMBEDDED first) to
+        // bypass LOGIN_REQUIRED / age-gated responses from ANDROID_MUSIC.
+        resolveAndPlayOnlineTrack(track, activePlaybackRequestToken, true);
         return true;
     }
 
@@ -2661,48 +1984,6 @@ public class SongPlayerFragment extends Fragment {
                 .trim();
     }
 
-    private void playWithYouTubePlayer(@NonNull PlayerTrack track) {
-        if (!isAdded()) {
-            return;
-        }
-        if (youtubePlayerView == null) {
-            Log.e(TAG, "playWithYouTubePlayer: youtubePlayerView is null");
-            return;
-        }
-
-        if (!playerReady || youTubePlayer == null) {
-            setupYouTubePlayer();
-            return;
-        }
-
-        usingYoutubeFallbackSource = true;
-        ensureProgressUiBeforeVideoLoad(track);
-        updatePlayerSurfaceForSource();
-
-        float startAt = Math.max(0f, currentSeconds);
-        youtubePlaybackActive = false;
-        try {
-            if (isPlaying) {
-                // Cuando el usuario navega rapido fuera del modulo, evitamos quedar en "cue"
-                // y forzamos carga/reproduccion para mantener el audio en segundo plano.
-                boolean forceBackgroundPlayback = appInBackground || isHidden();
-                if (isResumed() || forceBackgroundPlayback) {
-                    youTubePlayer.loadVideo(track.videoId, startAt);
-                } else {
-                    YouTubePlayerUtils.loadOrCueVideo(youTubePlayer, getLifecycle(), track.videoId, startAt);
-                }
-            } else {
-                youTubePlayer.cueVideo(track.videoId, startAt);
-            }
-            Log.d(TAG, "playWithYouTubePlayer: videoId=" + track.videoId + " startAt=" + startAt);
-            if (isPlaying) {
-                scheduleAutoplayRecoveryForCurrentTrack();
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "playWithYouTubePlayer: failed to start fallback videoId=" + track.videoId, e);
-        }
-    }
-
     private void ensureProgressUiBeforeVideoLoad(@NonNull PlayerTrack track) {
         totalSeconds = Math.max(totalSeconds, Math.max(1, parseDurationSeconds(track.duration)));
         currentSeconds = Math.max(0, Math.min(currentSeconds, Math.max(0, totalSeconds - 1)));
@@ -2721,7 +2002,7 @@ public class SongPlayerFragment extends Fragment {
     private void scheduleSourcePrepareTimeout(
             @NonNull PlayerTrack track,
             long requestToken,
-            @NonNull MediaPlayer player,
+            @NonNull ExoMediaPlayer player,
             @NonNull Runnable onFailure
     ) {
         cancelSourcePrepareTimeout();
@@ -2729,7 +2010,7 @@ public class SongPlayerFragment extends Fragment {
             if (!isAdded()) {
                 return;
             }
-            if (localMediaPlayer != player
+            if (localExoMediaPlayer != player
                     || requestToken != activePlaybackRequestToken
                     || !TextUtils.equals(track.videoId, loadedVideoId)) {
                 return;
@@ -2740,7 +2021,7 @@ public class SongPlayerFragment extends Fragment {
                     + " timeoutMs=" + SOURCE_PREPARE_TIMEOUT_MS);
         localSourcePreparing = false;
             stopLocalProgressTicker();
-            releaseLocalMediaPlayer();
+            releaseLocalExoMediaPlayer();
             onFailure.run();
         };
         localProgressHandler.postDelayed(sourcePrepareTimeoutRunnable, SOURCE_PREPARE_TIMEOUT_MS);
@@ -2754,19 +2035,12 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void markPlaybackUnavailable(@NonNull String message) {
-        if (tryYouTubeFallbackForCurrentTrack(message)) {
-            return;
-        }
-
-        pauseYouTubePlaybackEngine("markPlaybackUnavailable");
-        usingYoutubeFallbackSource = false;
-        youtubePlaybackActive = false;
         Log.e(TAG, "markPlaybackUnavailable: " + message
             + " loadedVideoId=" + loadedVideoId
             + " activeToken=" + activePlaybackRequestToken);
         cancelSourcePrepareTimeout();
         stopLocalProgressTicker();
-        releaseLocalMediaPlayer();
+        releaseLocalExoMediaPlayer();
         usingOfflineSource = false;
         pauseRequestedByUser = true;
         isPlaying = false;
@@ -2778,6 +2052,9 @@ public class SongPlayerFragment extends Fragment {
         updateMediaNotification();
         syncMiniStateWithPlaylist();
         persistPlaybackSnapshot(false);
+
+        // No further fallbacks — skip forward.
+        handleTrackEnded();
 
         if (isAdded() && !message.trim().isEmpty()) {
             
@@ -2901,7 +2178,7 @@ public class SongPlayerFragment extends Fragment {
         int crossfadeDurationMs = getOfflineCrossfadeDurationMs();
         if (!isAdded()
                 || !usingOfflineSource
-                || localMediaPlayer == null
+                || localExoMediaPlayer == null
                 || localSourcePreparing
                 || localCrossfadeInProgress
                 || userSeeking
@@ -2914,7 +2191,7 @@ public class SongPlayerFragment extends Fragment {
         int remainingMs = Math.max(0, durationMs - Math.max(0, positionMs));
         
         // Safety: if we have very little time left (e.g. < 500ms) and no crossfade has started,
-        // it might be too late to prepare a new MediaPlayer, but we should try anyway if remainingMs <= crossfadeDurationMs.
+        // it might be too late to prepare a new ExoMediaPlayer, but we should try anyway if remainingMs <= crossfadeDurationMs.
         if (remainingMs > crossfadeDurationMs) {
             return;
         }
@@ -2941,11 +2218,11 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void startOfflineCrossfadeTransition(int crossfadeDurationMs) {
-        if (!isAdded() || localMediaPlayer == null || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) {
+        if (!isAdded() || localExoMediaPlayer == null || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) {
             return;
         }
 
-        MediaPlayer outgoing = localMediaPlayer;
+        ExoMediaPlayer outgoing = localExoMediaPlayer;
         int nextIndex = resolveNextIndexForCompletionCrossfade();
         if (nextIndex < 0 || nextIndex >= tracks.size()) {
             startOfflineFadeOutOnly(outgoing, crossfadeDurationMs);
@@ -2981,7 +2258,7 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
-        MediaPlayer incoming = new MediaPlayer();
+        ExoMediaPlayer incoming = new ExoMediaPlayer(requireContext().getApplicationContext());
         try {
             incoming.setAudioAttributes(new AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -3002,7 +2279,7 @@ public class SongPlayerFragment extends Fragment {
             incoming.start();
         } catch (Exception e) {
             Log.e(TAG, "Crossfade: failed to prepare incoming player", e);
-            releaseSingleMediaPlayer(incoming);
+            releaseSingleExoMediaPlayer(incoming);
             startOfflineFadeOutOnly(outgoing, crossfadeDurationMs);
             return;
         }
@@ -3016,7 +2293,7 @@ public class SongPlayerFragment extends Fragment {
         localCrossfadeTicker = new Runnable() {
             @Override
             public void run() {
-                if (!localCrossfadeInProgress || localMediaPlayer != outgoing) {
+                if (!localCrossfadeInProgress || localExoMediaPlayer != outgoing) {
                     return;
                 }
 
@@ -3051,8 +2328,8 @@ public class SongPlayerFragment extends Fragment {
         localProgressHandler.post(localCrossfadeTicker);
     }
 
-    private void startOfflineFadeOutOnly(@NonNull MediaPlayer outgoing, int fadeDurationMs) {
-        if (localCrossfadeInProgress || localMediaPlayer != outgoing) {
+    private void startOfflineFadeOutOnly(@NonNull ExoMediaPlayer outgoing, int fadeDurationMs) {
+        if (localCrossfadeInProgress || localExoMediaPlayer != outgoing) {
             return;
         }
 
@@ -3066,7 +2343,7 @@ public class SongPlayerFragment extends Fragment {
         localCrossfadeTicker = new Runnable() {
             @Override
             public void run() {
-                if (!localCrossfadeInProgress || localMediaPlayer != outgoing) {
+                if (!localCrossfadeInProgress || localExoMediaPlayer != outgoing) {
                     return;
                 }
 
@@ -3117,8 +2394,8 @@ public class SongPlayerFragment extends Fragment {
         return -1;
     }
 
-    private void finalizeOfflineCrossfade(@NonNull MediaPlayer outgoing) {
-        MediaPlayer incoming = localCrossfadeIncomingPlayer;
+    private void finalizeOfflineCrossfade(@NonNull ExoMediaPlayer outgoing) {
+        ExoMediaPlayer incoming = localCrossfadeIncomingPlayer;
         int nextIndex = localCrossfadeTargetIndex;
 
         localCrossfadeInProgress = false;
@@ -3130,13 +2407,13 @@ public class SongPlayerFragment extends Fragment {
         }
         localCrossfadeIncomingPlayer = null;
 
-        releaseSingleMediaPlayer(outgoing);
+        releaseSingleExoMediaPlayer(outgoing);
 
         if (incoming == null || nextIndex < 0 || nextIndex >= tracks.size()) {
             return;
         }
 
-        localMediaPlayer = incoming;
+        localExoMediaPlayer = incoming;
         usingOfflineSource = true;
         currentIndex = nextIndex;
         pauseRequestedByUser = false;
@@ -3151,19 +2428,19 @@ public class SongPlayerFragment extends Fragment {
         }
 
         incoming.setOnCompletionListener(mp -> {
-            if (localMediaPlayer != mp) {
+            if (localExoMediaPlayer != mp) {
                 return;
             }
             stopLocalProgressTicker();
             handleTrackEnded();
         });
         incoming.setOnErrorListener((mp, what, extra) -> {
-            if (localMediaPlayer == mp) {
+            if (localExoMediaPlayer == mp) {
                 stopLocalProgressTicker();
-                releaseLocalMediaPlayer();
+                releaseLocalExoMediaPlayer();
                 usingOfflineSource = false;
             } else {
-                releaseSingleMediaPlayer(mp);
+                releaseSingleExoMediaPlayer(mp);
             }
             playCurrentTrack();
             return true;
@@ -3188,13 +2465,13 @@ public class SongPlayerFragment extends Fragment {
         }
 
         if (localCrossfadeIncomingPlayer != null) {
-            releaseSingleMediaPlayer(localCrossfadeIncomingPlayer);
+            releaseSingleExoMediaPlayer(localCrossfadeIncomingPlayer);
             localCrossfadeIncomingPlayer = null;
         }
 
-        if (localMediaPlayer != null) {
+        if (localExoMediaPlayer != null) {
             try {
-                localMediaPlayer.setVolume(1f, 1f);
+                localExoMediaPlayer.setVolume(1f, 1f);
             } catch (Exception ignored) {
             }
         }
@@ -3209,22 +2486,22 @@ public class SongPlayerFragment extends Fragment {
         localProgressHandler.removeCallbacks(localProgressTicker);
     }
 
-    private void releaseLocalMediaPlayer() {
+    private void releaseLocalExoMediaPlayer() {
         cancelOfflineCrossfade();
         cancelSourcePrepareTimeout();
         localSourcePreparing = false;
-        if (localMediaPlayer == null) {
+        if (localExoMediaPlayer == null) {
             return;
         }
         try {
-            localMediaPlayer.stop();
+            localExoMediaPlayer.stop();
         } catch (Exception ignored) {
         }
         try {
-            localMediaPlayer.release();
+            localExoMediaPlayer.release();
         } catch (Exception ignored) {
         }
-        localMediaPlayer = null;
+        localExoMediaPlayer = null;
         usingOfflineSource = false;
     }
 
@@ -3892,7 +3169,7 @@ public class SongPlayerFragment extends Fragment {
 
         String requestVideoId = track.videoId;
         SocialStats cachedSnapshot = cached;
-        boolean deferFetch = cached == null && isPlaying && !usingOfflineSource && !playerReady;
+        boolean deferFetch = cached == null && isPlaying && !usingOfflineSource;
         scheduleSocialStatsFetch(requestVideoId, apiKey, cachedSnapshot, deferFetch);
     }
 
@@ -4112,7 +3389,6 @@ public class SongPlayerFragment extends Fragment {
             lastPersistedSecond = -1;
         }
 
-        resetEmbedErrorAutoskipWindow();
         currentIndex = index;
         isPlaying = true;
         bindCurrentTrack(!startFromBeginning);
@@ -4136,11 +3412,9 @@ public class SongPlayerFragment extends Fragment {
         pauseRequestedByUser = true;
         cancelAutoplayRecovery();
         cancelPendingStreamResolver();
-        pauseYouTubePlaybackEngine("session_exit");
-        youtubePlaybackActive = false;
         persistPositionForLoadedTrack();
         stopLocalProgressTicker();
-        releaseLocalMediaPlayer();
+        releaseLocalExoMediaPlayer();
         isPlaying = false;
         updatePlayPauseIcon();
         updateMediaSessionState();
@@ -4364,11 +3638,8 @@ public class SongPlayerFragment extends Fragment {
             persistPositionForLoadedTrack();
             // Stop any playing audio immediately to prevent mixing
             stopLocalProgressTicker();
-            releaseLocalMediaPlayer();
-            pauseYouTubePlaybackEngine("replace_queue_new_track");
+            releaseLocalExoMediaPlayer();
             usingOfflineSource = false;
-            usingYoutubeFallbackSource = false;
-            youtubePlaybackActive = false;
         }
 
         tracks.clear();
@@ -4402,8 +3673,6 @@ public class SongPlayerFragment extends Fragment {
             loadedVideoId = "";
             lastPersistedSecond = -1;
         }
-        
-        resetEmbedErrorAutoskipWindow();
 
         cacheOriginalQueueOrder();
         if (shuffleEnabled) {
@@ -4474,27 +3743,9 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void updatePlayerSurfaceForSource() {
-        if (youtubePlayerView == null || ivPlayerCover == null) {
+        if (ivPlayerCover == null) {
             return;
         }
-
-        if (usingYoutubeFallbackSource) {
-            boolean showVideoSurface = videoModeEnabled && embedControlsUnlocked;
-            youtubePlayerView.setVisibility(View.VISIBLE);
-            youtubePlayerView.setAlpha(showVideoSurface ? 1f : 0.01f);
-            youtubePlayerView.setClickable(showVideoSurface);
-            ivPlayerCover.setVisibility(showVideoSurface ? View.INVISIBLE : View.VISIBLE);
-            ivPlayerCover.setClickable(!showVideoSurface);
-            if (ivPlayerBackdrop != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                ivPlayerBackdrop.setRenderEffect(RenderEffect.createBlurEffect(8f, 8f, Shader.TileMode.CLAMP));
-                ivPlayerBackdrop.setAlpha(0.52f);
-            }
-            return;
-        }
-
-        youtubePlayerView.setVisibility(View.INVISIBLE);
-        youtubePlayerView.setAlpha(1f);
-        youtubePlayerView.setClickable(false);
         ivPlayerCover.setVisibility(View.VISIBLE);
         ivPlayerCover.setClickable(true);
         applyPlayerBackdropBlur();
