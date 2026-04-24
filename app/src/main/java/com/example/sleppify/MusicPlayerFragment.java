@@ -603,6 +603,7 @@ public class MusicPlayerFragment extends Fragment {
     private PopupWindow playlistActionPopupWindow;
     private long miniSnapshotCacheReadAtMs;
     private boolean restoringHiddenMiniPlayerFromSnapshot;
+    private boolean lastMiniPlayerIsPlaying;
     @NonNull
     private String streamingOauthAccountEmail = "";
     @NonNull
@@ -4140,6 +4141,37 @@ public class MusicPlayerFragment extends Fragment {
             .show();
     }
 
+    private void showRenamePlaylistDialog(@NonNull YouTubeMusicService.TrackResult playlistTrack) {
+        if (!isAdded()) return;
+
+        final String oldName = playlistTrack.title == null ? "" : playlistTrack.title.trim();
+        if (TextUtils.isEmpty(oldName)) {
+            android.widget.Toast.makeText(requireContext(), "Nombre inválido", android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        final android.widget.EditText input = new android.widget.EditText(requireContext());
+        input.setText(oldName);
+        input.setSelection(Math.min(oldName.length(), oldName.length()));
+
+        new com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
+            .setTitle("Renombrar playlist")
+            .setMessage("Nuevo nombre:")
+            .setView(input)
+            .setPositiveButton("Guardar", (dialog, which) -> {
+                String newName = input.getText() == null ? "" : input.getText().toString().trim();
+                boolean ok = CustomPlaylistsStore.INSTANCE.renamePlaylist(requireContext(), oldName, newName);
+                if (ok) {
+                    android.widget.Toast.makeText(requireContext(), "Playlist renombrada", android.widget.Toast.LENGTH_SHORT).show();
+                    renderLibraryResults();
+                } else {
+                    android.widget.Toast.makeText(requireContext(), "No se pudo renombrar", android.widget.Toast.LENGTH_SHORT).show();
+                }
+            })
+            .setNegativeButton("Cancelar", null)
+            .show();
+    }
+
     private void addSearchTrackToFavorites(@NonNull YouTubeMusicService.TrackResult track) {
         if (!isAdded() || !track.isVideo()) {
             return;
@@ -4219,10 +4251,14 @@ public class MusicPlayerFragment extends Fragment {
             getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
+                    .setCustomAnimations(
+                            R.anim.player_screen_enter,
+                            R.anim.none
+                    )
                     .hide(this)
                     .show(existingPlayer)
                     .commit();
-                    invalidateMiniSnapshotCache();
+            invalidateMiniSnapshotCache();
             return;
         }
 
@@ -4299,6 +4335,12 @@ public class MusicPlayerFragment extends Fragment {
                 getParentFragmentManager()
                         .beginTransaction()
                         .setReorderingAllowed(true)
+                        .setCustomAnimations(
+                                R.anim.player_screen_enter,
+                                R.anim.player_screen_exit,
+                                R.anim.player_screen_enter,
+                                R.anim.player_screen_exit
+                        )
                         .hide(this)
                         .show(existingPlayer)
                         .commit();
@@ -4327,7 +4369,12 @@ public class MusicPlayerFragment extends Fragment {
         androidx.fragment.app.FragmentTransaction transaction = getParentFragmentManager()
                 .beginTransaction()
                 .setReorderingAllowed(true)
-                // custom animations removed
+                .setCustomAnimations(
+                        R.anim.player_screen_enter,
+                        R.anim.player_screen_exit,
+                        R.anim.player_screen_enter,
+                        R.anim.player_screen_exit
+                )
                 .add(R.id.fragmentContainer, playerFragment, "song_player");
 
         if (showPlayer) {
@@ -4503,7 +4550,10 @@ public class MusicPlayerFragment extends Fragment {
             getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
-                    // custom animations removed
+                    .setCustomAnimations(
+                            R.anim.player_screen_enter,
+                            R.anim.none
+                    )
                     .hide(this)
                     .show(existingPlayer)
                     .commit();
@@ -4522,7 +4572,10 @@ public class MusicPlayerFragment extends Fragment {
             getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
-                    // custom animations removed
+                    .setCustomAnimations(
+                            R.anim.player_screen_enter,
+                            R.anim.none
+                    )
                     .hide(this)
                     .add(R.id.fragmentContainer, playerFragment, "song_player")
                     .commit();
@@ -4620,6 +4673,13 @@ public class MusicPlayerFragment extends Fragment {
             miniPlaying = songPlayer.externalIsPlaying();
         } else if (currentTrack != null && totalSeconds <= 1) {
             totalSeconds = Math.max(1, parseDurationSeconds(currentTrack.duration));
+        }
+
+        if (lastMiniPlayerIsPlaying != miniPlaying) {
+            lastMiniPlayerIsPlaying = miniPlaying;
+            if (adapter != null) {
+                adapter.notifyDataSetChanged();
+            }
         }
 
         if (!playerAttached) {
@@ -4788,10 +4848,44 @@ public class MusicPlayerFragment extends Fragment {
 
         // Hide other buttons
         view.findViewById(R.id.btnBsPlay).setVisibility(View.GONE);
-        view.findViewById(R.id.btnBsFavorite).setVisibility(View.GONE);
-        view.findViewById(R.id.btnBsDownload).setVisibility(View.GONE);
+        View btnDeletePlaylist = view.findViewById(R.id.btnBsFavorite);
+        View btnRenamePlaylist = view.findViewById(R.id.btnBsDownload);
         view.findViewById(R.id.btnBsAddToQueue).setVisibility(View.GONE);
         view.findViewById(R.id.btnBsPlayPlaylist).setVisibility(View.GONE);
+
+        boolean isCustomPlaylist = false;
+        java.util.List<String> customPlaylists = CustomPlaylistsStore.INSTANCE.getAllPlaylistNames(requireContext());
+        for (String customName : customPlaylists) {
+            if (customName.equalsIgnoreCase(track.title)) {
+                isCustomPlaylist = true;
+                break;
+            }
+        }
+
+        if (isCustomPlaylist) {
+            btnDeletePlaylist.setVisibility(View.VISIBLE);
+            ImageView ivDelete = btnDeletePlaylist.findViewById(R.id.ivBsFavorite);
+            TextView tvDelete = btnDeletePlaylist.findViewById(R.id.tvBsFavorite);
+            ivDelete.setImageResource(R.drawable.ic_delete_modern);
+            tvDelete.setText("Eliminar playlist");
+            btnDeletePlaylist.setOnClickListener(v -> {
+                dialog.dismiss();
+                showDeletePlaylistConfirmDialog(track);
+            });
+
+            btnRenamePlaylist.setVisibility(View.VISIBLE);
+            ImageView ivRename = btnRenamePlaylist.findViewById(R.id.ivBsDownload);
+            TextView tvRename = btnRenamePlaylist.findViewById(R.id.tvBsDownload);
+            ivRename.setImageResource(R.drawable.ic_edit_24);
+            tvRename.setText("Renombrar playlist");
+            btnRenamePlaylist.setOnClickListener(v -> {
+                dialog.dismiss();
+                showRenamePlaylistDialog(track);
+            });
+        } else {
+            btnDeletePlaylist.setVisibility(View.GONE);
+            btnRenamePlaylist.setVisibility(View.GONE);
+        }
 
         View parent = (View) view.getParent();
         if (parent != null) {
@@ -4918,7 +5012,10 @@ public class MusicPlayerFragment extends Fragment {
             getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
-                    // custom animations removed
+                    .setCustomAnimations(
+                            R.anim.player_screen_enter,
+                            R.anim.none
+                    )
                     .hide(this)
                     .show(existingPlayer)
                     .commit();
@@ -4937,7 +5034,10 @@ public class MusicPlayerFragment extends Fragment {
             getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
-                    // custom animations removed
+                    .setCustomAnimations(
+                            R.anim.player_screen_enter,
+                            R.anim.none
+                    )
                     .hide(this)
                     .add(R.id.fragmentContainer, playerFragment, "song_player")
                     .commit();

@@ -128,8 +128,6 @@ class SearchActivity : AppCompatActivity() {
                 imm?.showSoftInput(etSearchQuery, InputMethodManager.SHOW_IMPLICIT)
             }
         }
-
-        overridePendingTransition(R.anim.fade_in, R.anim.fade_out)
     }
 
     private fun initViews() {
@@ -529,7 +527,6 @@ class SearchActivity : AppCompatActivity() {
             putExtra(EXTRA_RESULT_TRACKS_JSON, queueJson.toString())
             startActivity(this)
         }
-        overridePendingTransition(R.anim.fade_in, R.anim.fade_out)
     }
 
     private fun showTrackOptionsBottomSheet(track: YouTubeMusicService.TrackResult, anchor: View) {

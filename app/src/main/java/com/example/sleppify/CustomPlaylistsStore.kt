@@ -133,4 +133,39 @@ object CustomPlaylistsStore {
         // Note: Cloud sync deletion can be added here when implemented
         return true
     }
+
+    fun renamePlaylist(context: Context, oldName: String, newName: String): Boolean {
+        val from = oldName.trim()
+        val to = newName.trim()
+        if (TextUtils.isEmpty(from) || TextUtils.isEmpty(to)) return false
+        if (from.equals(to, ignoreCase = true)) return false
+
+        val prefs = getPrefs(context)
+        val names = getAllPlaylistNames(context).toMutableList()
+        val index = names.indexOfFirst { it.equals(from, ignoreCase = true) }
+        if (index < 0) return false
+
+        val existsTarget = names.any { it.equals(to, ignoreCase = true) }
+        if (existsTarget) return false
+
+        val oldKey = CUSTOM_PLAYLIST_PREFIX + from
+        val newKey = CUSTOM_PLAYLIST_PREFIX + to
+        val existingJson = prefs.getString(oldKey, "[]") ?: "[]"
+
+        prefs.edit()
+            .putString(newKey, existingJson)
+            .remove(oldKey)
+            .apply()
+
+        names[index] = to
+        prefs.edit().putString(KEY_PLAYLIST_NAMES, JSONArray(names).toString()).apply()
+
+        // Sync rename as a full re-sync under new name if signed in.
+        if (AuthManager.getInstance(context).isSignedIn()) {
+            val updatedTracks = getTracksFromPlaylist(context, to)
+            CloudSyncManager.getInstance(context).syncPlaylistToCloud(to, updatedTracks)
+        }
+
+        return true
+    }
 }

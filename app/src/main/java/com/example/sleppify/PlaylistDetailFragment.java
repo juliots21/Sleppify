@@ -3369,6 +3369,10 @@ public class PlaylistDetailFragment extends Fragment {
             getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
+                    .setCustomAnimations(
+                            R.anim.player_screen_enter,
+                            R.anim.none
+                    )
                     .hide(this)
                     .show(existingPlayer)
                     .commit();
@@ -3483,6 +3487,10 @@ public class PlaylistDetailFragment extends Fragment {
         getParentFragmentManager()
                 .beginTransaction()
                 .setReorderingAllowed(true)
+                .setCustomAnimations(
+                        R.anim.player_screen_enter,
+                        R.anim.none
+                )
                 .hide(this)
                 .add(R.id.fragmentContainer, playerFragment, "song_player")
                 .commit();

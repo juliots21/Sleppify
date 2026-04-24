@@ -769,10 +769,11 @@ class MainActivity : AppCompatActivity() {
 
     fun revealModuleContent() {
         if (isFinishing || isDestroyed) return
-        fragmentContainer.animate().alpha(1f).setDuration(MODULE_CONTENT_FADE_IN_MS).start()
-        moduleLoadingOverlay.animate().alpha(0f).setDuration(MODULE_CONTENT_FADE_IN_MS).withEndAction {
-            moduleLoadingOverlay.visibility = View.GONE
-        }.start()
+        fragmentContainer.animate().cancel()
+        moduleLoadingOverlay.animate().cancel()
+        fragmentContainer.alpha = 1f
+        moduleLoadingOverlay.alpha = 0f
+        moduleLoadingOverlay.visibility = View.GONE
     }
 
     private fun markStreamingEntryAsLibrary() {
@@ -803,22 +804,25 @@ class MainActivity : AppCompatActivity() {
         if (player.externalTryEnterMiniMode()) return true
 
         showModuleLoadingOverlay()
-        fragmentContainer.alpha = 0f
-        
-        lifecycleScope.launch {
-            snapshotStreamingScreenBeforeNavigation()
-            val fallback = resolveSongPlayerReturnTarget(player.externalGetReturnTargetTag())
-            supportFragmentManager.beginTransaction().apply {
-                setReorderingAllowed(true)
-                // setCustomAnimations deleted
-                if (fallback != null && fallback.isAdded && fallback != player) {
-                    hide(player).show(fallback)
-                } else {
-                    remove(player)
-                }
-                commit()
+
+        snapshotStreamingScreenBeforeNavigation()
+        val fallback = resolveSongPlayerReturnTarget(player.externalGetReturnTargetTag())
+        supportFragmentManager.beginTransaction().apply {
+            setReorderingAllowed(true)
+            // setCustomAnimations deleted
+            setCustomAnimations(
+                R.anim.none,
+                R.anim.player_screen_exit
+            )
+            if (fallback != null && fallback.isAdded && fallback != player) {
+                hide(player).show(fallback)
+            } else {
+                remove(player)
             }
-            delay(MODULE_LOAD_OVERLAY_MIN_MS)
+            commit()
+        }
+        lifecycleScope.launch {
+            delay(290)
             revealModuleContent()
         }
         return true

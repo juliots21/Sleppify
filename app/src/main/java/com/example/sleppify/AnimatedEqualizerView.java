@@ -30,7 +30,7 @@ public class AnimatedEqualizerView extends View {
             boolean changed = false;
             for (int i = 0; i < 3; i++) {
                 if (Math.abs(barHeights[i] - targetHeights[i]) < 0.05f) {
-                    targetHeights[i] = 0.3f + random.nextFloat() * 0.7f;
+                    targetHeights[i] = 0.25f + random.nextFloat() * 0.45f;
                 }
                 
                 if (barHeights[i] < targetHeights[i]) {

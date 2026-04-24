@@ -332,6 +332,7 @@ public class SongPlayerFragment extends Fragment {
     private Bitmap mediaSessionArtwork;
     @NonNull
     private String mediaSessionArtworkVideoId = "";
+    private long lastEqKeepAliveAtMs;
     private final Runnable localProgressTicker = new Runnable() {
         @Override
         public void run() {
@@ -360,12 +361,29 @@ public class SongPlayerFragment extends Fragment {
                     updateMediaSessionState();
                     persistPlaybackSnapshot(false);
                 }
+
+                maybeKeepEqAlive();
             } catch (Exception ignored) {
             }
 
             localProgressHandler.postDelayed(this, 200L);
         }
     };
+
+    private void maybeKeepEqAlive() {
+        if (!isAdded() || !isPlaying) {
+            return;
+        }
+        long now = SystemClock.elapsedRealtime();
+        if (lastEqKeepAliveAtMs > 0 && (now - lastEqKeepAliveAtMs) < 15000L) {
+            return;
+        }
+        lastEqKeepAliveAtMs = now;
+        try {
+            AudioEffectsService.sendApply(requireContext().getApplicationContext());
+        } catch (Exception ignored) {
+        }
+    }
 
     @NonNull
     public static SongPlayerFragment newInstance(
@@ -1066,6 +1084,8 @@ public class SongPlayerFragment extends Fragment {
                     updateMediaSessionState();
                     persistPlaybackSnapshot(false);
                 }
+
+                maybeKeepEqAlive();
             }
 
             @Override
@@ -4240,6 +4260,7 @@ public class SongPlayerFragment extends Fragment {
             cacheOriginalQueueOrder();
         }
 
+        refreshNextUp();
         persistPlaybackSnapshot(false);
         syncMiniStateWithPlaylist();
     }
@@ -4268,6 +4289,7 @@ public class SongPlayerFragment extends Fragment {
             cacheOriginalQueueOrder();
         }
 
+        refreshNextUp();
         persistPlaybackSnapshot(false);
         syncMiniStateWithPlaylist();
     }
@@ -4502,10 +4524,19 @@ public class SongPlayerFragment extends Fragment {
 
         if (target != null && target != this && target.isAdded()) {
             transaction
+                    .setCustomAnimations(
+                            R.anim.none,
+                            R.anim.player_screen_exit
+                    )
                     .hide(this)
                     .show(target);
         } else {
-            transaction.remove(this);
+            transaction
+                    .setCustomAnimations(
+                            R.anim.none,
+                            R.anim.player_screen_exit
+                    )
+                    .remove(this);
         }
 
         transaction.commit();
