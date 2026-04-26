@@ -34,7 +34,6 @@
         android:background="@drawable/bg_playlist_footer_extension"
         android:clickable="true"
         android:focusable="true"
-        android:foreground="?attr/selectableItemBackground"
         android:gravity="center_vertical"
         android:orientation="vertical"
         android:paddingStart="0dp"

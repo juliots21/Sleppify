@@ -79,10 +79,17 @@ class CloudSyncManager private constructor(context: Context) {
     private var streamingUploadRetryAttempt = 0
 
     init {
-        ensureEqDefaults()
-        ensureSettingsDefaults()
-        ensureAgendaDefaults()
-        registerPreferenceListenersIfNeeded()
+        // Postpone heavy initialization to avoid blocking startup
+        Thread {
+            ensureEqDefaults()
+            ensureSettingsDefaults()
+            ensureAgendaDefaults()
+            registerPreferenceListenersIfNeeded()
+        }.apply {
+            name = "CloudSync-Init"
+            isDaemon = true
+            start()
+        }
     }
 
     // ----- Defaults helper -----

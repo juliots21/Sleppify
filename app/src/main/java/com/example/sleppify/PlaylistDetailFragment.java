@@ -1643,13 +1643,6 @@ public class PlaylistDetailFragment extends Fragment {
 
         offlineProgressDone = -1;
         offlineProgressDownloaded = -1;
-        String optimisticCurrentId = ids.isEmpty() ? "" : ids.get(0);
-        setOfflineDownloadVisualState(
-            true,
-            optimisticCurrentId,
-            ids.toArray(new String[0]),
-            null
-        );
         offlineDownloadQueued = true;
         offlineHeaderTracksState = "Descarga offline en cola...";
         notifyHeaderChanged();
@@ -3371,9 +3364,9 @@ public class PlaylistDetailFragment extends Fragment {
                     .setReorderingAllowed(true)
                     .setCustomAnimations(
                             R.anim.player_screen_enter,
-                            R.anim.none
+                            R.anim.hold
                     )
-                    .hide(this)
+                    
                     .show(existingPlayer)
                     .commit();
             return;
@@ -3452,7 +3445,7 @@ public class PlaylistDetailFragment extends Fragment {
             getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
-                    .hide(this)
+                    
                     .show(existingPlayer)
                     .commit();
 
@@ -3489,10 +3482,10 @@ public class PlaylistDetailFragment extends Fragment {
                 .setReorderingAllowed(true)
                 .setCustomAnimations(
                         R.anim.player_screen_enter,
-                        R.anim.none
+                        R.anim.hold
                 )
-                .hide(this)
-                .add(R.id.fragmentContainer, playerFragment, "song_player")
+                
+                .add(R.id.playerContainer, playerFragment, "song_player")
                 .commit();
         // Don't update mini-player UI - keep it hidden while full player is visible
     }
@@ -3538,7 +3531,7 @@ public class PlaylistDetailFragment extends Fragment {
                     .beginTransaction()
                 // custom animations removed
                     .setReorderingAllowed(true)
-                    .hide(this)
+                    
                     .show(existingPlayer)
                     .commit();
         } else {
@@ -3557,8 +3550,8 @@ public class PlaylistDetailFragment extends Fragment {
                     .beginTransaction()
                     // custom animations removed
                     .setReorderingAllowed(true)
-                    .hide(this)
-                    .add(R.id.fragmentContainer, playerFragment, "song_player")
+                    
+                    .add(R.id.playerContainer, playerFragment, "song_player")
                     .commit();
         }
 
@@ -3633,7 +3626,7 @@ public class PlaylistDetailFragment extends Fragment {
         getParentFragmentManager()
                 .beginTransaction()
                 .setReorderingAllowed(true)
-                .add(R.id.fragmentContainer, playerFragment, "song_player")
+                .add(R.id.playerContainer, playerFragment, "song_player")
                 .hide(playerFragment)
                 .runOnCommit(() -> {
                     restoringHiddenPlayerFromSnapshot = false;
@@ -3734,7 +3727,7 @@ public class PlaylistDetailFragment extends Fragment {
                         .beginTransaction()
                         // custom animations removed
                         .setReorderingAllowed(true)
-                        .hide(this)
+                        
                         .show(existingPlayer)
                         .commit();
             }
@@ -3766,12 +3759,12 @@ public class PlaylistDetailFragment extends Fragment {
         androidx.fragment.app.FragmentTransaction transaction = getParentFragmentManager()
                 .beginTransaction()
                 .setReorderingAllowed(true)
-                .add(R.id.fragmentContainer, playerFragment, "song_player");
+                .add(R.id.playerContainer, playerFragment, "song_player");
 
         if (showPlayer) {
             transaction
                     // custom animations removed
-                    .hide(this)
+                    
                     .commit();
         } else {
             transaction
@@ -3850,7 +3843,7 @@ public class PlaylistDetailFragment extends Fragment {
         getParentFragmentManager()
                 .beginTransaction()
                 .setReorderingAllowed(true)
-                .add(R.id.fragmentContainer, playerFragment, "song_player")
+                .add(R.id.playerContainer, playerFragment, "song_player")
                 .hide(playerFragment)
                 .runOnCommit(() -> {
                     playerFragment.externalReplaceQueue(
@@ -3932,7 +3925,7 @@ public class PlaylistDetailFragment extends Fragment {
         getParentFragmentManager()
                 .beginTransaction()
                 .setReorderingAllowed(true)
-                .add(R.id.fragmentContainer, playerFragment, "song_player")
+                .add(R.id.playerContainer, playerFragment, "song_player")
                 .hide(playerFragment)
                 .commit();
 

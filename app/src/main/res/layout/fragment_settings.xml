@@ -239,6 +239,14 @@
                                 android:text="@string/settings_stream_crossfade_title"
                                 android:textColor="@color/text_primary"
                                 android:textSize="14sp" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="Te permite hacer crossfade entre canciones"
+                                android:textColor="@color/text_secondary"
+                                android:textSize="12sp" />
                         </LinearLayout>
                     </LinearLayout>
 

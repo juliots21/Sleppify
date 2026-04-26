@@ -39,7 +39,6 @@ class AuthManager private constructor(context: Context) {
 
     private val appContext: Context = context.applicationContext
     private val firebaseAuth: FirebaseAuth = FirebaseAuth.getInstance()
-    private val credentialManager: CredentialManager = CredentialManager.create(appContext)
 
     fun isSignedIn(): Boolean {
         return firebaseAuth.currentUser != null
@@ -107,7 +106,8 @@ class AuthManager private constructor(context: Context) {
             .addCredentialOption(googleIdOption)
             .build()
 
-        credentialManager.getCredentialAsync(
+        val cm = CredentialManager.create(activity)
+        cm.getCredentialAsync(
             activity,
             request,
             null,
@@ -167,9 +167,9 @@ class AuthManager private constructor(context: Context) {
             }
     }
 
-    fun signOut(callback: SimpleCallback) {
+    fun signOut(context: Context, callback: SimpleCallback) {
         firebaseAuth.signOut()
-        clearCredentialState(callback)
+        clearCredentialState(context, callback)
     }
 
     fun deleteCurrentUser(callback: SimpleCallback) {
@@ -182,7 +182,7 @@ class AuthManager private constructor(context: Context) {
         user.delete()
             .addOnSuccessListener {
                 firebaseAuth.signOut()
-                clearCredentialState(callback)
+                clearCredentialState(appContext, callback)
             }
             .addOnFailureListener { e ->
                 if (e is FirebaseAuthRecentLoginRequiredException) {
@@ -214,7 +214,7 @@ class AuthManager private constructor(context: Context) {
         user.delete()
             .addOnSuccessListener {
                 firebaseAuth.signOut()
-                clearCredentialState(callback)
+                clearCredentialState(activity, callback)
             }
             .addOnFailureListener { e ->
                 if (e is FirebaseAuthRecentLoginRequiredException && !alreadyRetriedAfterReauth) {
@@ -303,7 +303,8 @@ class AuthManager private constructor(context: Context) {
             .addCredentialOption(googleIdOption)
             .build()
 
-        credentialManager.getCredentialAsync(
+        val cm = CredentialManager.create(activity)
+        cm.getCredentialAsync(
             activity,
             request,
             null,
@@ -349,12 +350,13 @@ class AuthManager private constructor(context: Context) {
         return GoogleAuthProvider.getCredential(googleIdTokenCredential.idToken, null)
     }
 
-    private fun clearCredentialState(callback: SimpleCallback) {
+    private fun clearCredentialState(context: Context, callback: SimpleCallback) {
         try {
-            credentialManager.clearCredentialStateAsync(
+            val cm = CredentialManager.create(context)
+            cm.clearCredentialStateAsync(
                 ClearCredentialStateRequest(),
                 null,
-                ContextCompat.getMainExecutor(appContext),
+                ContextCompat.getMainExecutor(context),
                 object : androidx.credentials.CredentialManagerCallback<Void?, ClearCredentialException> {
                     override fun onResult(result: Void?) {
                         callback.onComplete(true, null)

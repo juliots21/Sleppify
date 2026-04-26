@@ -60,6 +60,7 @@ class MainActivity : AppCompatActivity() {
         private const val PREFS_BOOTSTRAP = "sleppify_bootstrap"
         private const val KEY_INITIAL_OAUTH_GATE_COMPLETED = "initial_oauth_gate_completed"
         private const val PREF_LAST_STREAM_SCREEN = "stream_last_screen"
+        private const val PREF_LAST_MAIN_MODULE = "last_main_module"
         private const val STREAM_SCREEN_LIBRARY = "library"
         private const val STREAM_SCREEN_PLAYLIST_DETAIL = "playlist_detail"
 
@@ -154,28 +155,47 @@ class MainActivity : AppCompatActivity() {
         configureHeaderActionForMainModules()
         configureAudioAuthorizationFlow()
         restoreMainModuleReferences()
-        
-        syncAudioEffectsServiceFromPreferences(forceSync = true)
-        syncDailyAgendaNotificationSchedule(forceSync = true)
 
         forceInitialOauthGate = !isInitialOauthGateCompleted()
         val shouldShowLoginGate = shouldShowLoginGateAtStartup()
 
         if (!shouldShowLoginGate) {
+            val prefs = getSharedPreferences(PREFS_BOOTSTRAP, Context.MODE_PRIVATE)
+            val lastModuleId = prefs.getInt(PREF_LAST_MAIN_MODULE, R.id.nav_schedule)
+
             if (savedInstanceState == null) {
-                bottomNav.selectedItemId = R.id.nav_schedule
+                bottomNav.selectedItemId = lastModuleId
+                currentMainNavItemId = lastModuleId
+                if (!switchToMainModule(lastModuleId)) {
+                    bottomNav.selectedItemId = R.id.nav_schedule
+                    currentMainNavItemId = R.id.nav_schedule
+                    switchToMainModule(R.id.nav_schedule)
+                }
             } else {
                 val selectedId = bottomNav.selectedItemId
+                currentMainNavItemId = selectedId
                 if (!switchToMainModule(selectedId)) {
-                    bottomNav.selectedItemId = R.id.nav_schedule
+                    bottomNav.selectedItemId = lastModuleId
+                    currentMainNavItemId = lastModuleId
+                    switchToMainModule(lastModuleId)
                 }
             }
             showMainShell()
-            if (authManagerLazy.isSignedIn()) {
-                authManagerLazy.getCurrentUser()?.let { handleSignedInUser(it, null) }
-            }
         } else {
             showLoginGate()
+        }
+
+        // Defer heavy startup work to background thread
+        lifecycleScope.launch {
+            delay(100) // Allow UI to render first
+            withContext(Dispatchers.IO) {
+                syncAudioEffectsServiceFromPreferences(forceSync = true)
+                syncDailyAgendaNotificationSchedule(forceSync = true)
+            }
+            // Handle signed in user async to avoid blocking UI
+            if (!shouldShowLoginGate && authManagerLazy.isSignedIn()) {
+                authManagerLazy.getCurrentUser()?.let { handleSignedInUser(it, null) }
+            }
         }
 
         if (intent?.getBooleanExtra("SHOW_SETTINGS", false) == true) {
@@ -202,6 +222,10 @@ class MainActivity : AppCompatActivity() {
 
             topAppBar.setPadding(topAppBar.paddingLeft, systemBars.top + extraPadding, topAppBar.paddingRight, topAppBar.paddingBottom)
             bottomNav.setPadding(systemBars.left, 0, systemBars.right, systemBars.bottom)
+            
+            val playerContainer = findViewById<View>(R.id.playerContainer)
+            playerContainer?.setPadding(0, 0, 0, systemBars.bottom)
+            
             insets
         }
     }
@@ -226,6 +250,21 @@ class MainActivity : AppCompatActivity() {
         if (intent.getBooleanExtra("SHOW_SETTINGS", false)) {
             enterSettings()
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt("current_main_nav_item_id", currentMainNavItemId)
+        outState.putBoolean("in_settings", inSettings)
+    }
+
+    override fun onRestoreInstanceState(savedInstanceState: Bundle) {
+        super.onRestoreInstanceState(savedInstanceState)
+        val savedNavId = savedInstanceState.getInt("current_main_nav_item_id", View.NO_ID)
+        if (savedNavId != View.NO_ID) {
+            currentMainNavItemId = savedNavId
+        }
+        inSettings = savedInstanceState.getBoolean("in_settings", false)
     }
 
     private fun handlePlayFromSearchIntent(intent: Intent) {
@@ -291,10 +330,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    @Suppress("DEPRECATION")
     private fun applySystemBarsStyle() {
-        val window = window
-        window.statusBarColor = Color.TRANSPARENT
-        window.navigationBarColor = Color.TRANSPARENT
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            window.statusBarColor = Color.TRANSPARENT
+            window.navigationBarColor = Color.TRANSPARENT
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             window.isStatusBarContrastEnforced = false
             window.isNavigationBarContrastEnforced = false
@@ -328,6 +369,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun syncAudioEffectsServiceFromPreferences(forceSync: Boolean, allowAuthorizationPrompt: Boolean = false) {
         val audioPrefs = getSharedPreferences(AudioEffectsService.PREFS_NAME, MODE_PRIVATE)
+
         val eqEnabled = audioPrefs.getBoolean(AudioEffectsService.KEY_ENABLED, false)
         val spatialEnabled = audioPrefs.getBoolean(AudioEffectsService.KEY_SPATIAL_ENABLED, false)
         val reverbLevel = audioPrefs.getInt(AudioEffectsService.KEY_REVERB_LEVEL, AudioEffectsService.REVERB_LEVEL_OFF)
@@ -493,7 +535,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (amoledChanged) {
-            lifecycleScope.launch { delay(700L); finalize() }
+            lifecycleScope.launch { delay(120L); finalize() }
         } else {
             finalize()
         }
@@ -669,13 +711,7 @@ class MainActivity : AppCompatActivity() {
         getMainModuleFragment(itemId)?.let { return it }
         val fragment: Fragment? = when (itemId) {
             R.id.nav_schedule -> WeeklySchedulerFragment()
-            R.id.nav_music -> {
-                try {
-                    Class.forName("com.example.sleppify.MusicPlayerFragment").newInstance() as Fragment
-                } catch (e: Exception) {
-                    null
-                }
-            }
+            R.id.nav_music -> MusicPlayerFragment()
             R.id.nav_scanner -> ScannerFragment()
             R.id.nav_equalizer -> EqualizerFragment()
             R.id.nav_apps -> AppsFragment()
@@ -726,7 +762,9 @@ class MainActivity : AppCompatActivity() {
         val target = supportFragmentManager.findFragmentByTag(tag) ?: getOrCreateMainModuleFragment(itemId) ?: return false
 
         if (currentMainNavItemId == R.id.nav_music && itemId != R.id.nav_music) markStreamingEntryAsLibrary()
-        if (currentMainNavItemId == itemId && target.isAdded && !inSettings) {
+
+        val isTrulySwitching = currentMainNavItemId != itemId || !target.isAdded
+        if (!isTrulySwitching && !inSettings) {
             updateHeaderTitleForModule(itemId)
             return true
         }
@@ -746,12 +784,27 @@ class MainActivity : AppCompatActivity() {
             hideIfVisible(this, songPlayerFragment, target)
             hideIfVisible(this, settingsFragment, target)
             
+            // Ensure the SongPlayerFragment in playerContainer is always hidden when
+            // switching modules. It lives in a separate elevated container, so hiding
+            // it via the fragment transaction alone is not enough — we must explicitly
+            // hide the fragment so the playerContainer doesn't cover the module content.
+            if (songPlayerFragment != null && songPlayerFragment!!.isAdded && !songPlayerFragment!!.isHidden) {
+                hide(songPlayerFragment!!)
+            }
+            
             if (target.isAdded) show(target) else add(R.id.fragmentContainer, target, tag)
             setMaxLifecycle(target, Lifecycle.State.RESUMED)
             commit()
         }
 
         currentMainNavItemId = itemId
+
+        // Persistir el último módulo abierto
+        getSharedPreferences(PREFS_BOOTSTRAP, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(PREF_LAST_MAIN_MODULE, itemId)
+            .apply()
+
         if (itemId == R.id.nav_music) markStreamingEntryAsLibrary()
         updateHeaderTitleForModule(itemId)
 
@@ -771,9 +824,8 @@ class MainActivity : AppCompatActivity() {
         if (isFinishing || isDestroyed) return
         fragmentContainer.animate().cancel()
         moduleLoadingOverlay.animate().cancel()
-        fragmentContainer.alpha = 1f
-        moduleLoadingOverlay.alpha = 0f
         moduleLoadingOverlay.visibility = View.GONE
+        fragmentContainer.animate().alpha(1f).setDuration(280L).start()
     }
 
     private fun markStreamingEntryAsLibrary() {
@@ -803,15 +855,12 @@ class MainActivity : AppCompatActivity() {
         if (!player.isAdded || player.isHidden) return false
         if (player.externalTryEnterMiniMode()) return true
 
-        showModuleLoadingOverlay()
-
         snapshotStreamingScreenBeforeNavigation()
         val fallback = resolveSongPlayerReturnTarget(player.externalGetReturnTargetTag())
         supportFragmentManager.beginTransaction().apply {
             setReorderingAllowed(true)
-            // setCustomAnimations deleted
             setCustomAnimations(
-                R.anim.none,
+                R.anim.hold,
                 R.anim.player_screen_exit
             )
             if (fallback != null && fallback.isAdded && fallback != player) {
@@ -821,11 +870,24 @@ class MainActivity : AppCompatActivity() {
             }
             commit()
         }
-        lifecycleScope.launch {
-            delay(290)
-            revealModuleContent()
-        }
         return true
+    }
+
+    /** Called by [SongPlayerFragment] when dismissed via swipe. */
+    fun externalClosePlayerImmediately() {
+        val player = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER) as? SongPlayerFragment ?: return
+        if (!player.isAdded || player.isHidden) return
+        
+        val fallback = resolveSongPlayerReturnTarget(player.externalGetReturnTargetTag())
+        supportFragmentManager.beginTransaction().apply {
+            setReorderingAllowed(true)
+            if (fallback != null && fallback.isAdded && fallback != player) {
+                hide(player).show(fallback)
+            } else {
+                remove(player)
+            }
+            commitNowAllowingStateLoss()
+        }
     }
 
     private fun resolveSongPlayerReturnTarget(preferredTag: String?): Fragment? {
@@ -841,17 +903,11 @@ class MainActivity : AppCompatActivity() {
         val detail = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL) ?: return false
         if (!detail.isAdded || detail.isHidden) return false
 
-        showModuleLoadingOverlay()
-        fragmentContainer.alpha = 0f
-        lifecycleScope.launch {
-            markStreamingEntryAsLibrary()
-            supportFragmentManager.popBackStackImmediate(TAG_PLAYLIST_DETAIL, androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE)
-            if (bottomNav.selectedItemId != R.id.nav_music) bottomNav.selectedItemId = R.id.nav_music
-            currentMainNavItemId = R.id.nav_music
-            updateHeaderTitleForModule(R.id.nav_music)
-            delay(MODULE_LOAD_OVERLAY_MIN_MS)
-            revealModuleContent()
-        }
+        markStreamingEntryAsLibrary()
+        supportFragmentManager.popBackStackImmediate(TAG_PLAYLIST_DETAIL, androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE)
+        if (bottomNav.selectedItemId != R.id.nav_music) bottomNav.selectedItemId = R.id.nav_music
+        currentMainNavItemId = R.id.nav_music
+        updateHeaderTitleForModule(R.id.nav_music)
         return true
     }
 
@@ -860,19 +916,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun setContainerOverlayMode(enabled: Boolean) {
-        (fragmentContainer.layoutParams as? ConstraintLayout.LayoutParams)?.apply {
-            if (enabled) {
-                topToTop = ConstraintLayout.LayoutParams.PARENT_ID
-                topToBottom = ConstraintLayout.LayoutParams.UNSET
-            } else {
-                topToTop = ConstraintLayout.LayoutParams.UNSET
-                topToBottom = R.id.topAppBar
-            }
-            fragmentContainer.layoutParams = this
-            (fragmentContainer.parent as? View)?.requestLayout()
-        }
-        topAppBar.translationZ = if (enabled) 24f * resources.displayMetrics.density else 0f
-        topAppBar.bringToFront()
+        // Obsolete: SongPlayerFragment now uses its own edge-to-edge container (playerContainer).
     }
 
     fun pauseActiveMediaAndDownloadsForSessionChange() {
@@ -885,6 +929,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun shouldMoveTaskToBackForOngoingPlayback(): Boolean {
         val snapshot = PlaybackHistoryStore.load(this)
-        return snapshot != null && snapshot.isPlaying && snapshot.queue?.isNotEmpty() == true
+        return snapshot.isPlaying && snapshot.queue.isNotEmpty()
     }
 }

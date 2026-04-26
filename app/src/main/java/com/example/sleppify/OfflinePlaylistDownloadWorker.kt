@@ -453,7 +453,7 @@ class OfflinePlaylistDownloadWorker(
                 }
 
                 for (selected in candidates) {
-                    if (selected == null || TextUtils.isEmpty(selected.content)) continue
+                    if (TextUtils.isEmpty(selected.content)) continue
 
                     val directUrl = selected.content
                     val format = selected.format?.name?.lowercase(Locale.US) ?: "unknown"
@@ -591,7 +591,7 @@ class OfflinePlaylistDownloadWorker(
         val fallbackCandidates = ArrayList<AudioStream>()
 
         for (stream in streams) {
-            if (stream == null || TextUtils.isEmpty(stream.content)) continue
+            if (TextUtils.isEmpty(stream.content)) continue
 
             val fName = stream.format?.name?.uppercase(Locale.US) ?: "unknown"
             val isWebm = fName.contains("WEBMA") || fName.contains("OPUS")
@@ -685,7 +685,7 @@ class OfflinePlaylistDownloadWorker(
         val m4aCandidates = ArrayList<AudioStream>()
         val fallbackCandidates = ArrayList<AudioStream>()
         for (stream in streams) {
-            if (stream == null || TextUtils.isEmpty(stream.content)) continue
+            if (TextUtils.isEmpty(stream.content)) continue
             if (stream.format == MediaFormat.M4A) m4aCandidates.add(stream) else fallbackCandidates.add(stream)
         }
 

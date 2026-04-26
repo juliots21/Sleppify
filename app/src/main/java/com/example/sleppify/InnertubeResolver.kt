@@ -1,5 +1,6 @@
 package com.example.sleppify
 
+import android.os.Build
 import android.util.Log
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -13,11 +14,14 @@ import java.nio.charset.StandardCharsets
  * Motor de resolución para el API privado de YouTube (InnerTube).
  *
  * Implementa rotación de identidad de cliente para maximizar la tasa de éxito:
- *  1. [Client.ANDROID_MUSIC] — cliente primario, mejor acceso a flujos Opus/AAC.
- *  2. [Client.TVHTML5_SIMPLYEMBEDDED] — bypass para videos que devuelven
- *     LOGIN_REQUIRED / CONTENT_CHECK_REQUIRED / age-restricted.
- *  3. [Client.ANDROID] — cliente de respaldo (sin throttling) para cuando los
- *     otros clientes fallan con FAILED_PRECONDITION.
+ *  1. [Client.ANDROID] — cliente nativo, no requiere JS player ni PO token
+ *     para el request de player. URLs directas sin signature cipher.
+ *  2. [Client.IOS] — cliente nativo, misma ventaja que ANDROID.
+ *  3. [Client.ANDROID_VR] — cliente nativo alternativo.
+ *  4. [Client.TVHTML5_SIMPLY] — bypass para contenido restringido (thirdParty embed).
+ *  5. [Client.WEB_REMIX] — YouTube Music web, último recurso.
+ *
+ * Perfiles verificados contra yt-dlp INNERTUBE_CLIENTS (_base.py).
  *
  * NOTA: PO Token (bgutil) y signature/n-param decipher NO están implementados
  * aquí. Para videos que requieren esos tokens las URLs pueden cortarse a los
@@ -26,7 +30,13 @@ import java.nio.charset.StandardCharsets
  */
 object InnertubeResolver {
     private const val TAG = "InnertubeResolver"
-    private const val PLAYER_URL = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
+    // Public InnerTube key used by web/TV clients. This is not a secret.
+    private const val INNERTUBE_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
+
+    private fun playerUrlFor(client: Client): String {
+        val host = if (client.useMusicHost) "music.youtube.com" else "www.youtube.com"
+        return "https://$host/youtubei/v1/player?prettyPrint=false&key=$INNERTUBE_KEY"
+    }
 
     // Caché en memoria de corto plazo para URLs resueltas
     private val urlCache = mutableMapOf<String, CachedUrl>()
@@ -36,44 +46,115 @@ object InnertubeResolver {
     @Volatile
     private var visitorId: String? = null
 
-    // Perfiles de cliente InnerTube
+    // Perfiles de cliente InnerTube — verificados contra yt-dlp INNERTUBE_CLIENTS
     private data class Client(
         val name: String,
         val clientName: String,
         val clientVersion: String,
         val userAgent: String,
-        val extraFields: Map<String, Any> = emptyMap()
+        val extraFields: Map<String, Any> = emptyMap(),
+        val contextExtraFields: Map<String, Any> = emptyMap(),
+        val useMusicHost: Boolean = false,
+        val isNativeClient: Boolean = false
     ) {
         companion object {
+            // ── Native clients (no JS player → direct URLs, no signature cipher) ──
+
+            val ANDROID = Client(
+                name = "android",
+                clientName = "ANDROID",
+                clientVersion = "21.02.35",
+                userAgent = "com.google.android.youtube/21.02.35 (Linux; U; Android 11) gzip",
+                extraFields = mapOf(
+                    "androidSdkVersion" to 30,
+                    "osName" to "Android",
+                    "osVersion" to "11"
+                ),
+                isNativeClient = true
+            )
+
+            val IOS = Client(
+                name = "ios",
+                clientName = "IOS",
+                clientVersion = "21.02.3",
+                userAgent = "com.google.ios.youtube/21.02.3 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
+                extraFields = mapOf(
+                    "deviceMake" to "Apple",
+                    "deviceModel" to "iPhone16,2",
+                    "osName" to "iPhone",
+                    "osVersion" to "18.3.2.22D82"
+                ),
+                isNativeClient = true
+            )
+
+            val ANDROID_VR = Client(
+                name = "android_vr",
+                clientName = "ANDROID_VR",
+                clientVersion = "1.65.10",
+                userAgent = "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+                extraFields = mapOf(
+                    "deviceMake" to "Oculus",
+                    "deviceModel" to "Quest 3",
+                    "androidSdkVersion" to 32,
+                    "osName" to "Android",
+                    "osVersion" to "12L"
+                ),
+                isNativeClient = true
+            )
+
+            // ── Web / TV clients ──
+
+            val TVHTML5_SIMPLY = Client(
+                name = "tvhtml5_simply",
+                clientName = "TVHTML5_SIMPLY",
+                clientVersion = "1.0",
+                userAgent = "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version",
+                contextExtraFields = mapOf(
+                    "thirdParty" to mapOf("embedUrl" to "https://www.youtube.com/")
+                )
+            )
+
+            val WEB_REMIX = Client(
+                name = "web_remix",
+                clientName = "WEB_REMIX",
+                clientVersion = "1.20260114.03.00",
+                userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+                useMusicHost = true
+            )
+
+            // ANDROID_MUSIC ahora requiere login — último recurso
             val ANDROID_MUSIC = Client(
                 name = "android_music",
                 clientName = "ANDROID_MUSIC",
                 clientVersion = "7.02.52",
                 userAgent = "com.google.android.apps.youtube.music/7.02.52 (Linux; U; Android 14; es_US; Pixel 7 Pro; Build/UQ1A.240205.002; Cronet/121.0.6167.71)",
-                extraFields = mapOf("androidSdkVersion" to 34)
-            )
-            val TVHTML5_SIMPLYEMBEDDED = Client(
-                name = "tvhtml5_simplyembedded",
-                clientName = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
-                clientVersion = "2.0",
-                userAgent = "Mozilla/5.0 (PlayStation; PlayStation 4/12.00) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Safari/605.1.15",
                 extraFields = mapOf(
-                    "clientScreen" to "EMBED",
-                    "thirdParty" to mapOf("embedUrl" to "https://www.youtube.com/")
-                )
-            )
-            val ANDROID = Client(
-                name = "android",
-                clientName = "ANDROID",
-                clientVersion = "19.44.38",
-                userAgent = "com.google.android.youtube/19.44.38 (Linux; U; Android 14; es_US; Pixel 7 Pro; Build/UQ1A.240205.002) gzip",
-                extraFields = mapOf("androidSdkVersion" to 34)
+                    "androidSdkVersion" to Build.VERSION.SDK_INT,
+                    "osName" to "Android",
+                    "osVersion" to (Build.VERSION.RELEASE ?: "13"),
+                    "deviceMake" to (Build.MANUFACTURER ?: "Android"),
+                    "deviceModel" to (Build.MODEL ?: "Android")
+                ),
+                useMusicHost = true,
+                isNativeClient = true
             )
         }
     }
 
-    private val PRIMARY_CLIENT_CHAIN = listOf(Client.ANDROID_MUSIC, Client.TVHTML5_SIMPLYEMBEDDED, Client.ANDROID)
-    private val ALTERNATIVE_CLIENT_CHAIN = listOf(Client.TVHTML5_SIMPLYEMBEDDED, Client.ANDROID, Client.ANDROID_MUSIC)
+    private val PRIMARY_CLIENT_CHAIN = listOf(
+        Client.ANDROID,
+        Client.IOS,
+        Client.ANDROID_VR,
+        Client.TVHTML5_SIMPLY,
+        Client.WEB_REMIX
+    )
+    private val ALTERNATIVE_CLIENT_CHAIN = listOf(
+        Client.TVHTML5_SIMPLY,
+        Client.ANDROID_VR,
+        Client.IOS,
+        Client.WEB_REMIX,
+        Client.ANDROID_MUSIC
+    )
 
     data class CachedUrl(val url: String, val timestamp: Long)
     data class AudioFormat(val url: String, val bitrate: Int, val mimeType: String)
@@ -185,7 +266,7 @@ object InnertubeResolver {
     private fun performRequest(videoId: String, client: Client): String? {
         var connection: HttpURLConnection? = null
         return try {
-            val url = URL(PLAYER_URL)
+            val url = URL(playerUrlFor(client))
             connection = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 doOutput = true
@@ -193,15 +274,37 @@ object InnertubeResolver {
                 readTimeout = 12000
                 setRequestProperty("Content-Type", "application/json")
                 setRequestProperty("User-Agent", client.userAgent)
-                setRequestProperty("Accept-Language", "es-US,es;q=0.9,en;q=0.8")
-                visitorId?.let { setRequestProperty("X-Goog-Visitor-Id", it) }
+                // Web/TV clients need browser-like headers; native clients don't
+                if (!client.isNativeClient) {
+                    val originHost = if (client.useMusicHost) "https://music.youtube.com" else "https://www.youtube.com"
+                    setRequestProperty("Accept-Language", "es-US,es;q=0.9,en;q=0.8")
+                    setRequestProperty("Origin", originHost)
+                    setRequestProperty("Referer", "$originHost/")
+                    visitorId?.let { setRequestProperty("X-Goog-Visitor-Id", it) }
+                }
             }
+
+            val locale = java.util.Locale.getDefault()
+            val hl = buildString {
+                val lang = locale.language
+                if (!lang.isNullOrEmpty()) {
+                    append(lang)
+                    val country = locale.country
+                    if (!country.isNullOrEmpty()) {
+                        append("-")
+                        append(country)
+                    }
+                } else {
+                    append("en")
+                }
+            }
+            val gl = locale.country?.takeIf { it.isNotEmpty() } ?: "US"
 
             val clientJson = JSONObject().apply {
                 put("clientName", client.clientName)
                 put("clientVersion", client.clientVersion)
-                put("hl", "es-419")
-                put("gl", "US")
+                put("hl", hl)
+                put("gl", gl)
                 for ((key, value) in client.extraFields) {
                     when (value) {
                         is Map<*, *> -> {
@@ -218,12 +321,24 @@ object InnertubeResolver {
 
             val contextJson = JSONObject().apply {
                 put("client", clientJson)
+                // context-level fields (e.g. thirdParty for TVHTML5_SIMPLY)
+                for ((key, value) in client.contextExtraFields) {
+                    when (value) {
+                        is Map<*, *> -> {
+                            val sub = JSONObject()
+                            for ((k, v) in value) {
+                                if (k is String) sub.put(k, v)
+                            }
+                            put(key, sub)
+                        }
+                        else -> put(key, value)
+                    }
+                }
             }
 
             val payload = JSONObject().apply {
                 put("videoId", videoId)
                 put("context", contextJson)
-                // Heurística de bypass: solicitar explícitamente checks OK.
                 put("racyCheckOk", true)
                 put("contentCheckOk", true)
             }
@@ -244,7 +359,14 @@ object InnertubeResolver {
                     response.toString()
                 }
             } else {
-                Log.w(TAG, "performRequest: HTTP $statusCode with client=${client.name} videoId=$videoId")
+                val errorBody = runCatching { connection.errorStream?.bufferedReader()?.use { it.readText() } }
+                    .getOrNull()
+                    ?.take(1200)
+                if (!errorBody.isNullOrEmpty()) {
+                    Log.w(TAG, "performRequest: HTTP $statusCode with client=${client.name} videoId=$videoId error=$errorBody")
+                } else {
+                    Log.w(TAG, "performRequest: HTTP $statusCode with client=${client.name} videoId=$videoId")
+                }
                 null
             }
         } catch (e: Exception) {

@@ -897,6 +897,7 @@ class EqualizerFragment : Fragment() {
         eqCurveView.setHandlesVisible(false)
         tvSelectedPreset.text = presetLabelFromId(selectedPresetId)
 
+        AudioDeviceProfileStore.persistActiveValuesToCurrentProfile(preferences)
         applyIfEnabled()
     }
 
@@ -1137,7 +1138,7 @@ class EqualizerFragment : Fragment() {
         var fallback: AudioDeviceInfo? = null
 
         for (output in outputs) {
-            if (output == null || !output.isSink) continue
+            if (!output.isSink) continue
             if (fallback == null) fallback = output
 
             val type = output.type
@@ -1164,7 +1165,7 @@ class EqualizerFragment : Fragment() {
     private fun containsHeadphoneLikeOutput(devices: Array<AudioDeviceInfo>?): Boolean {
         if (devices == null || devices.isEmpty()) return false
         for (info in devices) {
-            if (info == null || !info.isSink) continue
+            if (!info.isSink) continue
             val type = info.type
             if (isBluetoothType(type) || isWiredType(type)) return true
         }

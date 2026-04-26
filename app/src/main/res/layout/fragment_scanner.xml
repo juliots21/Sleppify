@@ -4,44 +4,36 @@
     android:id="@+id/scannerRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#05060A"
-    android:paddingBottom="12dp">
+    android:background="#05060A">
 
-    <androidx.constraintlayout.widget.Guideline
-        android:id="@+id/guideScannerControlsStart"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        app:layout_constraintGuide_percent="0.91" />
-
-    <androidx.constraintlayout.widget.ConstraintLayout
-        android:id="@+id/scanArea"
+    <!-- Full screen camera preview - no black bar -->
+    <androidx.camera.view.PreviewView
+        android:id="@+id/previewScanner"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:background="#120E171F"
-        app:layout_constraintBottom_toTopOf="@id/guideScannerControlsStart"
+        app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent">
+        app:layout_constraintTop_toTopOf="parent"
+        app:implementationMode="performance"
+        app:scaleType="fillCenter" />
 
-        <androidx.camera.view.PreviewView
-            android:id="@+id/previewScanner"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            app:implementationMode="performance"
-            app:scaleType="fillCenter" />
+    <ImageView
+        android:id="@+id/ivFreezeOverlay"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:contentDescription="Frame congelado"
+        android:scaleType="centerCrop"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
 
-        <ImageView
-            android:id="@+id/ivFreezeOverlay"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:contentDescription="Frame congelado"
-            android:scaleType="centerCrop"
-            android:visibility="gone" />
-
-        <LinearLayout
-            android:id="@+id/actionImportImages"
-            android:layout_width="wrap_content"
+    <!-- Floating Import Images button at TOP RIGHT -->
+    <LinearLayout
+        android:id="@+id/actionImportImages"
+        android:layout_width="wrap_content"
             android:layout_height="44dp"
             android:layout_marginTop="14dp"
             android:layout_marginEnd="14dp"
@@ -75,8 +67,7 @@
                 android:textSize="13sp" />
         </LinearLayout>
 
-    </androidx.constraintlayout.widget.ConstraintLayout>
-
+    <!-- Result card at BOTTOM -->
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/cardScanResult"
         android:layout_width="0dp"
@@ -88,7 +79,7 @@
         app:cardBackgroundColor="#2A2D36"
         app:cardCornerRadius="22dp"
         app:cardElevation="10dp"
-        app:layout_constraintBottom_toTopOf="@id/btnFlashlight"
+        app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:strokeWidth="0dp">
@@ -173,13 +164,37 @@
                     android:textIsSelectable="false"
                     android:textSize="14sp" />
 
+                <ImageButton
+                    android:id="@+id/ivScanResultCopy"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:layout_marginStart="4dp"
+                    android:background="@drawable/bg_circle_ripple"
+                    android:contentDescription="@null"
+                    android:padding="8dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_content_copy_18"
+                    android:visibility="gone"
+                    app:tint="#99FFFFFF" />
+
+                <ImageView
+                    android:id="@+id/ivScanResultOpen"
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:layout_marginStart="8dp"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_open_external"
+                    android:visibility="gone"
+                    app:tint="#99FFFFFF" />
+
                 <ImageView
                     android:id="@+id/ivScanResultChevron"
-                    android:layout_width="22dp"
-                    android:layout_height="22dp"
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
                     android:layout_marginStart="8dp"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_chevron_right"
+                    android:visibility="gone"
                     app:tint="#99FFFFFF" />
             </LinearLayout>
 
@@ -191,20 +206,41 @@
                 android:background="?attr/selectableItemBackground"
                 android:clickable="true"
                 android:focusable="true"
-                android:fontFamily="@font/manrope_variable"
+                android:fontFamily="@font/inter_variable"
                 android:gravity="center"
-                android:paddingTop="8dp"
-                android:paddingBottom="8dp"
+                android:paddingTop="12dp"
+                android:paddingBottom="12dp"
                 android:text="@string/scan_result_view_options"
                 android:textColor="#FFFFFFFF"
                 android:textSize="15sp" />
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
+    <!-- Barrier to keep flashlight above scan result when visible -->
+    <androidx.constraintlayout.widget.Barrier
+        android:id="@+id/barrierScanResult"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        app:barrierDirection="top"
+        app:constraint_referenced_ids="cardScanResult,bottomAnchor" />
+
+    <!-- Invisible anchor at bottom for when card is hidden (closer to footer) -->
+    <View
+        android:id="@+id/bottomAnchor"
+        android:layout_width="1dp"
+        android:layout_height="1dp"
+        android:layout_marginBottom="70dp"
+        android:visibility="invisible"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
+    <!-- Floating Flashlight button - moves above scan result when visible -->
     <com.google.android.material.button.MaterialButton
         android:id="@+id/btnFlashlight"
         android:layout_width="wrap_content"
         android:layout_height="48dp"
+        android:layout_marginBottom="16dp"
         android:enabled="false"
         android:text="Encender la linterna"
         android:textAllCaps="false"
@@ -214,10 +250,9 @@
         app:icon="@drawable/ic_flashlight_off"
         app:iconPadding="8dp"
         app:iconTint="#8A909D"
-        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/barrierScanResult"
+        app:layout_goneMarginBottom="90dp"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="@id/guideScannerControlsStart"
-        app:layout_constraintVertical_bias="0.5" />
+        app:layout_constraintStart_toStartOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

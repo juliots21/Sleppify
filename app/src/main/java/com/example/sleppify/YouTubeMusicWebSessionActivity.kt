@@ -48,7 +48,6 @@ class YouTubeMusicWebSessionActivity : AppCompatActivity() {
         val settings = webView?.settings
         settings?.javaScriptEnabled = true
         settings?.domStorageEnabled = true
-        settings?.databaseEnabled = true
         settings?.setSupportMultipleWindows(false)
         settings?.loadsImagesAutomatically = true
         settings?.useWideViewPort = true

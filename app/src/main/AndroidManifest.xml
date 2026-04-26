@@ -69,10 +69,6 @@
         </activity>
 
         <activity
-            android:name=".PlaylistDetailActivity"
-            android:exported="false" />
-
-        <activity
             android:name=".SearchActivity"
             android:exported="false"
             android:screenOrientation="portrait"
@@ -86,7 +82,8 @@
         <service
             android:name=".AudioEffectsService"
             android:enabled="true"
-            android:exported="false" />
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <receiver
             android:name=".EqBootReceiver"

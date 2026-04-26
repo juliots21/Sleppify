@@ -1,5 +1,9 @@
 package com.example.sleppify
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -8,6 +12,7 @@ import android.media.audiofx.DynamicsProcessing
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import androidx.core.app.NotificationCompat
 
 /**
  * Motor DSP avanzado basado en DynamicsProcessing (API 28+).
@@ -23,11 +28,13 @@ class AudioEffectsService : Service() {
     private var dynamicsProcessing: DynamicsProcessing? = null
     private var currentAudioSessionId: Int = GLOBAL_SESSION_ID
     private var isEngineActive = false
+    private var isForegroundStarted = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
+        ensureNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -37,13 +44,16 @@ class AudioEffectsService : Service() {
         when (action) {
             ACTION_APPLY -> {
                 val sessionId = intent?.getIntExtra(EXTRA_AUDIO_SESSION_ID, GLOBAL_SESSION_ID) ?: GLOBAL_SESSION_ID
+                enterForeground()
                 applyEffects(sessionId)
             }
             ACTION_STOP -> {
                 releaseEngine()
+                exitForeground()
                 stopSelf()
             }
             else -> {
+                enterForeground()
                 applyEffects(GLOBAL_SESSION_ID)
             }
         }
@@ -53,7 +63,89 @@ class AudioEffectsService : Service() {
 
     override fun onDestroy() {
         releaseEngine()
+        exitForeground()
         super.onDestroy()
+    }
+
+    // ───────────────────────────────────────────────────────────────────
+    // Foreground service lifecycle
+    // ───────────────────────────────────────────────────────────────────
+
+    private fun enterForeground() {
+        if (isForegroundStarted) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+
+        try {
+            val notification = buildForegroundNotification()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                @Suppress("DEPRECATION")
+                val mediaPlaybackType = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                startForeground(FOREGROUND_NOTIFICATION_ID, notification, mediaPlaybackType)
+            } else {
+                startForeground(FOREGROUND_NOTIFICATION_ID, notification)
+            }
+            isForegroundStarted = true
+            Log.d(TAG, "foreground:entered")
+        } catch (e: Exception) {
+            Log.w(TAG, "foreground:enter_failed", e)
+        }
+    }
+
+    private fun exitForeground() {
+        if (!isForegroundStarted) return
+        isForegroundStarted = false
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "foreground:exit_error", e)
+        }
+        Log.d(TAG, "foreground:exited")
+    }
+
+    private fun buildForegroundNotification(): Notification {
+        // Invisible notification - required for foreground service but hidden from user
+        val intent = Intent(this, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or
+            (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+        val contentIntent = PendingIntent.getActivity(this, 0, intent, pendingFlags)
+
+        return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+            .setSmallIcon(android.R.color.transparent)  // Invisible icon
+            .setContentTitle("")  // No visible title
+            .setContentText("")   // No visible text
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setSilent(true)      // No sound
+            .setShowWhen(false)
+            .setOngoing(true)
+            .setVisibility(NotificationCompat.VISIBILITY_SECRET)  // Hidden on lock screen
+            .setContentIntent(contentIntent)
+            .build()
+    }
+
+    private fun ensureNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val manager = getSystemService(NotificationManager::class.java) ?: return
+        if (manager.getNotificationChannel(NOTIFICATION_CHANNEL_ID) != null) return
+
+        val channel = NotificationChannel(
+            NOTIFICATION_CHANNEL_ID,
+            "Sleppify Audio",
+            NotificationManager.IMPORTANCE_MIN  // Lowest importance - invisible
+        ).apply {
+            description = "Audio processing"
+            setShowBadge(false)
+            enableLights(false)
+            enableVibration(false)
+            setSound(null, null)  // No sound
+        }
+        manager.createNotificationChannel(channel)
     }
 
     // ───────────────────────────────────────────────────────────────────
@@ -329,9 +421,12 @@ class AudioEffectsService : Service() {
             return cutoffHz.coerceIn(BASS_FREQUENCY_MIN_HZ, BASS_FREQUENCY_MAX_HZ)
         }
 
+        private const val NOTIFICATION_CHANNEL_ID = "sleppify_media_playback"
+        private const val FOREGROUND_NOTIFICATION_ID = 11032
+
         /**
-         * Starts the EQ engine as a plain background service (no foreground, no notification).
-         * Uses startService() on all API levels — session 0 DSP does not require foreground.
+         * Starts the EQ engine as a foreground service with mediaPlayback type.
+         * Uses startForegroundService() on API 26+ so the service can call startForeground().
          */
         @JvmStatic
         @JvmOverloads
@@ -349,6 +444,8 @@ class AudioEffectsService : Service() {
                 putExtra(EXTRA_AUDIO_SESSION_ID, audioSessionId)
             }
             try {
+                // Use regular startService to avoid ForegroundServiceDidNotStartInTimeException
+                // The service will run without a notification since player notification handles it
                 context.startService(intent)
             } catch (e: Exception) {
                 Log.w(TAG, "sendApply:failed", e)

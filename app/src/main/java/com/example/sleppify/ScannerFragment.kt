@@ -58,7 +58,6 @@ class ScannerFragment : Fragment() {
     private var freezeOverlay: ImageView? = null
     private var actionImportImages: View? = null
     private var scannerRoot: View? = null
-    private var scanArea: View? = null
     private var btnFlashlight: MaterialButton? = null
     private var cardScanResult: MaterialCardView? = null
     private var tvScanResultLabel: TextView? = null
@@ -66,6 +65,8 @@ class ScannerFragment : Fragment() {
     private var tvScanResultMore: TextView? = null
     private var rowScanResultValue: View? = null
     private var ivScanResultChevron: ImageView? = null
+    private var ivScanResultCopy: ImageView? = null
+    private var ivScanResultOpen: ImageView? = null
     private var btnScanResultViewOptions: TextView? = null
     private var btnCancelScan: View? = null
     private var pendingScanForMenu: DetectedScanItem? = null
@@ -109,7 +110,6 @@ class ScannerFragment : Fragment() {
         freezeOverlay = view.findViewById(R.id.ivFreezeOverlay)
         actionImportImages = view.findViewById(R.id.actionImportImages)
         scannerRoot = view.findViewById(R.id.scannerRoot)
-        scanArea = view.findViewById(R.id.scanArea)
         btnFlashlight = view.findViewById(R.id.btnFlashlight)
         cardScanResult = view.findViewById(R.id.cardScanResult)
         tvScanResultLabel = view.findViewById(R.id.tvScanResultLabel)
@@ -117,12 +117,21 @@ class ScannerFragment : Fragment() {
         tvScanResultMore = view.findViewById(R.id.tvScanResultMore)
         rowScanResultValue = view.findViewById(R.id.rowScanResultValue)
         ivScanResultChevron = view.findViewById(R.id.ivScanResultChevron)
+        ivScanResultCopy = view.findViewById(R.id.ivScanResultCopy)
+        ivScanResultOpen = view.findViewById(R.id.ivScanResultOpen)
         btnScanResultViewOptions = view.findViewById(R.id.btnScanResultViewOptions)
         btnCancelScan = view.findViewById(R.id.btnCancelScan)
 
         rowScanResultValue?.setOnClickListener { onScanResultRowClick() }
-        btnScanResultViewOptions?.setOnClickListener { showScanResultOptionsMenu() }
+        btnScanResultViewOptions?.setOnClickListener {
+            // Hide the result card before showing bottom sheet
+            cardScanResult?.visibility = View.GONE
+            showScanResultOptionsMenu()
+        }
         btnCancelScan?.setOnClickListener { resetDetectionState() }
+        ivScanResultCopy?.setOnClickListener {
+            copyToClipboard(pendingScanForMenu?.rawValue ?: "")
+        }
 
         previewScanner?.let { pv ->
             zoomGestureDetector = ScaleGestureDetector(requireContext(), object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
@@ -130,9 +139,26 @@ class ScannerFragment : Fragment() {
                     return applyPinchZoom(detector.scaleFactor)
                 }
             })
-            pv.setOnTouchListener { _, event ->
+            pv.setOnTouchListener { view, event ->
                 val handled = zoomGestureDetector?.onTouchEvent(event) ?: false
-                handled || event.pointerCount > 1
+                if (handled) return@setOnTouchListener true
+
+                // Handle tap-to-focus for single touch
+                if (event.pointerCount == 1) {
+                    when (event.action) {
+                        MotionEvent.ACTION_UP -> {
+                            val factory = previewScanner?.meteringPointFactory
+                            val point = factory?.createPoint(event.x, event.y)
+                            val action = point?.let {
+                                FocusMeteringAction.Builder(it, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
+                                    .setAutoCancelDuration(3, java.util.concurrent.TimeUnit.SECONDS)
+                                    .build()
+                            }
+                            action?.let { camera?.cameraControl?.startFocusAndMetering(it) }
+                        }
+                    }
+                }
+                return@setOnTouchListener event.pointerCount > 1
             }
         }
 
@@ -181,11 +207,12 @@ class ScannerFragment : Fragment() {
         tvScanResultMore = null
         rowScanResultValue = null
         ivScanResultChevron = null
+        ivScanResultCopy = null
+        ivScanResultOpen = null
         btnScanResultViewOptions = null
         btnCancelScan = null
         actionImportImages = null
         scannerRoot = null
-        scanArea = null
         btnFlashlight = null
         zoomGestureDetector = null
         scanOptionsBottomSheet?.dismiss()
@@ -201,7 +228,6 @@ class ScannerFragment : Fragment() {
     private fun applyScannerBackdropMode() {
         val amoled = isAmoledModeEnabled()
         scannerRoot?.setBackgroundColor(if (amoled) 0xFF000000.toInt() else 0xFF05060A.toInt())
-        scanArea?.setBackgroundColor(if (amoled) 0xFF000000.toInt() else 0x120E171F)
         applyScanResultCardTheme()
     }
 
@@ -432,7 +458,9 @@ class ScannerFragment : Fragment() {
         } else {
             tvScanResultMore?.visibility = View.GONE
         }
-        ivScanResultChevron?.visibility = if (isUrl) View.VISIBLE else View.GONE
+        ivScanResultChevron?.visibility = View.GONE
+        ivScanResultCopy?.visibility = if (!isUrl) View.VISIBLE else View.GONE
+        ivScanResultOpen?.visibility = if (isUrl) View.VISIBLE else View.GONE
 
         cardScanResult?.visibility = View.VISIBLE
     }
@@ -474,23 +502,37 @@ class ScannerFragment : Fragment() {
         content.findViewById<TextView>(R.id.tvSheetLabel).text =
             if (isUrl) getString(R.string.scan_result_web_address) else item.detectedType
         content.findViewById<TextView>(R.id.tvSheetValue).text = item.rawValue
-        content.findViewById<ImageView>(R.id.ivSheetChevron).visibility =
-            if (isUrl) View.VISIBLE else View.GONE
+        content.findViewById<ImageView>(R.id.ivSheetChevron).visibility = View.GONE
+        content.findViewById<ImageView>(R.id.ivSheetCopy).visibility = if (!isUrl) View.VISIBLE else View.GONE
+        content.findViewById<ImageView>(R.id.ivSheetOpen).visibility = if (isUrl) View.VISIBLE else View.GONE
 
-        val tvOpen = content.findViewById<TextView>(R.id.tvSheetOpenBrowser)
-        tvOpen.visibility = if (isUrl) View.VISIBLE else View.GONE
-        tvOpen.setOnClickListener {
+        // Click on copy icon in value row
+        content.findViewById<ImageView>(R.id.ivSheetCopy).setOnClickListener {
+            dialog.dismiss()
+            copyToClipboard(item.rawValue)
+        }
+
+        // Click on open icon in value row
+        content.findViewById<ImageView>(R.id.ivSheetOpen).setOnClickListener {
             dialog.dismiss()
             openScannedInInternet(item.rawValue)
         }
 
-        content.findViewById<TextView>(R.id.tvSheetCopy).setOnClickListener {
+        val rowOpenBrowser = content.findViewById<LinearLayout>(R.id.rowSheetOpenBrowser)
+        rowOpenBrowser.visibility = if (isUrl) View.VISIBLE else View.GONE
+        rowOpenBrowser.setOnClickListener {
+            dialog.dismiss()
+            openScannedInInternet(item.rawValue)
+        }
+
+        content.findViewById<LinearLayout>(R.id.rowSheetCopy).setOnClickListener {
             dialog.dismiss()
             copyToClipboard(item.rawValue)
         }
 
         content.findViewById<TextView>(R.id.tvSheetCancel).setOnClickListener {
             dialog.dismiss()
+            resetDetectionState()
         }
 
         dialog.setContentView(content)
@@ -515,7 +557,7 @@ class ScannerFragment : Fragment() {
     private fun describeBarcodeType(b: Barcode) = when (b.format) {
         Barcode.FORMAT_QR_CODE -> "QR"
         Barcode.FORMAT_AZTEC -> "Aztec"
-        Barcode.FORMAT_DATA_MATRIX -> "Data Matrix"
+        Barcode.FORMAT_DATA_MATRIX -> "Código de barras"
         Barcode.FORMAT_PDF417 -> "PDF417"
         Barcode.FORMAT_CODABAR, Barcode.FORMAT_CODE_39, Barcode.FORMAT_CODE_93, Barcode.FORMAT_CODE_128,
         Barcode.FORMAT_EAN_8, Barcode.FORMAT_EAN_13, Barcode.FORMAT_ITF, Barcode.FORMAT_UPC_A, Barcode.FORMAT_UPC_E -> "Código de barras"

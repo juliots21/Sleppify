@@ -547,7 +547,13 @@ public class MusicPlayerFragment extends Fragment {
             if (!isAdded() || getView() == null || isHidden()) {
                 return;
             }
-            updateMiniPlayerUi();
+            
+            // Skip update if the full player is covering the screen
+            SongPlayerFragment player = findSongPlayerFragment();
+            if (player == null || !player.isVisible()) {
+                updateMiniPlayerUi();
+            }
+            
             miniProgressHandler.postDelayed(this, MINI_PROGRESS_TICK_MS);
         }
     };
@@ -992,7 +998,7 @@ public class MusicPlayerFragment extends Fragment {
             getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
-                    .hide(this)
+                    
                     .show(existing)
                     .commit();
             return true;
@@ -1072,7 +1078,7 @@ public class MusicPlayerFragment extends Fragment {
         getParentFragmentManager()
                 .beginTransaction()
                 .setReorderingAllowed(true)
-                .add(R.id.fragmentContainer, playerFragment, "song_player")
+                .add(R.id.playerContainer, playerFragment, "song_player")
                 .hide(playerFragment)
                 .runOnCommit(() -> {
                     restoringHiddenMiniPlayerFromSnapshot = false;
@@ -4253,9 +4259,9 @@ public class MusicPlayerFragment extends Fragment {
                     .setReorderingAllowed(true)
                     .setCustomAnimations(
                             R.anim.player_screen_enter,
-                            R.anim.none
+                            R.anim.hold
                     )
-                    .hide(this)
+                    
                     .show(existingPlayer)
                     .commit();
             invalidateMiniSnapshotCache();
@@ -4341,7 +4347,7 @@ public class MusicPlayerFragment extends Fragment {
                                 R.anim.player_screen_enter,
                                 R.anim.player_screen_exit
                         )
-                        .hide(this)
+                        
                         .show(existingPlayer)
                         .commit();
             }
@@ -4375,11 +4381,11 @@ public class MusicPlayerFragment extends Fragment {
                         R.anim.player_screen_enter,
                         R.anim.player_screen_exit
                 )
-                .add(R.id.fragmentContainer, playerFragment, "song_player");
+                .add(R.id.playerContainer, playerFragment, "song_player");
 
         if (showPlayer) {
             transaction
-                    .hide(this)
+                    
                     .commit();
         } else {
             transaction
@@ -4446,7 +4452,7 @@ public class MusicPlayerFragment extends Fragment {
         getParentFragmentManager()
                 .beginTransaction()
                 .setReorderingAllowed(true)
-                .add(R.id.fragmentContainer, playerFragment, "song_player")
+                .add(R.id.playerContainer, playerFragment, "song_player")
                 .hide(playerFragment)
                 .commit();
 
@@ -4502,7 +4508,7 @@ public class MusicPlayerFragment extends Fragment {
         androidx.fragment.app.FragmentTransaction transaction = getParentFragmentManager()
             .beginTransaction()
                 .setReorderingAllowed(true)
-            .hide(this);
+            ;
 
         if (existingDetail != null && existingDetail.isAdded() && existingDetail != this) {
             transaction.remove(existingDetail);
@@ -4552,9 +4558,9 @@ public class MusicPlayerFragment extends Fragment {
                     .setReorderingAllowed(true)
                     .setCustomAnimations(
                             R.anim.player_screen_enter,
-                            R.anim.none
+                            R.anim.hold
                     )
-                    .hide(this)
+                    
                     .show(existingPlayer)
                     .commit();
         } else {
@@ -4574,10 +4580,10 @@ public class MusicPlayerFragment extends Fragment {
                     .setReorderingAllowed(true)
                     .setCustomAnimations(
                             R.anim.player_screen_enter,
-                            R.anim.none
+                            R.anim.hold
                     )
-                    .hide(this)
-                    .add(R.id.fragmentContainer, playerFragment, "song_player")
+                    
+                    .add(R.id.playerContainer, playerFragment, "song_player")
                     .commit();
         }
 
@@ -4600,7 +4606,7 @@ public class MusicPlayerFragment extends Fragment {
                 .getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE)
                 .edit()
                 .putInt(PREF_PLAYBACK_POS_PREFIX + current.videoId, Math.max(0, snapshot.currentSeconds))
-                .apply();
+                .commit();
     }
 
     private void clearPersistedPositionForVideoId(@Nullable String videoId) {
@@ -4687,16 +4693,29 @@ public class MusicPlayerFragment extends Fragment {
         }
 
         if (currentTrack == null || TextUtils.isEmpty(currentTrack.videoId)) {
-            llMiniPlayer.setVisibility(View.GONE);
+            if (llMiniPlayer.getVisibility() != View.GONE) {
+                llMiniPlayer.setVisibility(View.GONE);
+            }
             lastMiniArtworkTrackId = "";
             lastMiniArtworkUrl = "";
             lastMiniProgressValue = -1;
             return;
         }
 
-        llMiniPlayer.setVisibility(View.VISIBLE);
-        tvMiniPlayerTitle.setText(TextUtils.isEmpty(currentTrack.title) ? "Última reproducción" : currentTrack.title);
-        tvMiniPlayerSubtitle.setText(TextUtils.isEmpty(currentTrack.artist) ? "" : currentTrack.artist);
+        if (llMiniPlayer.getVisibility() != View.VISIBLE) {
+            llMiniPlayer.setVisibility(View.VISIBLE);
+        }
+        
+        String trackTitle = TextUtils.isEmpty(currentTrack.title) ? "Última reproducción" : currentTrack.title;
+        if (!TextUtils.equals(tvMiniPlayerTitle.getText(), trackTitle)) {
+            tvMiniPlayerTitle.setText(trackTitle);
+        }
+        
+        String trackArtist = TextUtils.isEmpty(currentTrack.artist) ? "" : currentTrack.artist;
+        if (!TextUtils.equals(tvMiniPlayerSubtitle.getText(), trackArtist)) {
+            tvMiniPlayerSubtitle.setText(trackArtist);
+        }
+        
         btnMiniPlayPause.setImageResource(miniPlaying
                 ? R.drawable.ic_mini_pause
                 : R.drawable.ic_mini_play);
@@ -5014,9 +5033,9 @@ public class MusicPlayerFragment extends Fragment {
                     .setReorderingAllowed(true)
                     .setCustomAnimations(
                             R.anim.player_screen_enter,
-                            R.anim.none
+                            R.anim.hold
                     )
-                    .hide(this)
+                    
                     .show(existingPlayer)
                     .commit();
         } else {
@@ -5036,10 +5055,10 @@ public class MusicPlayerFragment extends Fragment {
                     .setReorderingAllowed(true)
                     .setCustomAnimations(
                             R.anim.player_screen_enter,
-                            R.anim.none
+                            R.anim.hold
                     )
-                    .hide(this)
-                    .add(R.id.fragmentContainer, playerFragment, "song_player")
+                    
+                    .add(R.id.playerContainer, playerFragment, "song_player")
                     .commit();
         }
 
@@ -5900,7 +5919,7 @@ public class MusicPlayerFragment extends Fragment {
         } catch (Exception ignored) {
         }
 
-        openTrack(track);
+        openTrack(track, true);
     }
 
     public void playNextFromSearch(@NonNull Intent data) {
@@ -5931,6 +5950,10 @@ public class MusicPlayerFragment extends Fragment {
 
 
     private void openTrack(@NonNull YouTubeMusicService.TrackResult track) {
+        openTrack(track, false);
+    }
+
+    private void openTrack(@NonNull YouTubeMusicService.TrackResult track, boolean startInMiniMode) {
 
         if ("playlist".equals(track.resultType)) {
             openPlaylistDetail(track);
@@ -5938,7 +5961,7 @@ public class MusicPlayerFragment extends Fragment {
         }
 
         if (track.isVideo()) {
-            openTrackInIntegratedPlayer(track);
+            openTrackInIntegratedPlayer(track, startInMiniMode);
             return;
         }
 
@@ -6059,7 +6082,7 @@ public class MusicPlayerFragment extends Fragment {
         return score;
     }
 
-    private void openTrackInIntegratedPlayer(@NonNull YouTubeMusicService.TrackResult selectedTrack) {
+    private void openTrackInIntegratedPlayer(@NonNull YouTubeMusicService.TrackResult selectedTrack, boolean startInMiniMode) {
         if (!isAdded()) {
             return;
         }
@@ -6102,8 +6125,8 @@ public class MusicPlayerFragment extends Fragment {
             selectedIndex = 0;
         }
 
-        // Hide mini-player immediately to prevent UI overlap when player opens
-        if (llMiniPlayer != null) {
+        // Hide mini-player immediately to prevent UI overlap when player opens, unless starting in mini mode
+        if (llMiniPlayer != null && !startInMiniMode) {
             llMiniPlayer.setVisibility(View.GONE);
         }
 
@@ -6112,13 +6135,16 @@ public class MusicPlayerFragment extends Fragment {
             existingPlayer.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
             existingPlayer.externalReplaceQueueFromStart(ids, titles, artists, durations, images, selectedIndex, true);
 
-            getParentFragmentManager()
-                    .beginTransaction()
-                    .setReorderingAllowed(true)
-                    // custom animations removed
-                    .hide(this)
-                    .show(existingPlayer)
-                    .commit();
+            if (!startInMiniMode) {
+                getParentFragmentManager()
+                        .beginTransaction()
+                        .setReorderingAllowed(true)
+                        .show(existingPlayer)
+                        .commit();
+            } else {
+                existingPlayer.externalTryEnterMiniMode();
+                updateMiniPlayerUi();
+            }
         } else {
             if (selectedIndex >= 0 && selectedIndex < ids.size()) {
                 clearPersistedPositionForVideoId(ids.get(selectedIndex));
@@ -6135,17 +6161,23 @@ public class MusicPlayerFragment extends Fragment {
             );
             playerFragment.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
 
-            getParentFragmentManager()
+            androidx.fragment.app.FragmentTransaction transaction = getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
-                    // custom animations removed
-                    .hide(this)
-                    .add(R.id.fragmentContainer, playerFragment, "song_player")
-                    .commit();
+                    .add(R.id.playerContainer, playerFragment, "song_player");
+                    
+            if (startInMiniMode) {
+                transaction.hide(playerFragment);
+            }
+            transaction.commit();
+            
+            if (startInMiniMode) {
+                updateMiniPlayerUi();
+            }
         }
 
         invalidateMiniSnapshotCache();
-        // Don't update mini-player UI immediately - keep it hidden while full player is visible
+        // Don't update mini-player UI immediately if not in mini mode - keep it hidden while full player is visible
         // updateMiniPlayerUi() will be called when returning from player
     }
 
@@ -6173,7 +6205,7 @@ public class MusicPlayerFragment extends Fragment {
         androidx.fragment.app.FragmentTransaction transaction = getParentFragmentManager()
             .beginTransaction()
                 .setReorderingAllowed(true)
-            .hide(this);
+            ;
 
         if (existingDetail != null && existingDetail.isAdded() && existingDetail != this) {
             transaction.remove(existingDetail);

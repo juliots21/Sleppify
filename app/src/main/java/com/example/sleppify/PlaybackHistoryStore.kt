@@ -73,12 +73,21 @@ class PlaybackHistoryStore private constructor() {
                 }
             }
 
-            val parsed = parseSnapshot(raw)
-            synchronized(CACHE_LOCK) {
-                cachedRawSnapshot = raw
-                cachedSnapshot = parsed
+            return try {
+                val parsed = parseSnapshot(raw)
+                synchronized(CACHE_LOCK) {
+                    cachedRawSnapshot = raw
+                    cachedSnapshot = parsed
+                }
+                parsed
+            } catch (e: Exception) {
+                // If the JSON is corrupted, clear it and return empty
+                synchronized(CACHE_LOCK) {
+                    cachedRawSnapshot = ""
+                    cachedSnapshot = emptySnapshot()
+                }
+                emptySnapshot()
             }
-            return parsed
         }
 
         @JvmStatic
@@ -139,11 +148,12 @@ class PlaybackHistoryStore private constructor() {
 
                     val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     val editor = prefs.edit().putString(KEY_SNAPSHOT_JSON, raw)
-                    if (synchronous) {
-                        editor.commit()
-                    } else {
-                        editor.apply()
-                    }
+                    // Always use commit() — this task runs on IO_EXECUTOR (background thread),
+                    // so commit() does NOT block the UI thread. Using apply() here is unsafe:
+                    // apply() defers the disk write to the main thread's message queue, which
+                    // means a crash or force-kill can discard the pending write before it ever
+                    // reaches disk — resulting in the mini-player showing 0:00 on next launch.
+                    editor.commit()
 
                     synchronized(CACHE_LOCK) {
                         cachedRawSnapshot = raw

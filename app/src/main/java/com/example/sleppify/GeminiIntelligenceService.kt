@@ -25,10 +25,6 @@ class GeminiIntelligenceService {
         private const val TAG = "GeminiService"
 
         private val API_KEYS = arrayOf(
-            "AIzaSyCVaavBtTuJlj9aaHtFdBI_BXFUm1MiBXs",
-            "AIzaSyD1x1MHXTsk7eWM76ZY8Z-FJGxGb5slp4o",
-            "AIzaSyDRbfqY0ka_A06M1pcjB1TID-eQ1yUce_o",
-            "AIzaSyDttUh3Lu8Iesh4DnE54Bs2WSWcdPK9EhM",
             "AIzaSyBiSKMB_R3CDMvTeM90ekaJepCRxCZ6Dvk"
         )
 

@@ -27,6 +27,7 @@ import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.activity.OnBackPressedCallback
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -128,6 +129,25 @@ class SearchActivity : AppCompatActivity() {
                 imm?.showSoftInput(etSearchQuery, InputMethodManager.SHOW_IMPLICIT)
             }
         }
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val resultsContainer = findViewById<View>(R.id.flResultsContainer)
+                val hasResults = resultsContainer.visibility == View.VISIBLE
+                
+                if (hasResults) {
+                    // Back from results → show suggestions
+                    showSuggestionsMode()
+                    etSearchQuery.requestFocus()
+                    val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                    imm?.showSoftInput(etSearchQuery, InputMethodManager.SHOW_IMPLICIT)
+                } else {
+                    // Back from suggestions → exit search
+                    isEnabled = false
+                    finish()
+                }
+            }
+        })
     }
 
     private fun initViews() {
@@ -192,6 +212,16 @@ class SearchActivity : AppCompatActivity() {
     }
 
     private fun setupSearchInput() {
+        etSearchQuery.setOnFocusChangeListener { _, hasFocus ->
+            if (hasFocus) {
+                showSuggestionsMode()
+            }
+        }
+        
+        etSearchQuery.setOnClickListener {
+            showSuggestionsMode()
+        }
+
         etSearchQuery.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEARCH) {
                 performSearch()
@@ -217,6 +247,15 @@ class SearchActivity : AppCompatActivity() {
             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
             imm?.showSoftInput(etSearchQuery, InputMethodManager.SHOW_IMPLICIT)
         }
+    }
+
+    private fun showSuggestionsMode() {
+        val query = etSearchQuery.text?.toString()?.trim() ?: ""
+        refreshSearchSuggestions(query)
+        rvSearchSuggestions.visibility = View.VISIBLE
+        
+        findViewById<View>(R.id.flResultsContainer).visibility = View.GONE
+        findViewById<View>(R.id.llSearchState).visibility = View.GONE
     }
 
     private fun clearResults() {
@@ -261,10 +300,7 @@ class SearchActivity : AppCompatActivity() {
         }
     }
 
-    override fun onBackPressed() {
-        showModuleLoadingOverlay()
-        super.onBackPressed()
-    }
+
 
     private fun performSearch() {
         if (searching) return
@@ -286,6 +322,8 @@ class SearchActivity : AppCompatActivity() {
         rememberRecentSearchQuery(query)
         refreshSearchSuggestions(query)
         rvSearchSuggestions.visibility = View.GONE
+        findViewById<View>(R.id.flResultsContainer).visibility = View.VISIBLE
+        rvSearchResults.visibility = View.VISIBLE
         requestPagedSearchResults(query, "", false)
     }
 
@@ -501,7 +539,7 @@ class SearchActivity : AppCompatActivity() {
     }
 
     private fun onTrackClicked(track: YouTubeMusicService.TrackResult) {
-        showModuleLoadingOverlay()
+        // Build the queue JSON from all results
         val queueJson = JSONArray().apply {
             (listOfNotNull(featuredTrack) + tracks).forEach { t ->
                 put(JSONObject().apply {
@@ -515,9 +553,12 @@ class SearchActivity : AppCompatActivity() {
             }
         }
 
+        // Send the intent to MainActivity but DON'T bring it to the front.
+        // FLAG_ACTIVITY_SINGLE_TOP ensures onNewIntent() fires on the existing instance.
+        // We intentionally omit FLAG_ACTIVITY_REORDER_TO_FRONT so the user stays here.
         Intent(this, MainActivity::class.java).apply {
             action = MainActivity.ACTION_PLAY_FROM_SEARCH
-            flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra(EXTRA_RESULT_TYPE, track.resultType ?: "")
             putExtra(EXTRA_RESULT_VIDEO_ID, track.videoId ?: "")
             putExtra(EXTRA_RESULT_CONTENT_ID, track.contentId ?: "")

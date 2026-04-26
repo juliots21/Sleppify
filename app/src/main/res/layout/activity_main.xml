@@ -17,7 +17,9 @@
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingHorizontal="16dp"
+        android:paddingTop="24dp"
         android:paddingBottom="8dp"
+        android:elevation="30dp"
         app:layout_constraintTop_toTopOf="parent">
 
         <TextView
@@ -59,6 +61,7 @@
         android:id="@+id/fragmentContainer"
         android:layout_width="match_parent"
         android:layout_height="0dp"
+        android:background="@color/surface_dark"
         app:layout_constraintBottom_toTopOf="@id/bottomNavigation"
         app:layout_constraintTop_toBottomOf="@id/topAppBar" />
 
@@ -91,6 +94,14 @@
         app:itemTextColor="@color/stitch_blue"
         app:layout_constraintBottom_toBottomOf="parent"
         app:menu="@menu/bottom_nav_menu" />
+
+    <androidx.fragment.app.FragmentContainerView
+        android:id="@+id/playerContainer"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:elevation="24dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/topAppBar" />
 
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/loginGateContainer"

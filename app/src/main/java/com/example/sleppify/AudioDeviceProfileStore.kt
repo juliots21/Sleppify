@@ -57,12 +57,9 @@ object AudioDeviceProfileStore {
                 }.apply()
                 return true
             }
-            if (!areActiveValuesAlignedWithProfile(prefs, targetProfileId)) {
-                prefs.edit().apply {
-                    copyProfileValuesToActive(this, prefs, targetProfileId)
-                }.apply()
-                return true
-            }
+            // CRITICAL FIX: When on same device, active values are source of truth.
+            // Don't restore from profile - that would destroy recent user changes.
+            // Only persist if needed, never restore when same device.
             return false
         }
 
@@ -108,7 +105,9 @@ object AudioDeviceProfileStore {
         }
 
         val currentId = prefs.getString(KEY_ACTIVE_PROFILE_ID, null)
-        if (sourceId == targetProfileId && currentId == targetProfileId && areActiveValuesAlignedWithProfile(prefs, targetProfileId)) {
+        // CRITICAL FIX: When on same device, active values are source of truth.
+        // Never restore from profile - that would destroy recent user changes.
+        if (currentId == targetProfileId) {
             return false
         }
 

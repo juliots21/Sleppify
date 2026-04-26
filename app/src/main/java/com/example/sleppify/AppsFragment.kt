@@ -2,7 +2,6 @@ package com.example.sleppify
 
 import android.app.ActivityManager
 import android.app.usage.UsageStatsManager
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -19,8 +18,6 @@ import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
-import com.google.android.material.button.MaterialButton
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
 import com.google.android.material.progressindicator.CircularProgressIndicator
 import kotlinx.coroutines.Dispatchers
@@ -41,8 +38,6 @@ class AppsFragment : Fragment() {
     private lateinit var tvTotalRamValue: TextView
     private lateinit var tvUsedRamValue: TextView
     private lateinit var fabStopApps: ExtendedFloatingActionButton
-    private lateinit var cardAccessibilityRequest: View
-    private lateinit var btnGrantAccessibility: MaterialButton
     private lateinit var layoutBackgroundAppsList: LinearLayout
     private lateinit var tvBackgroundAppsEmpty: TextView
 
@@ -72,15 +67,15 @@ class AppsFragment : Fragment() {
         tvTotalRamValue = v.findViewById(R.id.tvTotalRamValue)
         tvUsedRamValue = v.findViewById(R.id.tvUsedRamValue)
         fabStopApps = v.findViewById(R.id.fabStopApps)
-        cardAccessibilityRequest = v.findViewById(R.id.cardAccessibilityRequest)
-        btnGrantAccessibility = v.findViewById(R.id.btnGrantAccessibility)
+        // cardAccessibilityRequest = v.findViewById(R.id.cardAccessibilityRequest)
+        // btnGrantAccessibility = v.findViewById(R.id.btnGrantAccessibility)
         layoutBackgroundAppsList = v.findViewById(R.id.layoutBackgroundAppsList)
         tvBackgroundAppsEmpty = v.findViewById(R.id.tvBackgroundAppsEmpty)
     }
 
     private fun setupInteractions() {
         fabStopApps.setOnClickListener { runStopAppsAction() }
-        btnGrantAccessibility.setOnClickListener { showAccessibilityPermissionDialog() }
+        // btnGrantAccessibility.setOnClickListener { showAccessibilityPermissionDialog() }
     }
 
     private fun startMetricsLoop() {
@@ -106,7 +101,7 @@ class AppsFragment : Fragment() {
         tvTotalRamValue.text = formatGb(total)
         tvUsedRamValue.text = formatGb(used)
         
-        refreshAccessibilityPermissionUi()
+        // refreshAccessibilityPermissionUi()
     }
 
     private fun refreshBackgroundApps() {
@@ -174,34 +169,7 @@ class AppsFragment : Fragment() {
         } catch (e: Exception) {}
     }
 
-    private fun refreshAccessibilityPermissionUi() {
-        val enabled = isAccessibilityServiceEnabled()
-        cardAccessibilityRequest.visibility = if (enabled) View.GONE else View.VISIBLE
-    }
-
-    private fun isAccessibilityServiceEnabled(): Boolean {
-        val expected = ComponentName(requireContext(), AppAccessibilityService::class.java).flattenToString()
-        val setting = Settings.Secure.getString(requireContext().contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
-        return setting.contains(expected)
-    }
-
-    private fun showAccessibilityPermissionDialog() {
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle("Permiso de Accesibilidad")
-            .setMessage("Para detener aplicaciones automáticamente, Sleppify necesita el permiso de accesibilidad.\n\nBusca 'Sleppify' en la lista y actívalo.")
-            .setPositiveButton("Ir a Ajustes") { _, _ ->
-                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            }
-            .setNegativeButton("Cancelar", null)
-            .show()
-    }
-
     private fun runStopAppsAction() {
-        if (!isAccessibilityServiceEnabled()) {
-            showAccessibilityPermissionDialog()
-            return
-        }
-
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             val packages = fetchBackgroundApps().map { it.packageName }
             if (packages.isEmpty()) {

@@ -407,8 +407,8 @@ class AppAccessibilityService : AccessibilityService() {
             
             if (confirmed) confirmCurrentPackageAndAdvance() else retryForceStopStep()
 
-        } finally {
-            root.recycle()
+        } catch (_: Exception) {
+            retryForceStopStep()
         }
     }
 
@@ -511,7 +511,6 @@ class AppAccessibilityService : AccessibilityService() {
             val nodes = if (isId) try { root.findAccessibilityNodeInfosByViewId(c) } catch (e: Exception) { null }
                         else root.findAccessibilityNodeInfosByText(c)
             if (!nodes.isNullOrEmpty()) {
-                recycleNodes(nodes)
                 return true
             }
         }
@@ -524,7 +523,6 @@ class AppAccessibilityService : AccessibilityService() {
                         else root.findAccessibilityNodeInfosByText(c)
             if (!nodes.isNullOrEmpty()) {
                 val hasDisabled = nodes.any { !it.isEnabled }
-                recycleNodes(nodes)
                 if (hasDisabled) return true
             }
         }
@@ -535,7 +533,7 @@ class AppAccessibilityService : AccessibilityService() {
         if (matchesAnyKeyword(root.text, keywords) || matchesAnyKeyword(root.contentDescription, keywords)) return true
         for (i in 0 until root.childCount) {
             root.getChild(i)?.let { child ->
-                try { if (hasKeywordMatch(child, keywords)) return true } finally { child.recycle() }
+                if (hasKeywordMatch(child, keywords)) return true
             }
         }
         return false
@@ -569,7 +567,7 @@ class AppAccessibilityService : AccessibilityService() {
         }
         for (i in 0 until root.childCount) {
             root.getChild(i)?.let { child ->
-                try { if (clickByKeywordScan(child, keywords)) return true } finally { child.recycle() }
+                if (clickByKeywordScan(child, keywords)) return true
             }
         }
         return false
@@ -581,8 +579,7 @@ class AppAccessibilityService : AccessibilityService() {
     }
 
     private fun clickFirstClickable(nodes: List<AccessibilityNodeInfo>?): Boolean {
-        nodes?.forEach { if (clickNodeOrAncestor(it)) { recycleNodes(nodes); return true } }
-        recycleNodes(nodes)
+        nodes?.forEach { if (clickNodeOrAncestor(it)) return true }
         return false
     }
 
@@ -590,13 +587,9 @@ class AppAccessibilityService : AccessibilityService() {
         var curr: AccessibilityNodeInfo? = node
         while (curr != null) {
             if (curr.isClickable && curr.isEnabled) {
-                val ok = curr.performAction(AccessibilityNodeInfo.ACTION_CLICK) || tapNodeCenter(curr)
-                if (curr != node) curr.recycle()
-                return ok
+                return curr.performAction(AccessibilityNodeInfo.ACTION_CLICK) || tapNodeCenter(curr)
             }
-            val parent = curr.parent
-            if (curr != node) curr.recycle()
-            curr = parent
+            curr = curr.parent
         }
         return false
     }
@@ -662,7 +655,6 @@ class AppAccessibilityService : AccessibilityService() {
         return prefs.getStringSet(CloudSyncManager.KEY_APPS_WHITELIST_PACKAGES, null) ?: emptySet()
     }
 
-    private fun recycleNodes(nodes: List<AccessibilityNodeInfo>?) = nodes?.forEach { it.recycle() }
 
     private fun resetAllStates() {
         clearRecentsInProgress = false

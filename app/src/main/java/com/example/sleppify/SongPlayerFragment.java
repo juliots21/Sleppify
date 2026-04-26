@@ -22,6 +22,10 @@ import android.media.AudioAttributes;
 import android.net.Uri;
 import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
+import android.media.AudioManager;
+import android.media.AudioDeviceInfo;
+import com.google.android.material.bottomsheet.BottomSheetDialog;
+import com.google.android.material.bottomsheet.BottomSheetBehavior;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -173,6 +177,9 @@ public class SongPlayerFragment extends Fragment {
     private TextView tvActionFavoriteLabel;
     private TextView tvCurrentTime;
     private TextView tvTotalTime;
+    private TextView tvDeviceName;
+    private ImageView ivDeviceIcon;
+    private View llQueueTrigger;
     private SeekBar sbPlaybackProgress;
     private NestedScrollView svSongPlayerContent;
     private ImageButton btnShuffle;
@@ -180,7 +187,6 @@ public class SongPlayerFragment extends Fragment {
     private View vPlayerShuffleIndicator;
     private View vPlayerRepeatIndicator;
     private ImageButton btnPlayPause;
-    private RecyclerView rvNextUp;
     private View actionLike;
     private View actionDislike;
     private View actionComments;
@@ -190,6 +196,7 @@ public class SongPlayerFragment extends Fragment {
     private NextUpAdapter nextUpAdapter;
     @Nullable
     private ItemTouchHelper nextUpItemTouchHelper;
+    private RecyclerView rvQueueSheet; // For BottomSheet
 
     @Nullable
     private OnBackPressedCallback backPressedCallback;
@@ -215,6 +222,8 @@ public class SongPlayerFragment extends Fragment {
     private int currentSeconds = 0;
     private int totalSeconds = 1;
     private int lastPersistedSecond = -1;
+    private boolean isRestoringPosition = false;
+    private int lastSeekTargetSeconds = -1;
     private boolean pauseRequestedByUser = false;
     private boolean appInBackground = false;
     private long lastBackgroundResumeAttemptMs = 0L;
@@ -312,7 +321,6 @@ public class SongPlayerFragment extends Fragment {
     private Bitmap mediaSessionArtwork;
     @NonNull
     private String mediaSessionArtworkVideoId = "";
-    private long lastEqKeepAliveAtMs;
     private final Runnable localProgressTicker = new Runnable() {
         @Override
         public void run() {
@@ -326,7 +334,22 @@ public class SongPlayerFragment extends Fragment {
 
                 maybeStartOfflineCrossfade(positionMs, durationMs);
 
-                currentSeconds = positionMs / 1000;
+                int playerSeconds = positionMs / 1000;
+                
+                // Position Guard: If we are restoring a position, don't let a "0" from the player 
+                // (which happens during prep/buffer) overwrite our target until the player actually advances.
+                if (isRestoringPosition) {
+                    if (playerSeconds > 0 || (lastSeekTargetSeconds <= 0)) {
+                        // Player has advanced or we didn't have a target anyway
+                        currentSeconds = playerSeconds;
+                        isRestoringPosition = false;
+                    } else {
+                        // Keep our target currentSeconds for now, don't update from player
+                    }
+                } else {
+                    currentSeconds = playerSeconds;
+                }
+                
                 totalSeconds = Math.max(1, durationMs / 1000);
 
                 tvCurrentTime.setText(formatSeconds(currentSeconds));
@@ -341,8 +364,6 @@ public class SongPlayerFragment extends Fragment {
                     updateMediaSessionState();
                     persistPlaybackSnapshot(false);
                 }
-
-                maybeKeepEqAlive();
             } catch (Exception ignored) {
             }
 
@@ -350,20 +371,6 @@ public class SongPlayerFragment extends Fragment {
         }
     };
 
-    private void maybeKeepEqAlive() {
-        if (!isAdded() || !isPlaying) {
-            return;
-        }
-        long now = SystemClock.elapsedRealtime();
-        if (lastEqKeepAliveAtMs > 0 && (now - lastEqKeepAliveAtMs) < 15000L) {
-            return;
-        }
-        lastEqKeepAliveAtMs = now;
-        try {
-            AudioEffectsService.sendApply(requireContext().getApplicationContext());
-        } catch (Exception ignored) {
-        }
-    }
 
     @NonNull
     public static SongPlayerFragment newInstance(
@@ -456,8 +463,8 @@ public class SongPlayerFragment extends Fragment {
         vPlayerShuffleIndicator = view.findViewById(R.id.vPlayerShuffleIndicator);
         vPlayerRepeatIndicator = view.findViewById(R.id.vPlayerRepeatIndicator);
         btnPlayPause = view.findViewById(R.id.btnPlayPause);
-        rvNextUp = view.findViewById(R.id.rvNextUp);
-        rvNextUp.setVisibility(View.GONE);
+        llQueueTrigger = view.findViewById(R.id.llQueueTrigger);
+        llQueueTrigger.setOnClickListener(v -> showQueueBottomSheet());
 
         playerStatePrefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
         settingsPrefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Activity.MODE_PRIVATE);
@@ -468,126 +475,29 @@ public class SongPlayerFragment extends Fragment {
         hydrateTracksFromArgs();
         setupMediaSession();
 
-        rvNextUp.setLayoutManager(new LinearLayoutManager(requireContext()));
-        rvNextUp.setHasFixedSize(true);
-        rvNextUp.setItemAnimator(null);
-        nextUpAdapter = new NextUpAdapter(nextUpTracks, position -> {
-            int selectedPosition = position;
-            if (selectedPosition >= 0 && selectedPosition < tracks.size()) {
-                int targetIndex = (currentIndex + selectedPosition + 1) % tracks.size();
-                String targetVideoId = tracks.get(targetIndex).videoId;
-                if (!TextUtils.equals(targetVideoId, loadedVideoId)) {
-                    persistPositionForLoadedTrack();
-                }
-                if (!TextUtils.isEmpty(targetVideoId)) {
-                    clearPersistedPositionFor(targetVideoId);
-                }
-
-                currentIndex = targetIndex;
-                isPlaying = true;
-                currentSeconds = 0;
-                lastPersistedSecond = -1;
-                bindCurrentTrack(false);
-                playCurrentTrack();
-            }
-        }, holder -> {
-            if (nextUpItemTouchHelper != null) {
-                nextUpItemTouchHelper.startDrag(holder);
-            }
+        tvDeviceName = view.findViewById(R.id.tvDeviceName);
+        ivDeviceIcon = view.findViewById(R.id.ivDeviceIcon);
+        // Defer non-critical setup to post-inflation to speed up fragment entry
+        view.post(() -> {
+            if (!isAdded()) return;
+            loadPlaybackModesFromSettings();
+            setupSocialActions();
+            updatePlayerSurfaceForSource();
+            updateDeviceInfo();
+            updatePlaybackModeButtons();
         });
-        rvNextUp.setAdapter(nextUpAdapter);
 
-        ItemTouchHelper.SimpleCallback nextUpDragCallback = new ItemTouchHelper.SimpleCallback(
-                ItemTouchHelper.UP | ItemTouchHelper.DOWN,
-                0
-        ) {
-            private final float dragLiftElevation = 18f * requireContext().getResources().getDisplayMetrics().density;
 
-            @Override
-            public boolean onMove(@NonNull RecyclerView recyclerView, @NonNull RecyclerView.ViewHolder viewHolder, @NonNull RecyclerView.ViewHolder target) {
-                if (nextUpAdapter == null) {
-                    return false;
-                }
-                int from = viewHolder.getBindingAdapterPosition();
-                int to = target.getBindingAdapterPosition();
-                if (from == RecyclerView.NO_POSITION || to == RecyclerView.NO_POSITION) {
-                    return false;
-                }
-                boolean moved = nextUpAdapter.moveItem(from, to);
-                return moved;
-            }
 
-            @Override
-            public void onSwiped(@NonNull RecyclerView.ViewHolder viewHolder, int direction) {
-                // Swipe is disabled for queue items.
-            }
 
-            @Override
-            public boolean isLongPressDragEnabled() {
-                return false;
-            }
 
-            @Override
-            public boolean isItemViewSwipeEnabled() {
-                return false;
-            }
 
-            @Override
-            public void onSelectedChanged(@Nullable RecyclerView.ViewHolder viewHolder, int actionState) {
-                super.onSelectedChanged(viewHolder, actionState);
-                if (viewHolder == null || actionState != ItemTouchHelper.ACTION_STATE_DRAG) {
-                    return;
-                }
 
-                View item = viewHolder.itemView;
-                item.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK);
-                item.setAlpha(1f);
-                item.setScaleX(1f);
-                item.setScaleY(1f);
-                ViewCompat.setElevation(item, dragLiftElevation);
-            }
 
-            @Override
-            public void onChildDraw(
-                    @NonNull android.graphics.Canvas c,
-                    @NonNull RecyclerView recyclerView,
-                    @NonNull RecyclerView.ViewHolder viewHolder,
-                    float dX,
-                    float dY,
-                    int actionState,
-                    boolean isCurrentlyActive
-            ) {
-                super.onChildDraw(c, recyclerView, viewHolder, dX, dY, actionState, isCurrentlyActive);
-                if (actionState != ItemTouchHelper.ACTION_STATE_DRAG) {
-                    return;
-                }
 
-                View item = viewHolder.itemView;
-                if (isCurrentlyActive) {
-                    float normalized = Math.min(1f, Math.abs(dY) / Math.max(1f, recyclerView.getHeight() * 0.35f));
-                    float targetRotation = Math.signum(dY) * (1.2f + (normalized * 1.6f));
-                    item.setRotation(targetRotation);
-                } else {
-                    item.setRotation(0f);
-                }
-            }
 
-            @Override
-            public void clearView(@NonNull RecyclerView recyclerView, @NonNull RecyclerView.ViewHolder viewHolder) {
-                super.clearView(recyclerView, viewHolder);
-                View item = viewHolder.itemView;
-                item.setAlpha(1f);
-                item.setScaleX(1f);
-                item.setScaleY(1f);
-                item.setRotation(0f);
-                ViewCompat.setElevation(item, 0f);
-                applyNextUpOrderToQueue();
-            }
-        };
 
-        nextUpItemTouchHelper = new ItemTouchHelper(nextUpDragCallback);
-        nextUpItemTouchHelper.attachToRecyclerView(rvNextUp);
-
+        setupSwipeToDismiss(view);
         setupBackPressToMiniMode();
         ensureNotificationPermissionForPlayback();
         resetPlayerScrollToTop();
@@ -601,7 +511,6 @@ public class SongPlayerFragment extends Fragment {
 
         view.findViewById(R.id.btnPrev).setOnClickListener(v -> moveTrack(-1));
         view.findViewById(R.id.btnNext).setOnClickListener(v -> moveTrack(1));
-        view.findViewById(R.id.tvViewAllQueue).setOnClickListener(v -> openQueuePlaylistDetail());
         btnShuffle.setOnClickListener(v -> toggleShuffleMode());
         btnRepeat.setOnClickListener(v -> cycleRepeatMode());
         btnPlayPause.setOnClickListener(v -> togglePlayback());
@@ -674,8 +583,30 @@ public class SongPlayerFragment extends Fragment {
     }
 
     @Override
+    public void onHiddenChanged(boolean hidden) {
+        super.onHiddenChanged(hidden);
+        updateBackPressedCallbackEnabled(hidden);
+        if (hidden) {
+            if (!(usingOfflineSource && localExoMediaPlayer != null && isPlaying)) {
+                stopLocalProgressTicker();
+            }
+        } else {
+            if (getView() != null) {
+                getView().setTranslationY(0f);
+                getView().setVisibility(View.VISIBLE);
+            }
+            resetPlayerScrollToTop();
+            ensureActivePlaybackIfExpected("onHiddenChanged-visible");
+        }
+    }
+
+    @Override
     public void onResume() {
         super.onResume();
+        if (getView() != null) {
+            getView().setTranslationY(0f);
+            getView().setVisibility(View.VISIBLE);
+        }
         appInBackground = false;
         updateBackPressedCallbackEnabled(isHidden());
         ensureNotificationPermissionForPlayback();
@@ -684,22 +615,7 @@ public class SongPlayerFragment extends Fragment {
         persistPlaybackSnapshot(false);
     }
 
-    @Override
-    public void onHiddenChanged(boolean hidden) {
-        super.onHiddenChanged(hidden);
-        updateBackPressedCallbackEnabled(hidden);
-        if (getActivity() instanceof MainActivity) {
-            ((MainActivity) getActivity()).setContainerOverlayMode(!hidden);
-        }
-        if (hidden) {
-            if (!(usingOfflineSource && localExoMediaPlayer != null && isPlaying)) {
-                stopLocalProgressTicker();
-            }
-        } else {
-            resetPlayerScrollToTop();
-            ensureActivePlaybackIfExpected("onHiddenChanged-visible");
-        }
-    }
+
 
     private void ensureActivePlaybackIfExpected(@NonNull String reason) {
         if (!isPlaying) {
@@ -1324,12 +1240,19 @@ public class SongPlayerFragment extends Fragment {
         // NOTE: Do NOT call showPlayerArtworkLoadingState() here — keep old cover visible
         // until the new one loads via Glide, preventing the black flash.
         bindCurrentTrackInternal(false, true);
-        if (resumeSeconds > 0) {
-            currentSeconds = resumeSeconds;
-        }
-        
+        // Reset state BEFORE restoring resumeSeconds
         cancelOfflineCrossfade();
         resetPlaybackStateForNewTrack();
+        
+        if (resumeSeconds > 0) {
+            currentSeconds = resumeSeconds;
+            isRestoringPosition = true;
+            lastSeekTargetSeconds = resumeSeconds;
+        } else {
+            isRestoringPosition = false;
+            lastSeekTargetSeconds = -1;
+        }
+        
         lastPlaybackStartRequestAtMs = SystemClock.elapsedRealtime();
 
         String previousLoadedVideoId = loadedVideoId;
@@ -1577,11 +1500,15 @@ public class SongPlayerFragment extends Fragment {
 
             if (currentSeconds > 0) {
                 Log.d(TAG, "onPrepared: seeking to " + currentSeconds + "s for videoId=" + track.videoId);
+                isRestoringPosition = true;
+                lastSeekTargetSeconds = currentSeconds;
                 try {
                     mp.seekTo(currentSeconds * 1000);
                 } catch (Exception ignored) {
                 }
             } else {
+                isRestoringPosition = false;
+                lastSeekTargetSeconds = -1;
                 Log.d(TAG, "onPrepared: starting from 0s (no seek) for videoId=" + track.videoId);
             }
 
@@ -2746,7 +2673,7 @@ public class SongPlayerFragment extends Fragment {
         loadMediaNotificationArtwork(track);
         String requestVideoId = track.videoId == null ? "" : track.videoId.trim();
         String fallbackImageUrl = track.imageUrl == null ? "" : track.imageUrl.trim();
-        String preferredImageUrl = resolvePreferredCoverUrl(requestVideoId, fallbackImageUrl);
+        String preferredImageUrl = resolveHighResCoverUrl(requestVideoId, fallbackImageUrl);
         if (TextUtils.isEmpty(preferredImageUrl)) {
             clearPlayerCoverRequest();
             clearMediaNotificationArtwork();
@@ -2810,18 +2737,26 @@ public class SongPlayerFragment extends Fragment {
                 .asBitmap()
                 .load(preferredImageUrl)
                 .transform(new YouTubeCropTransformation())
-                .format(DecodeFormat.PREFER_RGB_565)
+                .format(DecodeFormat.PREFER_ARGB_8888) // High quality
                 .diskCacheStrategy(DiskCacheStrategy.ALL)
                 .error(
-                        TextUtils.isEmpty(fallbackImageUrl)
-                                || TextUtils.equals(preferredImageUrl, fallbackImageUrl)
-                                ? null
-                                : Glide.with(this)
-                                        .asBitmap()
-                                        .load(fallbackImageUrl)
-                                        .transform(new YouTubeCropTransformation())
-                                        .format(DecodeFormat.PREFER_RGB_565)
-                                        .diskCacheStrategy(DiskCacheStrategy.ALL)
+                        Glide.with(this)
+                                .asBitmap()
+                                .load("https://i.ytimg.com/vi/" + Uri.encode(requestVideoId) + "/hqdefault.jpg")
+                                .transform(new YouTubeCropTransformation())
+                                .format(DecodeFormat.PREFER_ARGB_8888)
+                                .diskCacheStrategy(DiskCacheStrategy.ALL)
+                                .error(
+                                        TextUtils.isEmpty(fallbackImageUrl)
+                                                || TextUtils.equals(preferredImageUrl, fallbackImageUrl)
+                                                ? null
+                                                : Glide.with(this)
+                                                        .asBitmap()
+                                                        .load(fallbackImageUrl)
+                                                        .transform(new YouTubeCropTransformation())
+                                                        .format(DecodeFormat.PREFER_ARGB_8888)
+                                                        .diskCacheStrategy(DiskCacheStrategy.ALL)
+                                )
                 )
                 .into(playerCoverTarget);
     }
@@ -2834,7 +2769,7 @@ public class SongPlayerFragment extends Fragment {
 
         String requestVideoId = track.videoId == null ? "" : track.videoId.trim();
         String fallbackImageUrl = track.imageUrl == null ? "" : track.imageUrl.trim();
-        String preferredImageUrl = resolvePreferredCoverUrl(requestVideoId, fallbackImageUrl);
+        String preferredImageUrl = resolveLowResBackdropUrl(requestVideoId, fallbackImageUrl);
 
         activeBackdropVideoId = requestVideoId;
         clearPlayerBackdropRequest();
@@ -2909,15 +2844,32 @@ public class SongPlayerFragment extends Fragment {
     }
 
     @NonNull
+    private String resolveHighResCoverUrl(
+            @NonNull String videoId,
+            @NonNull String fallbackImageUrl
+    ) {
+        if (!TextUtils.isEmpty(videoId)) {
+            return "https://i.ytimg.com/vi/" + Uri.encode(videoId) + "/maxresdefault.jpg";
+        }
+        return fallbackImageUrl;
+    }
+
+    private String resolveLowResBackdropUrl(
+            @NonNull String videoId,
+            @NonNull String fallbackImageUrl
+    ) {
+        if (!TextUtils.isEmpty(videoId)) {
+            return "https://i.ytimg.com/vi/" + Uri.encode(videoId) + "/mqdefault.jpg";
+        }
+        return fallbackImageUrl;
+    }
+
     private String resolvePreferredCoverUrl(
             @NonNull String videoId,
             @NonNull String fallbackImageUrl
     ) {
         if (!TextUtils.isEmpty(videoId)) {
-            // Quality ladder for YouTube thumbnails (high res tends to have fewer bars)
             return "https://i.ytimg.com/vi/" + Uri.encode(videoId) + "/hqdefault.jpg";
-            // Note: In a real app we might try maxresdefault first, but hqdefault is most reliable.
-            // The smartCrop logic will handle the hqdefault bars if they exist.
         }
         return fallbackImageUrl;
     }
@@ -3776,7 +3728,7 @@ public class SongPlayerFragment extends Fragment {
         if (target != null && target != this && target.isAdded()) {
             transaction
                     .setCustomAnimations(
-                            R.anim.none,
+                            R.anim.hold,
                             R.anim.player_screen_exit
                     )
                     .hide(this)
@@ -3784,7 +3736,7 @@ public class SongPlayerFragment extends Fragment {
         } else {
             transaction
                     .setCustomAnimations(
-                            R.anim.none,
+                            R.anim.hold,
                             R.anim.player_screen_exit
                     )
                     .remove(this);
@@ -3956,7 +3908,17 @@ public class SongPlayerFragment extends Fragment {
         }
         int safeMax = Math.max(1, externalGetTotalSeconds());
         int safeCurrent = Math.max(0, Math.min(safeMax - 1, externalGetCurrentSeconds()));
-        playerStatePrefs.edit().putInt(PREF_PLAYBACK_POS_PREFIX + loadedVideoId, safeCurrent).apply();
+        
+        final String vid = loadedVideoId;
+        final int pos = safeCurrent;
+        
+        persistenceExecutor.execute(() -> {
+            try {
+                playerStatePrefs.edit()
+                        .putInt(PREF_PLAYBACK_POS_PREFIX + vid, pos)
+                        .commit();
+            } catch (Exception ignored) {}
+        });
     }
 
     private void clearPersistedPositionFor(@NonNull String videoId) {
@@ -4310,15 +4272,34 @@ public class SongPlayerFragment extends Fragment {
                     ));
                 }
 
+                int safeIndex = Math.max(0, Math.min(index, Math.max(0, tracksCopy.size() - 1)));
                 PlaybackHistoryStore.save(
                         context,
                         queue,
-                        Math.max(0, Math.min(index, Math.max(0, tracksCopy.size() - 1))),
+                        safeIndex,
                         Math.max(0, current),
                         Math.max(1, total),
                         effectivelyPlaying,
                         synchronous
                 );
+
+                // Also persist fallback prefs so the mini-player can restore
+                // even if the snapshot gets corrupted. Uses commit() because
+                // this task already runs on a background thread.
+                PlayerTrack currentTrack = (safeIndex >= 0 && safeIndex < tracksCopy.size())
+                        ? tracksCopy.get(safeIndex) : null;
+                if (currentTrack != null && !TextUtils.isEmpty(currentTrack.videoId)) {
+                    context.getSharedPreferences("player_state", Activity.MODE_PRIVATE)
+                            .edit()
+                            .putString("stream_last_video_id", currentTrack.videoId)
+                            .putString("stream_last_track_title", currentTrack.title != null ? currentTrack.title : "")
+                            .putString("stream_last_track_artist", currentTrack.artist != null ? currentTrack.artist : "")
+                            .putString("stream_last_track_duration", currentTrack.duration != null ? currentTrack.duration : "")
+                            .putString("stream_last_track_image", currentTrack.imageUrl != null ? currentTrack.imageUrl : "")
+                            .putBoolean("stream_last_is_playing", effectivelyPlaying)
+                            .putInt("yt_pos_" + currentTrack.videoId, Math.max(0, current))
+                            .commit();
+                }
             } catch (Exception ignored) {
             }
         };
@@ -4366,15 +4347,8 @@ public class SongPlayerFragment extends Fragment {
         }
 
         if (tracks.size() <= 1) {
-            rvNextUp.setVisibility(View.GONE);
             nextUpAdapter.notifyDataSetChanged();
             return;
-        }
-
-        rvNextUp.setNestedScrollingEnabled(false);
-        if (rvNextUp.getVisibility() != View.VISIBLE) {
-            rvNextUp.setVisibility(View.VISIBLE);
-            rvNextUp.setAlpha(1f);
         }
 
         nextUpAdapter.notifyDataSetChanged();
@@ -4499,6 +4473,9 @@ public class SongPlayerFragment extends Fragment {
             if (fromPosition == toPosition) {
                 return false;
             }
+            if (fromPosition == 0 || toPosition == 0) {
+                return false; // Restriction: cannot move 'Now Playing' or move anything above it
+            }
 
             PlayerTrack moved = items.remove(fromPosition);
             items.add(toPosition, moved);
@@ -4517,7 +4494,15 @@ public class SongPlayerFragment extends Fragment {
         public void onBindViewHolder(@NonNull NextUpViewHolder holder, int position) {
             PlayerTrack item = items.get(position);
             holder.tvNextUpTitle.setText(item.title);
-            holder.tvNextUpArtist.setText(item.artist);
+            
+            // Position 0 is the currently playing track
+            if (position == 0) {
+                holder.tvNextUpArtist.setText("Reproduciendo ahora");
+                holder.tvNextUpArtist.setTextColor(ContextCompat.getColor(holder.itemView.getContext(), R.color.stitch_blue)); // Primary color
+            } else {
+                holder.tvNextUpArtist.setText(item.artist);
+                holder.tvNextUpArtist.setTextColor(Color.parseColor("#A0A0A0")); // Default gray
+            }
 
             if (!TextUtils.isEmpty(item.imageUrl)) {
             String imageUrl = item.imageUrl.trim();
@@ -4571,7 +4556,9 @@ public class SongPlayerFragment extends Fragment {
 
         @Override
         public int getItemCount() {
-            return items.size();
+            int count = items.size();
+            // Log.v(TAG, "NextUpAdapter.getItemCount: " + count);
+            return count;
         }
 
         static final class NextUpViewHolder extends RecyclerView.ViewHolder {
@@ -4589,5 +4576,224 @@ public class SongPlayerFragment extends Fragment {
             }
         }
     }
-}
 
+    private void updateDeviceInfo() {
+        if (!isAdded()) return;
+        AudioManager audioManager = (AudioManager) requireContext().getSystemService(Context.AUDIO_SERVICE);
+        String deviceName = "Este dispositivo";
+        int iconRes = R.drawable.ic_output_speaker;
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            AudioDeviceInfo[] devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS);
+            for (AudioDeviceInfo device : devices) {
+                if (device.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || 
+                    device.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
+                    deviceName = device.getProductName().toString();
+                    iconRes = R.drawable.ic_output_bluetooth;
+                    break;
+                } else if (device.getType() == AudioDeviceInfo.TYPE_WIRED_HEADPHONES || 
+                           device.getType() == AudioDeviceInfo.TYPE_WIRED_HEADSET) {
+                    deviceName = "Auriculares";
+                    iconRes = R.drawable.ic_output_wired;
+                    break;
+                }
+            }
+        }
+        
+        if (tvDeviceName != null) tvDeviceName.setText(deviceName);
+        if (ivDeviceIcon != null) ivDeviceIcon.setImageResource(iconRes);
+    }
+
+    private void showQueueBottomSheet() {
+        if (!isAdded()) return;
+        
+        Log.d(TAG, "showQueueBottomSheet: tracks.size=" + tracks.size() + ", currentIndex=" + currentIndex);
+        
+        BottomSheetDialog bottomSheetDialog = new BottomSheetDialog(requireContext());
+        View bsv = getLayoutInflater().inflate(R.layout.bottom_sheet_player_queue, null);
+        bottomSheetDialog.setContentView(bsv);
+
+        RecyclerView rvQueue = bsv.findViewById(R.id.rvQueue);
+        LinearLayoutManager layoutManager = new LinearLayoutManager(requireContext());
+        rvQueue.setLayoutManager(layoutManager);
+        rvQueue.setHasFixedSize(false);
+        
+        nextUpTracks.clear();
+        // Include current track at position 0, then the rest
+        if (!tracks.isEmpty() && currentIndex >= 0 && currentIndex < tracks.size()) {
+            nextUpTracks.add(tracks.get(currentIndex)); // Now playing
+        }
+        for (int i = 1; i < tracks.size(); i++) {
+            int idx = (currentIndex + i) % tracks.size();
+            nextUpTracks.add(tracks.get(idx));
+        }
+        
+        Log.d(TAG, "showQueueBottomSheet: nextUpTracks.size=" + nextUpTracks.size());
+        for (int i = 0; i < Math.min(5, nextUpTracks.size()); i++) {
+            Log.d(TAG, "  item[" + i + "]=" + nextUpTracks.get(i).title);
+        }
+        
+        nextUpAdapter = new NextUpAdapter(nextUpTracks, position -> {
+            Log.d(TAG, "Queue item tapped: position=" + position);
+            // Position 0 is the currently playing track - ignore clicks on it
+            if (position == 0) {
+                return;
+            }
+            if (position >= 0 && position < nextUpTracks.size()) {
+                PlayerTrack tapped = nextUpTracks.get(position);
+                int realIdx = -1;
+                for (int j = 0; j < tracks.size(); j++) {
+                    if (tracks.get(j) == tapped) {
+                        realIdx = j;
+                        break;
+                    }
+                }
+                
+                if (realIdx != -1) {
+                    Log.d(TAG, "Switching to track from queue: realIdx=" + realIdx);
+                    if (!TextUtils.equals(tapped.videoId, loadedVideoId)) {
+                        persistPositionForLoadedTrack();
+                    }
+                    currentIndex = realIdx;
+                    isPlaying = true;
+                    currentSeconds = 0;
+                    lastPersistedSecond = -1;
+                    bindCurrentTrack(false);
+                    playCurrentTrack();
+                    bottomSheetDialog.dismiss();
+                }
+            }
+        }, holder -> {
+            if (nextUpItemTouchHelper != null) {
+                nextUpItemTouchHelper.startDrag(holder);
+            }
+        });
+        
+        rvQueue.setAdapter(nextUpAdapter);
+        nextUpAdapter.notifyDataSetChanged();
+        Log.d(TAG, "showQueueBottomSheet: adapter set, count=" + nextUpAdapter.getItemCount());
+        
+        // Handle empty state
+        TextView tvEmptyQueue = bsv.findViewById(R.id.tvEmptyQueue);
+        if (nextUpTracks.isEmpty()) {
+            Log.d(TAG, "showQueueBottomSheet: nextUpTracks is EMPTY, showing empty view");
+            rvQueue.setVisibility(View.GONE);
+            tvEmptyQueue.setVisibility(View.VISIBLE);
+        } else {
+            Log.d(TAG, "showQueueBottomSheet: nextUpTracks is NOT empty (" + nextUpTracks.size() + "), showing RecyclerView");
+            rvQueue.setVisibility(View.VISIBLE);
+            tvEmptyQueue.setVisibility(View.GONE);
+        }
+
+        bottomSheetDialog.setOnShowListener(dialog -> {
+            BottomSheetDialog d = (BottomSheetDialog) dialog;
+            View bottomSheet = d.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+            if (bottomSheet != null) {
+                bottomSheet.setBackgroundResource(android.R.color.transparent);
+                // Set minimum height for the bottom sheet
+                BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(bottomSheet);
+                behavior.setPeekHeight(400); // Minimum height when collapsed
+                behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
+            }
+        });
+
+        ItemTouchHelper.SimpleCallback dragCallback = new ItemTouchHelper.SimpleCallback(
+                ItemTouchHelper.UP | ItemTouchHelper.DOWN, 0
+        ) {
+            @Override
+            public boolean onMove(@NonNull RecyclerView recyclerView, @NonNull RecyclerView.ViewHolder viewHolder, @NonNull RecyclerView.ViewHolder target) {
+                int from = viewHolder.getBindingAdapterPosition();
+                int to = target.getBindingAdapterPosition();
+                if (from == RecyclerView.NO_POSITION || to == RecyclerView.NO_POSITION) return false;
+                return nextUpAdapter.moveItem(from, to);
+            }
+
+            @Override
+            public void onSwiped(@NonNull RecyclerView.ViewHolder viewHolder, int direction) {}
+
+            @Override
+            public void clearView(@NonNull RecyclerView recyclerView, @NonNull RecyclerView.ViewHolder viewHolder) {
+                super.clearView(recyclerView, viewHolder);
+                applyNextUpOrderToQueue();
+            }
+        };
+
+        nextUpItemTouchHelper = new ItemTouchHelper(dragCallback);
+        nextUpItemTouchHelper.attachToRecyclerView(rvQueue);
+        
+        bottomSheetDialog.show();
+    }
+    private void setupSwipeToDismiss(View root) {
+        NestedScrollView scrollView = root.findViewById(R.id.svSongPlayerContent);
+        if (scrollView == null) return;
+
+        View.OnTouchListener swipeListener = new View.OnTouchListener() {
+            private float initialTouchY;
+            private float dragStartY;
+            private boolean isDragging = false;
+
+            @Override
+            public boolean onTouch(View v, MotionEvent event) {
+                switch (event.getAction()) {
+                    case MotionEvent.ACTION_DOWN:
+                        initialTouchY = event.getRawY();
+                        isDragging = false;
+                        break;
+
+                    case MotionEvent.ACTION_MOVE:
+                        float currentY = event.getRawY();
+                        float totalDeltaY = currentY - initialTouchY;
+
+                        // Start dragging if we are at the top and moving down
+                        if (!isDragging && totalDeltaY > 10 && scrollView.getScrollY() <= 10) {
+                            isDragging = true;
+                            dragStartY = currentY; 
+                            scrollView.requestDisallowInterceptTouchEvent(true);
+                        }
+
+                        if (isDragging) {
+                            float dragDeltaY = currentY - dragStartY;
+                            root.setTranslationY(Math.max(0, dragDeltaY));
+                            return true;
+                        }
+                        break;
+
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
+                        if (isDragging) {
+                            float finalDragDeltaY = event.getRawY() - dragStartY;
+                            if (finalDragDeltaY > root.getHeight() / 6 || finalDragDeltaY > 300) {
+                                // Dismiss
+                                root.animate()
+                                        .translationY(root.getHeight())
+                                        .setDuration(250)
+                                        .withEndAction(() -> {
+                                            isDragging = false;
+                                            if (isAdded() && getActivity() instanceof MainActivity) {
+                                                ((MainActivity) getActivity()).externalClosePlayerImmediately();
+                                            }
+                                        })
+                                        .start();
+                            } else {
+                                // Restore
+                                root.animate()
+                                        .translationY(0)
+                                        .setDuration(200)
+                                        .start();
+                            }
+                            isDragging = false;
+                            scrollView.requestDisallowInterceptTouchEvent(false);
+                            return true;
+                        }
+                        break;
+                }
+                return false;
+            }
+        };
+
+        // Attach to both to ensure we catch the gesture
+        scrollView.setOnTouchListener(swipeListener);
+        root.setOnTouchListener(swipeListener);
+    }
+}
+    

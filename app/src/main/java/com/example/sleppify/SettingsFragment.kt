@@ -268,7 +268,6 @@ class SettingsFragment : Fragment() {
         addDistinct(File(context.applicationInfo.dataDir, "databases"))
         addDistinct(File(context.applicationInfo.dataDir, "shared_prefs"))
         context.getExternalFilesDirs(null)?.filterNotNull()?.forEach { addDistinct(it) }
-        context.externalMediaDirs?.filterNotNull()?.forEach { addDistinct(it) }
         addDistinct(context.obbDir)
     }
 
@@ -487,7 +486,7 @@ class SettingsFragment : Fragment() {
 
     private fun performSignOut() {
         (activity as? MainActivity)?.pauseActiveMediaAndDownloadsForSessionChange()
-        authManager.signOut { _, _ ->
+        authManager.signOut(requireContext()) { _, _ ->
             CloudSyncManager.getInstance(requireContext()).onUserSignedOut()
             renderProfileState()
             (activity as? MainActivity)?.refreshSessionUi()

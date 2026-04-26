@@ -96,6 +96,11 @@ object OfflineAudioStore {
     @JvmStatic
     fun hasValidatedOfflineAudio(context: Context, trackId: String, expectedDurationLabel: String?): Boolean {
         val normalized = normalizeTrackId(trackId)
+        val cached = getCachedOfflineState(normalized)
+        if (cached != null) {
+            return cached
+        }
+
         val existing = getExistingOfflineAudioFile(context, normalized)
         if (!existing.isFile || existing.length() <= 0L) {
             putCachedOfflineState(normalized, false)
