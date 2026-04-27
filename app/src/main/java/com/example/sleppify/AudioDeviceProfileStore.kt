@@ -355,19 +355,48 @@ object AudioDeviceProfileStore {
             .removeSuffix("_")
     }
 
+    @JvmStatic
+    fun selectPreferredOutput(manager: android.media.AudioManager?): AudioDeviceInfo? {
+        if (manager == null) return null
+        val outputs = manager.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS)
+        if (outputs == null || outputs.isEmpty()) return null
+
+        var bluetooth: AudioDeviceInfo? = null
+        var wired: AudioDeviceInfo? = null
+        var speaker: AudioDeviceInfo? = null
+        var earpiece: AudioDeviceInfo? = null
+        var fallback: AudioDeviceInfo? = null
+
+        for (output in outputs) {
+            if (!output.isSink) continue
+            if (fallback == null) fallback = output
+
+            val type = output.type
+            when {
+                isBluetoothType(type) && bluetooth == null -> bluetooth = output
+                isWiredType(type) && wired == null -> wired = output
+                (type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER || type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER_SAFE) && speaker == null -> speaker = output
+                type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE && earpiece == null -> earpiece = output
+            }
+        }
+        return bluetooth ?: wired ?: speaker ?: earpiece ?: fallback
+    }
+
     private fun profileBandKey(id: String, idx: Int) = profileKey(id, AudioEffectsService.bandDbKey(idx))
     private fun userPresetBandKey(id: String, idx: Int) = "$KEY_USER_PRESET_BAND_PREFIX${id}_$idx"
     private fun profileCustomPresetNameKey(id: String) = "$KEY_PROFILE_CUSTOM_PRESET_NAME_PREFIX$id"
     private fun userPresetIdForProfile(id: String) = "$USER_PRESET_ID_PREFIX$id"
     private fun profileKey(id: String, base: String) = "$KEY_PROFILE_PREFIX${id}_$base"
 
-    private fun isBluetoothType(type: Int) = type in setOf(
+    @JvmStatic
+    fun isBluetoothType(type: Int) = type in setOf(
         AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
         AudioDeviceInfo.TYPE_HEARING_AID, AudioDeviceInfo.TYPE_BLE_HEADSET,
         AudioDeviceInfo.TYPE_BLE_SPEAKER, AudioDeviceInfo.TYPE_BLE_BROADCAST
     )
 
-    private fun isWiredType(type: Int) = type in setOf(
+    @JvmStatic
+    fun isWiredType(type: Int) = type in setOf(
         AudioDeviceInfo.TYPE_WIRED_HEADSET, AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
         AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_USB_DEVICE,
         AudioDeviceInfo.TYPE_LINE_ANALOG, AudioDeviceInfo.TYPE_LINE_DIGITAL,

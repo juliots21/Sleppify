@@ -9,6 +9,9 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
@@ -121,6 +124,16 @@ class MainActivity : AppCompatActivity() {
     private var lastSummaryTimesPerDay = 0
     private var headerBrandTypeface: Typeface? = null
     private var headerSettingsTypeface: Typeface? = null
+    private var audioManager: AudioManager? = null
+
+    private val outputDeviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>?) {
+            syncAudioProfile(true)
+        }
+        override fun onAudioDevicesRemoved(removedDevices: Array<AudioDeviceInfo>?) {
+            syncAudioProfile(true)
+        }
+    }
 
     private val backPressedCallback = object : OnBackPressedCallback(true) {
         override fun handleOnBackPressed() {
@@ -151,6 +164,8 @@ class MainActivity : AppCompatActivity() {
         applySystemBarsStyle()
 
         initViews()
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        syncAudioProfile(true) // Apply EQ immediately on startup
         setupListeners()
         configureHeaderActionForMainModules()
         configureAudioAuthorizationFlow()
@@ -161,23 +176,22 @@ class MainActivity : AppCompatActivity() {
 
         if (!shouldShowLoginGate) {
             val prefs = getSharedPreferences(PREFS_BOOTSTRAP, Context.MODE_PRIVATE)
-            val lastModuleId = prefs.getInt(PREF_LAST_MAIN_MODULE, R.id.nav_schedule)
+            val lastModuleId = prefs.getInt(PREF_LAST_MAIN_MODULE, R.id.nav_music)
 
             if (savedInstanceState == null) {
-                bottomNav.selectedItemId = lastModuleId
-                currentMainNavItemId = lastModuleId
-                if (!switchToMainModule(lastModuleId)) {
-                    bottomNav.selectedItemId = R.id.nav_schedule
-                    currentMainNavItemId = R.id.nav_schedule
-                    switchToMainModule(R.id.nav_schedule)
-                }
+                // Siempre iniciar con music como módulo por defecto
+                val targetModuleId = R.id.nav_music
+                bottomNav.selectedItemId = targetModuleId
+                currentMainNavItemId = targetModuleId
+                switchToMainModule(targetModuleId)
             } else {
                 val selectedId = bottomNav.selectedItemId
                 currentMainNavItemId = selectedId
                 if (!switchToMainModule(selectedId)) {
-                    bottomNav.selectedItemId = lastModuleId
-                    currentMainNavItemId = lastModuleId
-                    switchToMainModule(lastModuleId)
+                    // Fallback a music si hay error
+                    bottomNav.selectedItemId = R.id.nav_music
+                    currentMainNavItemId = R.id.nav_music
+                    switchToMainModule(R.id.nav_music)
                 }
             }
             showMainShell()
@@ -189,7 +203,6 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             delay(100) // Allow UI to render first
             withContext(Dispatchers.IO) {
-                syncAudioEffectsServiceFromPreferences(forceSync = true)
                 syncDailyAgendaNotificationSchedule(forceSync = true)
             }
             // Handle signed in user async to avoid blocking UI
@@ -297,6 +310,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        runCatching { audioManager?.registerAudioDeviceCallback(outputDeviceCallback, null) }
+    }
+
+    override fun onStop() {
+        runCatching { audioManager?.unregisterAudioDeviceCallback(outputDeviceCallback) }
+        super.onStop()
+    }
+
     fun refreshSessionUi() {
         runDeferredResumeWork()
     }
@@ -365,6 +388,21 @@ class MainActivity : AppCompatActivity() {
     fun requestAudioEffectsStopFromUi() {
         hasAudioServiceStateSnapshot = false
         AudioEffectsService.sendStop(applicationContext)
+    }
+
+    private fun syncAudioProfile(applyIfChanged: Boolean) {
+        val manager = audioManager ?: return
+        val audioPrefs = getSharedPreferences(AudioEffectsService.PREFS_NAME, MODE_PRIVATE)
+        val selected = AudioDeviceProfileStore.selectPreferredOutput(manager)
+
+        val profileSwitched = AudioDeviceProfileStore.syncActiveProfileForOutput(audioPrefs, selected)
+
+        // Force apply if profile switched OR if it's the first sync of the session
+        if ((profileSwitched && applyIfChanged) || (applyIfChanged && !hasAudioServiceStateSnapshot)) {
+            syncAudioEffectsServiceFromPreferences(forceSync = true)
+            // Notify EqualizerFragment if it's active
+            (getMainModuleFragment(R.id.nav_equalizer) as? EqualizerFragment)?.onOutputProfileSwitchedLocally()
+        }
     }
 
     private fun syncAudioEffectsServiceFromPreferences(forceSync: Boolean, allowAuthorizationPrompt: Boolean = false) {

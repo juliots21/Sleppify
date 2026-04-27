@@ -104,6 +104,11 @@ class AppsFragment : Fragment() {
         // refreshAccessibilityPermissionUi()
     }
 
+    private fun refreshAccessibilityPermissionUi() {
+        // val enabled = isAccessibilityServiceEnabled()
+        // cardAccessibilityRequest.visibility = if (enabled) View.GONE else View.VISIBLE
+    }
+
     private fun refreshBackgroundApps() {
         if (!isAdded) return
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {

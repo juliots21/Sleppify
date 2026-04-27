@@ -143,6 +143,14 @@ class EqualizerFragment : Fragment() {
         }
     }
 
+    fun onOutputProfileSwitchedLocally() {
+        if (!isAdded) return
+        mainHandler.post {
+            if (!isAdded) return@post
+            refreshOutputDeviceAndProfile(true, true)
+        }
+    }
+
     override fun onStart() {
         super.onStart()
         registerOutputDeviceCallback()
@@ -314,12 +322,11 @@ class EqualizerFragment : Fragment() {
         if (manager == null) {
             setOutputUi("Altavoces", R.drawable.ic_output_speaker, "Salida por altavoz")
         } else {
-            val outputDevices = manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-            selected = selectPreferredOutput(outputDevices)
+            selected = AudioDeviceProfileStore.selectPreferredOutput(manager)
 
             if (selected != null) {
                 val selectedType = selected.type
-                if (isBluetoothType(selectedType) || isWiredType(selectedType)) {
+                if (AudioDeviceProfileStore.isBluetoothType(selectedType) || AudioDeviceProfileStore.isWiredType(selectedType)) {
                     forceSpeakerOutputSelection = false
                     forceSpeakerFallbackUntilMs = 0L
                 }
@@ -330,9 +337,9 @@ class EqualizerFragment : Fragment() {
             } else {
                 val type = selected.type
                 when {
-                    isBluetoothType(type) ->
+                    AudioDeviceProfileStore.isBluetoothType(type) ->
                         setOutputUi(deviceName(selected, "Bluetooth"), R.drawable.ic_output_bluetooth, "Salida por Bluetooth")
-                    isWiredType(type) ->
+                    AudioDeviceProfileStore.isWiredType(type) ->
                         setOutputUi("Auriculares", R.drawable.ic_output_wired, "Salida por auriculares")
                     type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE ->
                         setOutputUi("Auriculares", R.drawable.ic_output_earpiece, "Salida por auriculares")
@@ -1128,67 +1135,6 @@ class EqualizerFragment : Fragment() {
         return preset?.label ?: "Predeterminado"
     }
 
-    private fun selectPreferredOutput(outputs: Array<AudioDeviceInfo>?): AudioDeviceInfo? {
-        if (outputs == null || outputs.isEmpty()) return null
-
-        var bluetooth: AudioDeviceInfo? = null
-        var wired: AudioDeviceInfo? = null
-        var speaker: AudioDeviceInfo? = null
-        var earpiece: AudioDeviceInfo? = null
-        var fallback: AudioDeviceInfo? = null
-
-        for (output in outputs) {
-            if (!output.isSink) continue
-            if (fallback == null) fallback = output
-
-            val type = output.type
-            when {
-                isBluetoothType(type) && bluetooth == null -> bluetooth = output
-                isWiredType(type) && wired == null -> wired = output
-                (type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER || type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER_SAFE) && speaker == null -> speaker = output
-                type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE && earpiece == null -> earpiece = output
-            }
-        }
-
-        if (forceSpeakerOutputSelection) {
-            if (System.currentTimeMillis() <= forceSpeakerFallbackUntilMs) {
-                speaker?.let { return it }
-                earpiece?.let { return it }
-            }
-            forceSpeakerOutputSelection = false
-            forceSpeakerFallbackUntilMs = 0L
-        }
-
-        return bluetooth ?: wired ?: speaker ?: earpiece ?: fallback
-    }
-
-    private fun containsHeadphoneLikeOutput(devices: Array<AudioDeviceInfo>?): Boolean {
-        if (devices == null || devices.isEmpty()) return false
-        for (info in devices) {
-            if (!info.isSink) continue
-            val type = info.type
-            if (isBluetoothType(type) || isWiredType(type)) return true
-        }
-        return false
-    }
-
-    private fun isBluetoothType(type: Int): Boolean =
-        type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
-                type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
-                type == AudioDeviceInfo.TYPE_HEARING_AID ||
-                type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
-                type == AudioDeviceInfo.TYPE_BLE_SPEAKER ||
-                type == AudioDeviceInfo.TYPE_BLE_BROADCAST
-
-    private fun isWiredType(type: Int): Boolean =
-        type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
-                type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
-                type == AudioDeviceInfo.TYPE_USB_HEADSET ||
-                type == AudioDeviceInfo.TYPE_USB_DEVICE ||
-                type == AudioDeviceInfo.TYPE_LINE_ANALOG ||
-                type == AudioDeviceInfo.TYPE_LINE_DIGITAL ||
-                type == AudioDeviceInfo.TYPE_AUX_LINE
-
     private fun deviceName(deviceInfo: AudioDeviceInfo, fallback: String): String {
         val productName = deviceInfo.productName ?: return fallback
         val value = productName.toString().trim()
@@ -1344,6 +1290,19 @@ class EqualizerFragment : Fragment() {
         private const val PRESET_W_SHAPED = "w_shaped"
         private const val FORCE_SPEAKER_FALLBACK_WINDOW_MS = 4000L
         private const val OUTPUT_REFRESH_MIN_INTERVAL_MS = 900L
+
+        private fun containsHeadphoneLikeOutput(devices: Array<AudioDeviceInfo>?): Boolean {
+            if (devices.isNullOrEmpty()) return false
+            val headphoneTypes = setOf(
+                AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+                AudioDeviceInfo.TYPE_WIRED_HEADSET,
+                AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+                AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+                AudioDeviceInfo.TYPE_HEARING_AID,
+                AudioDeviceInfo.TYPE_USB_HEADSET
+            )
+            return devices.any { it.type in headphoneTypes }
+        }
         private val EQ_BAND_COUNT = AudioEffectsService.EQ_BAND_COUNT
         private val BASS_GAIN_MAX_DB = AudioEffectsService.BASS_DB_MAX
         private const val BASS_GAIN_MIN_DB = 0f

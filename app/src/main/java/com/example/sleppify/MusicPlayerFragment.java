@@ -127,7 +127,7 @@ public class MusicPlayerFragment extends Fragment {
     private static final String STREAM_SCREEN_LIBRARY = "library";
     private static final String STREAM_SCREEN_PLAYLIST_DETAIL = "playlist_detail";
     private static final String PREF_RECENT_SEARCH_QUERIES = "stream_recent_search_queries";
-    private static final long MINI_PROGRESS_TICK_MS = 500L;
+    private static final long MINI_PROGRESS_TICK_MS = 200L;
     private static final long MINI_SNAPSHOT_REFRESH_MS = 1200L;
     private static final long LIBRARY_INLINE_SEARCH_DEBOUNCE_MS = 320L;
     private static final String TAG_MODULE_MUSIC = "module_music";

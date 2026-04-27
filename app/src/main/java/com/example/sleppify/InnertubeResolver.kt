@@ -156,7 +156,15 @@ object InnertubeResolver {
         Client.ANDROID_MUSIC
     )
 
-    data class CachedUrl(val url: String, val timestamp: Long)
+    data class CachedUrl(
+        val url: String,
+        val userAgent: String,
+        val timestamp: Long,
+        val visitorId: String?,
+        val clientName: String,
+        val isNativeClient: Boolean,
+        val useMusicHost: Boolean
+    )
     data class AudioFormat(val url: String, val bitrate: Int, val mimeType: String)
 
     /**
@@ -167,6 +175,41 @@ object InnertubeResolver {
         if (videoId.isNullOrEmpty()) return
         urlCache.remove(videoId)
         Log.d(TAG, "invalidate: limpiada caché para $videoId")
+    }
+
+    /**
+     * Obtiene el User-Agent asociado al videoId que resolvió la URL exitosamente.
+     */
+    @JvmStatic
+    fun getUserAgentFor(videoId: String?): String? {
+        if (videoId.isNullOrEmpty()) return null
+        return urlCache[videoId]?.userAgent
+    }
+
+    /**
+     * Retorna un mapa con todos los headers HTTP necesarios para reproducir
+     * la URL resuelta del videoId. Incluye User-Agent, X-Goog-Visitor-Id,
+     * Referer y Origin según el tipo de cliente usado para resolver.
+     */
+    @JvmStatic
+    fun getHeadersFor(videoId: String?): Map<String, String>? {
+        if (videoId.isNullOrEmpty()) return null
+        val cached = urlCache[videoId] ?: return null
+        val headers = mutableMapOf<String, String>(
+            "User-Agent" to cached.userAgent,
+            "Accept" to "*/*"
+        )
+        // Visitor ID es crítico para que el CDN de YouTube valide la solicitud
+        if (!cached.visitorId.isNullOrEmpty()) {
+            headers["X-Goog-Visitor-Id"] = cached.visitorId
+        }
+        // Para clientes web/TV, agregar Referer y Origin
+        if (!cached.isNativeClient) {
+            val originHost = if (cached.useMusicHost) "https://music.youtube.com" else "https://www.youtube.com"
+            headers["Origin"] = originHost
+            headers["Referer"] = "$originHost/"
+        }
+        return headers
     }
 
     /**
@@ -195,7 +238,15 @@ object InnertubeResolver {
         for (client in clients) {
             val url = tryResolveWithClient(videoId, client)
             if (!url.isNullOrEmpty()) {
-                urlCache[videoId] = CachedUrl(url, System.currentTimeMillis())
+                urlCache[videoId] = CachedUrl(
+                    url,
+                    client.userAgent,
+                    System.currentTimeMillis(),
+                    visitorId,
+                    client.clientName,
+                    client.isNativeClient,
+                    client.useMusicHost
+                )
                 Log.d(TAG, "resolveStreamUrl: success videoId=$videoId client=${client.name}")
                 return url
             }

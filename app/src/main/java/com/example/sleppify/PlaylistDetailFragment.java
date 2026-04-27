@@ -127,7 +127,7 @@ public class PlaylistDetailFragment extends Fragment {
     private static final String PREF_LAST_YOUTUBE_ACCESS_TOKEN = "stream_last_youtube_access_token";
     private static final String STREAM_SCREEN_LIBRARY = "library";
     private static final String STREAM_SCREEN_PLAYLIST_DETAIL = "playlist_detail";
-    private static final long MINI_PROGRESS_TICK_MS = 850L;
+    private static final long MINI_PROGRESS_TICK_MS = 200L;
     private static final long MINI_SNAPSHOT_REFRESH_MS = 1200L;
     private static final long TRACKS_TOKEN_RETRY_DELAY_MS = 1200L;
     private static final int MAX_TRACKS_TOKEN_RETRY = 3;
@@ -248,8 +248,14 @@ public class PlaylistDetailFragment extends Fragment {
             if (!isAdded() || isHidden()) {
                 return;
             }
-            updateMiniPlayerUi();
-            refreshActiveEqualizerState();
+
+            // Skip update if the full player is covering the screen
+            SongPlayerFragment player = findSongPlayerFragment();
+            if (player == null || !player.isVisible()) {
+                updateMiniPlayerUi();
+                refreshActiveEqualizerState();
+            }
+
             miniProgressHandler.postDelayed(this, MINI_PROGRESS_TICK_MS);
         }
     };
@@ -4009,7 +4015,15 @@ public class PlaylistDetailFragment extends Fragment {
 
             if (playerAttached && TextUtils.equals(playerVideoId, currentListTrack.videoId)) {
                 total = Math.max(1, songPlayer.externalGetTotalSeconds());
-                saved = Math.max(0, songPlayer.externalGetCurrentSeconds());
+                int playerSeconds = songPlayer.externalGetCurrentSeconds();
+                
+                // Position guard: if player shows 0 but snapshot has a position, use snapshot
+                if (playerSeconds == 0 && snapshot.currentSeconds > 0 && snapshotTrack != null
+                        && TextUtils.equals(playerVideoId, snapshotTrack.videoId)) {
+                    saved = Math.max(0, snapshot.currentSeconds);
+                } else {
+                    saved = Math.max(0, playerSeconds);
+                }
             } else if (snapshotTrack != null && TextUtils.equals(snapshotTrack.videoId, currentListTrack.videoId)) {
                 total = Math.max(1, snapshot.totalSeconds);
                 saved = Math.max(0, snapshot.currentSeconds);
@@ -4020,7 +4034,15 @@ public class PlaylistDetailFragment extends Fragment {
             imageUrl = snapshotTrack.imageUrl == null ? "" : snapshotTrack.imageUrl.trim();
             if (playerAttached) {
                 total = Math.max(1, songPlayer.externalGetTotalSeconds());
-                saved = Math.max(0, songPlayer.externalGetCurrentSeconds());
+                int playerSeconds = songPlayer.externalGetCurrentSeconds();
+
+                // Position guard
+                if (playerSeconds == 0 && snapshot.currentSeconds > 0 
+                        && TextUtils.equals(songPlayer.externalGetCurrentVideoId(), snapshotTrack.videoId)) {
+                    saved = Math.max(0, snapshot.currentSeconds);
+                } else {
+                    saved = Math.max(0, playerSeconds);
+                }
             } else {
                 total = Math.max(1, snapshot.totalSeconds);
                 saved = Math.max(0, snapshot.currentSeconds);
@@ -4035,7 +4057,15 @@ public class PlaylistDetailFragment extends Fragment {
             subtitle = fallbackArtist == null ? "" : fallbackArtist;
             imageUrl = fallbackImage == null ? "" : fallbackImage.trim();
             total = Math.max(1, songPlayer.externalGetTotalSeconds());
-            saved = Math.max(0, songPlayer.externalGetCurrentSeconds());
+            int playerSeconds = songPlayer.externalGetCurrentSeconds();
+            
+            // Position guard
+            if (playerSeconds == 0 && snapshot.currentSeconds > 0 && snapshotTrack != null
+                    && TextUtils.equals(songPlayer.externalGetCurrentVideoId(), snapshotTrack.videoId)) {
+                saved = Math.max(0, snapshot.currentSeconds);
+            } else {
+                saved = Math.max(0, playerSeconds);
+            }
         } else {
             title = "Selecciona una canción";
             subtitle = "";
@@ -4431,8 +4461,8 @@ public class PlaylistDetailFragment extends Fragment {
                 String expectedSig = headerPlaylistThumbnail.trim();
                 boolean coverChanged = currentCoverSig == null || !currentCoverSig.startsWith(expectedSig);
                 if (coverChanged) {
-                    loadArtworkInto(holder.ivPlaylistCover, headerPlaylistThumbnail);
-                    loadArtworkInto(holder.ivPlaylistBackdrop, headerPlaylistThumbnail);
+                    loadArtworkInto(holder.ivPlaylistCover, headerPlaylistThumbnail, 300);
+                    loadArtworkInto(holder.ivPlaylistBackdrop, headerPlaylistThumbnail, 300);
                 }
             } else {
                 holder.ivPlaylistCover.setImageResource(R.drawable.ic_music);
@@ -4870,7 +4900,7 @@ public class PlaylistDetailFragment extends Fragment {
             }
 
             if (!TextUtils.isEmpty(track.imageUrl)) {
-                loadArtworkInto(holder.ivTrackArt, track.imageUrl, 44);
+                loadArtworkInto(holder.ivTrackArt, track.imageUrl, 32);
             } else {
                 holder.ivTrackArt.setImageResource(R.drawable.ic_music);
             }
