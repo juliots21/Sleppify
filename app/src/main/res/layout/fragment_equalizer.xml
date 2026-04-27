@@ -121,6 +121,8 @@
                     android:layout_alignParentEnd="true"
                     android:layout_centerVertical="true"
                     android:checked="true"
+                    android:focusable="true"
+                    android:background="?attr/selectableItemBackgroundBorderless"
                     android:showText="false"
                     android:text="" />
             </RelativeLayout>
@@ -147,6 +149,7 @@
                     android:layout_marginStart="10dp"
                     android:clickable="true"
                     android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
                     app:cardBackgroundColor="@color/surface_high"
                     app:cardCornerRadius="12dp"
                     app:strokeWidth="0dp">
@@ -362,6 +365,7 @@
                             android:layout_marginStart="10dp"
                             android:clickable="true"
                             android:focusable="true"
+                            android:foreground="?attr/selectableItemBackground"
                             app:cardBackgroundColor="@color/surface_high"
                             app:cardCornerRadius="12dp"
                             app:strokeWidth="0dp">
@@ -424,6 +428,8 @@
                         android:value="0"
                         android:valueFrom="0"
                         android:valueTo="5"
+                        android:focusable="true"
+                        android:background="?attr/selectableItemBackground"
                         app:labelBehavior="gone"
                         app:haloColor="@color/stitch_blue_light"
                         app:thumbColor="@color/stitch_blue_light"
@@ -477,6 +483,8 @@
                         android:value="25"
                         android:valueFrom="0"
                         android:valueTo="130"
+                        android:focusable="true"
+                        android:background="?attr/selectableItemBackground"
                         app:labelBehavior="gone"
                         app:haloColor="@color/stitch_blue_light"
                         app:thumbColor="@color/stitch_blue_light"

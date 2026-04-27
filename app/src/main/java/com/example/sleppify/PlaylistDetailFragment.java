@@ -2779,7 +2779,6 @@ public class PlaylistDetailFragment extends Fragment {
         if (trackAdapter != null) {
             trackAdapter.setActiveIndex(safeIndex);
         }
-        syncShuffleModeFromPlayer();
 
         if (getView() == null) {
             return;

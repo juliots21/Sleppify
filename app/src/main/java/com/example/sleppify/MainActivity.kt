@@ -80,6 +80,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private lateinit var bottomNav: BottomNavigationView
+    private lateinit var navRail: com.google.android.material.navigationrail.NavigationRailView
     private lateinit var tvModuleTitle: TextView
     private lateinit var btnSettings: ImageView
     private lateinit var topAppBar: View
@@ -108,6 +109,9 @@ class MainActivity : AppCompatActivity() {
     private var settingsFragment: Fragment? = null
     private var playlistDetailFragment: Fragment? = null
     private var songPlayerFragment: Fragment? = null
+
+    private lateinit var settingsPrefs: SharedPreferences
+    private lateinit var localPrefs: SharedPreferences
 
     private var currentMainNavItemId = View.NO_ID
     private var lastSmartPrefetchAtMs = 0L
@@ -173,6 +177,11 @@ class MainActivity : AppCompatActivity() {
         configureAudioAuthorizationFlow()
         restoreMainModuleReferences()
 
+        settingsPrefs = getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE)
+        localPrefs = getSharedPreferences("sleppify_local_config", Context.MODE_PRIVATE)
+        updateNavigationForScreenSize()
+        observeSettingsChanges()
+
         forceInitialOauthGate = !isInitialOauthGateCompleted()
         val shouldShowLoginGate = shouldShowLoginGateAtStartup()
 
@@ -221,6 +230,7 @@ class MainActivity : AppCompatActivity() {
     private fun initViews() {
         val root = findViewById<View>(R.id.main)
         bottomNav = findViewById(R.id.bottomNavigation)
+        navRail = findViewById(R.id.navigationRail)
         tvModuleTitle = findViewById(R.id.tvModuleTitle)
         btnSettings = findViewById(R.id.btnSettings)
         topAppBar = findViewById(R.id.topAppBar)
@@ -245,10 +255,61 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun updateNavigationForScreenSize() {
+        val screenWidthDp = resources.configuration.screenWidthDp
+        val isWide = screenWidthDp >= 600
+        val agendaItemBottom = bottomNav.menu.findItem(R.id.nav_schedule)
+        val agendaItemRail = navRail.menu.findItem(R.id.nav_schedule)
+        
+        if (isWide) {
+            agendaItemBottom?.isVisible = false
+            agendaItemRail?.isVisible = false
+            if (currentMainNavItemId == R.id.nav_schedule) {
+                currentMainNavItemId = R.id.nav_music
+                bottomNav.selectedItemId = R.id.nav_music
+                navRail.selectedItemId = R.id.nav_music
+                switchToMainModule(R.id.nav_music)
+            }
+        } else {
+            agendaItemBottom?.isVisible = true
+            agendaItemRail?.isVisible = true
+        }
+        
+        applyTvModeLayout()
+    }
+
+    private fun applyTvModeLayout() {
+        val isTvMode = localPrefs.getBoolean("tv_mode_enabled", false)
+        // We will implement NavigationRailView in activity_main.xml next.
+        // For now, let's just log or prepare the visibility.
+        val navRail = findViewById<View>(R.id.navigationRail) ?: return
+        
+        if (isTvMode) {
+            bottomNav.visibility = View.GONE
+            navRail.visibility = View.VISIBLE
+            // Update constraints if needed (handled in XML usually, but might need manual tweaks)
+        } else {
+            navRail.visibility = View.GONE
+            if (!inSettings) bottomNav.visibility = View.VISIBLE
+        }
+    }
+
+    private fun observeSettingsChanges() {
+        localPrefs.registerOnSharedPreferenceChangeListener { _, key ->
+            if (key == "tv_mode_enabled") {
+                runOnUiThread { applyTvModeLayout() }
+            }
+        }
+    }
+
     private fun setupListeners() {
         btnLoginGoogle?.setOnClickListener { startLoginFromGate() }
         btnSettings.setOnClickListener { if (inSettings) exitSettings() else enterSettings() }
         bottomNav.setOnItemSelectedListener { item ->
+            if (inSettings) exitSettings()
+            switchToMainModule(item.itemId)
+        }
+        navRail.setOnItemSelectedListener { item ->
             if (inSettings) exitSettings()
             switchToMainModule(item.itemId)
         }
@@ -763,6 +824,9 @@ class MainActivity : AppCompatActivity() {
         val target = supportFragmentManager.findFragmentByTag(tag) ?: getOrCreateMainModuleFragment(itemId) ?: return false
 
         if (currentMainNavItemId == R.id.nav_music && itemId != R.id.nav_music) markStreamingEntryAsLibrary()
+
+        if (bottomNav.selectedItemId != itemId) bottomNav.selectedItemId = itemId
+        if (navRail.selectedItemId != itemId) navRail.selectedItemId = itemId
 
         val isTrulySwitching = currentMainNavItemId != itemId || !target.isAdded
         if (!isTrulySwitching && !inSettings) {

@@ -46,6 +46,8 @@ class EqCurveEditorView : View {
     private var modalBandGuidesEnabled = false
     private var onBandChangeListener: OnBandChangeListener? = null
 
+    private var focusedBand = -1
+
     constructor(context: Context) : super(context) {
         init()
     }
@@ -98,6 +100,7 @@ class EqCurveEditorView : View {
         handleRadiusPx = dp(6.4f)
         isClickable = true
         isFocusable = true
+        isFocusableInTouchMode = true
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -140,6 +143,9 @@ class EqCurveEditorView : View {
         }
         if (axisDbLabelsEnabled) {
             drawDbLabels(canvas)
+        }
+        if (isFocused && focusedBand >= 0) {
+            drawFocusIndicator(canvas)
         }
     }
 
@@ -234,10 +240,19 @@ class EqCurveEditorView : View {
 
     private fun drawHandles(canvas: Canvas) {
         for (i in 0 until BAND_COUNT) {
-            val radius = if (i == activeBand) handleRadiusPx + dp(1.5f) else handleRadiusPx
+            val radius = if (i == activeBand || (isFocused && i == focusedBand)) 
+                handleRadiusPx + dp(3.5f) else handleRadiusPx
             canvas.drawCircle(bandX[i], bandY[i], radius, pointFillPaint)
             canvas.drawCircle(bandX[i], bandY[i], radius, pointStrokePaint)
         }
+    }
+
+    private fun drawFocusIndicator(canvas: Canvas) {
+        val x = bandX[focusedBand]
+        val paint = Paint(modalGuidePaint)
+        paint.color = adjustAlpha(paint.color, 0.8f)
+        paint.strokeWidth = dp(2f)
+        canvas.drawLine(x, contentTop, x, contentBottom, paint)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -276,6 +291,62 @@ class EqCurveEditorView : View {
         }
 
         return super.onTouchEvent(event)
+    }
+
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent): Boolean {
+        if (!isEnabled || !editingEnabled) return super.onKeyDown(keyCode, event)
+
+        when (keyCode) {
+            android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                if (focusedBand > 0) {
+                    focusedBand--
+                    invalidate()
+                    return true
+                }
+                return false
+            }
+            android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                if (focusedBand < BAND_COUNT - 1) {
+                    focusedBand++
+                    invalidate()
+                    return true
+                }
+                return false
+            }
+            android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                if (focusedBand >= 0) {
+                    val newValue = clampDb(bandValues[focusedBand] + STEP_DB)
+                    if (abs(newValue - bandValues[focusedBand]) > 0.001f) {
+                        bandValues[focusedBand] = newValue
+                        recalculateBandY()
+                        onBandChangeListener?.onBandChanged(focusedBand, newValue)
+                        invalidate()
+                    }
+                }
+                return true
+            }
+            android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                if (focusedBand >= 0) {
+                    val newValue = clampDb(bandValues[focusedBand] - STEP_DB)
+                    if (abs(newValue - bandValues[focusedBand]) > 0.001f) {
+                        bandValues[focusedBand] = newValue
+                        recalculateBandY()
+                        onBandChangeListener?.onBandChanged(focusedBand, newValue)
+                        invalidate()
+                    }
+                }
+                return true
+            }
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
+    override fun onFocusChanged(gainFocus: Boolean, direction: Int, previouslyFocusedRect: android.graphics.Rect?) {
+        super.onFocusChanged(gainFocus, direction, previouslyFocusedRect)
+        if (gainFocus && focusedBand < 0) {
+            focusedBand = 0
+        }
+        invalidate()
     }
 
     fun setBandValues(values: FloatArray?) {

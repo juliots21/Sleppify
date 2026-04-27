@@ -42,24 +42,14 @@ object AudioDeviceProfileStore {
     fun syncActiveProfileForOutput(prefs: SharedPreferences, selectedOutput: AudioDeviceInfo?): Boolean {
         val targetProfileId = buildProfileId(selectedOutput)
         val currentProfileId = prefs.getString(KEY_ACTIVE_PROFILE_ID, null)
-        val aliasProfileId = findExistingAliasProfileId(prefs, targetProfileId, selectedOutput)
-
         if (currentProfileId == targetProfileId) {
             if (!hasProfileData(prefs, targetProfileId)) {
                 prefs.edit().apply {
-                    if (!aliasProfileId.isNullOrEmpty()) {
-                        copyProfileValuesToActive(this, prefs, aliasProfileId)
-                        copyProfileValuesToProfile(this, prefs, aliasProfileId, targetProfileId)
-                    } else {
-                        writeDefaultValuesToProfile(this, targetProfileId)
-                        writeDefaultValuesToActive(this)
-                    }
+                    writeDefaultValuesToProfile(this, targetProfileId)
+                    writeDefaultValuesToActive(this)
                 }.apply()
                 return true
             }
-            // CRITICAL FIX: When on same device, active values are source of truth.
-            // Don't restore from profile - that would destroy recent user changes.
-            // Only persist if needed, never restore when same device.
             return false
         }
 
@@ -70,9 +60,6 @@ object AudioDeviceProfileStore {
 
             if (hasProfileData(prefs, targetProfileId)) {
                 copyProfileValuesToActive(this, prefs, targetProfileId)
-            } else if (!aliasProfileId.isNullOrEmpty()) {
-                copyProfileValuesToActive(this, prefs, aliasProfileId)
-                copyProfileValuesToProfile(this, prefs, aliasProfileId, targetProfileId)
             } else {
                 writeDefaultValuesToProfile(this, targetProfileId)
                 writeDefaultValuesToActive(this)
@@ -96,26 +83,18 @@ object AudioDeviceProfileStore {
     @JvmStatic
     fun restoreActiveValuesForOutput(prefs: SharedPreferences, selectedOutput: AudioDeviceInfo?): Boolean {
         val targetProfileId = buildProfileId(selectedOutput)
-        val aliasId = findExistingAliasProfileId(prefs, targetProfileId, selectedOutput)
 
-        val sourceId = when {
-            hasProfileData(prefs, targetProfileId) -> targetProfileId
-            !aliasId.isNullOrEmpty() && hasProfileData(prefs, aliasId) -> aliasId
-            else -> return false
+        if (!hasProfileData(prefs, targetProfileId)) {
+            return false
         }
 
         val currentId = prefs.getString(KEY_ACTIVE_PROFILE_ID, null)
-        // CRITICAL FIX: When on same device, active values are source of truth.
-        // Never restore from profile - that would destroy recent user changes.
         if (currentId == targetProfileId) {
             return false
         }
 
         prefs.edit().apply {
-            copyProfileValuesToActive(this, prefs, sourceId)
-            if (sourceId != targetProfileId) {
-                copyProfileValuesToProfile(this, prefs, sourceId, targetProfileId)
-            }
+            copyProfileValuesToActive(this, prefs, targetProfileId)
             putString(KEY_ACTIVE_PROFILE_ID, targetProfileId)
         }.apply()
         return true

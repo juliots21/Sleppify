@@ -215,39 +215,23 @@ object OfflineAudioStore {
         val dir = getOfflineAudioDir(context)
 
         val webm = File(dir, normalizedTrackId + OFFLINE_AUDIO_EXTENSION_WEBM)
-        if (webm.isFile && webm.length() > 0L) {
-            val durationSeconds = readAudioDurationSeconds(webm)
-            if (isPlausibleOfflineAudioFile(webm, durationSeconds)) {
-                return true
-            }
-            webm.delete()
+        if (webm.isFile && webm.length() >= MIN_VALID_AUDIO_FILE_BYTES) {
+            return true
         }
 
         val preferred = File(dir, normalizedTrackId + OFFLINE_AUDIO_EXTENSION)
-        if (preferred.isFile && preferred.length() > 0L) {
-            val durationSeconds = readAudioDurationSeconds(preferred)
-            if (isPlausibleOfflineAudioFile(preferred, durationSeconds)) {
-                return true
-            }
-            preferred.delete()
+        if (preferred.isFile && preferred.length() >= MIN_VALID_AUDIO_FILE_BYTES) {
+            return true
         }
 
         val legacy = File(dir, normalizedTrackId + LEGACY_OFFLINE_AUDIO_EXTENSION)
-        if (legacy.isFile && legacy.length() > 0L) {
-            val durationSeconds = readAudioDurationSeconds(legacy)
-            if (isPlausibleOfflineAudioFile(legacy, durationSeconds)) {
-                return true
-            }
-            legacy.delete()
+        if (legacy.isFile && legacy.length() >= MIN_VALID_AUDIO_FILE_BYTES) {
+            return true
         }
 
         val legacyBin = File(dir, normalizedTrackId + LEGACY_BIN_OFFLINE_AUDIO_EXTENSION)
-        if (legacyBin.isFile && legacyBin.length() > 0L) {
-            val durationSeconds = readAudioDurationSeconds(legacyBin)
-            if (isPlausibleOfflineAudioFile(legacyBin, durationSeconds)) {
-                return true
-            }
-            legacyBin.delete()
+        if (legacyBin.isFile && legacyBin.length() >= MIN_VALID_AUDIO_FILE_BYTES) {
+            return true
         }
 
         return false

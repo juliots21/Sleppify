@@ -119,11 +119,10 @@ public class SongPlayerFragment extends Fragment {
     private static final String PREF_LAST_PLAYLIST_SUBTITLE = "stream_last_playlist_subtitle";
     private static final String PREF_LAST_PLAYLIST_THUMBNAIL = "stream_last_playlist_thumbnail";
     private static final String PREF_LAST_YOUTUBE_ACCESS_TOKEN = "stream_last_youtube_access_token";
-    private static final String TAG_PLAYLIST_DETAIL = "playlist_detail";
-    private static final String TAG_MODULE_MUSIC = "module_music";
     private static final String MEDIA_NOTIFICATION_CHANNEL_ID = "sleppify_media_playback";
     private static final int MEDIA_NOTIFICATION_ID = 11031;
-    private static final int MEDIA_NOTIFICATION_ARTWORK_MAX_SIZE_PX = 1024;
+    private static final String TAG_PLAYLIST_DETAIL = "playlist_detail";
+    private static final String TAG_MODULE_MUSIC = "module_music";
     private static final int MEDIA_SESSION_ARTWORK_MAX_SIZE_PX = 1400;
     private static final int REPEAT_MODE_OFF = 0;
     private static final int REPEAT_MODE_ALL = 1;
@@ -415,7 +414,7 @@ public class SongPlayerFragment extends Fragment {
                 new ActivityResultContracts.RequestPermission(),
                 granted -> {
                     if (granted) {
-                        updateMediaNotification();
+                        // Notification removed
                     }
                 }
         );
@@ -499,7 +498,6 @@ public class SongPlayerFragment extends Fragment {
 
         setupSwipeToDismiss(view);
         setupBackPressToMiniMode();
-        ensureNotificationPermissionForPlayback();
         resetPlayerScrollToTop();
 
         currentIndex = Math.max(0, Math.min(currentIndex, tracks.size() - 1));
@@ -560,7 +558,6 @@ public class SongPlayerFragment extends Fragment {
                 sbPlaybackProgress.setProgress(Math.max(0, Math.min(1000, progress)));
                 persistPositionForLoadedTrack();
                 updateMediaSessionState();
-                updateMediaNotification();
                 userSeeking = false;
             }
         });
@@ -609,7 +606,6 @@ public class SongPlayerFragment extends Fragment {
         }
         appInBackground = false;
         updateBackPressedCallbackEnabled(isHidden());
-        ensureNotificationPermissionForPlayback();
         resetPlayerScrollToTop();
         ensureActivePlaybackIfExpected("onResume");
         persistPlaybackSnapshot(false);
@@ -701,7 +697,6 @@ public class SongPlayerFragment extends Fragment {
             ((MainActivity) getActivity()).setContainerOverlayMode(false);
         }
         releaseMediaSession();
-        clearMediaNotification();
         clearMediaNotificationArtwork();
         if (backPressedCallback != null) {
             backPressedCallback.remove();
@@ -800,7 +795,6 @@ public class SongPlayerFragment extends Fragment {
                 sbPlaybackProgress.setProgress(Math.max(0, Math.min(1000, progress)));
                 persistPositionForLoadedTrack();
                 updateMediaSessionState();
-                updateMediaNotification();
             }
         });
         mediaSession.setActive(true);
@@ -853,7 +847,6 @@ public class SongPlayerFragment extends Fragment {
                 currentSeconds = Math.max(0, totalSeconds);
                 updatePlayPauseIcon();
                 updateMediaSessionState();
-                updateMediaNotification();
                 syncMiniStateWithPlaylist();
                 return;
             }
@@ -1041,7 +1034,6 @@ public class SongPlayerFragment extends Fragment {
         Log.e(TAG, "Playback stopped after errors. videoId=" + loadedVideoId + " message=" + message);
         updatePlayPauseIcon();
         updateMediaSessionState();
-        updateMediaNotification();
         persistPlaybackSnapshot(false);
         if (isAdded()) {
             
@@ -1073,8 +1065,7 @@ public class SongPlayerFragment extends Fragment {
 
             updatePlayPauseIcon();
             updateMediaSessionState();
-            updateMediaNotification();
-            syncMiniStateWithPlaylist();
+                syncMiniStateWithPlaylist();
             persistPlaybackSnapshot(false);
             return;
         }
@@ -1085,8 +1076,7 @@ public class SongPlayerFragment extends Fragment {
             persistPositionForLoadedTrack();
             updatePlayPauseIcon();
             updateMediaSessionState();
-            updateMediaNotification();
-            syncMiniStateWithPlaylist();
+                syncMiniStateWithPlaylist();
             persistPlaybackSnapshot(false);
             return;
         }
@@ -1115,6 +1105,7 @@ public class SongPlayerFragment extends Fragment {
         }
         persistPlaybackModePreferences();
         updatePlaybackModeButtons();
+        updateMediaNotification();
         syncMiniStateWithPlaylist();
     }
 
@@ -1135,6 +1126,7 @@ public class SongPlayerFragment extends Fragment {
         persistPlaybackModePreferences();
         persistPlaybackSnapshot(false);
         updatePlaybackModeButtons();
+        updateMediaNotification();
         syncMiniStateWithPlaylist();
     }
 
@@ -1270,7 +1262,7 @@ public class SongPlayerFragment extends Fragment {
         long requestToken = ++activePlaybackRequestToken;
 
         boolean hasOfflineLocal = isAdded()
-                && OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), track.videoId, track.duration);
+                && OfflineAudioStore.hasOfflineAudio(requireContext(), track.videoId);
         
         if (shouldSkipRestrictedTrack(track.videoId, hasOfflineLocal)) {
             Log.d(TAG, "playCurrentTrack: restricted track skipped in queue. videoId=" + track.videoId);
@@ -1348,7 +1340,7 @@ public class SongPlayerFragment extends Fragment {
         if (nextTrack == null || TextUtils.isEmpty(nextTrack.videoId)) return;
 
         // Skip if already offline
-        if (isAdded() && OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), nextTrack.videoId, nextTrack.duration)) {
+        if (isAdded() && OfflineAudioStore.hasOfflineAudio(requireContext(), nextTrack.videoId)) {
             return;
         }
 
@@ -1600,6 +1592,14 @@ public class SongPlayerFragment extends Fragment {
             player.prepareAsync();
             Log.d(TAG, "startMediaPlaybackFromSource: prepareAsync requested for source=" + maskUrlForLog(source));
             scheduleSourcePrepareTimeout(track, requestToken, player, onFailure);
+        } catch (IllegalStateException ise) {
+            cancelSourcePrepareTimeout();
+            localSourcePreparing = false;
+            Log.e(TAG, "startMediaPlaybackFromSource: ExoPlayer thread is dead, reinitializing manager", ise);
+            if (isAdded()) {
+                ExoPlayerManager.INSTANCE.reinitialize(requireContext().getApplicationContext());
+            }
+            onFailure.run();
         } catch (Exception e) {
             cancelSourcePrepareTimeout();
             localSourcePreparing = false;
@@ -1989,7 +1989,6 @@ public class SongPlayerFragment extends Fragment {
         updatePlayPauseIcon();
         updateMediaSessionMetadata();
         updateMediaSessionState();
-        updateMediaNotification();
         syncMiniStateWithPlaylist();
         persistPlaybackSnapshot(false);
 
@@ -2555,7 +2554,7 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
-        Bitmap notificationBitmap = scaleArtworkBitmap(source, MEDIA_NOTIFICATION_ARTWORK_MAX_SIZE_PX);
+        Bitmap notificationBitmap = scaleArtworkBitmap(source, 1024);
         Bitmap sessionBitmap = scaleArtworkBitmap(source, MEDIA_SESSION_ARTWORK_MAX_SIZE_PX);
 
         mediaNotificationLargeIcon = notificationBitmap;
@@ -2653,7 +2652,6 @@ public class SongPlayerFragment extends Fragment {
                 }
                 cacheMediaNotificationArtwork(requestVideoId, resource);
                 updateMediaSessionMetadata();
-                updateMediaNotification();
             }
 
             @Override
@@ -2668,8 +2666,7 @@ public class SongPlayerFragment extends Fragment {
                 if (TextUtils.equals(mediaNotificationLargeIconVideoId, requestVideoId)) {
                     clearMediaNotificationArtwork();
                     updateMediaSessionMetadata();
-                    updateMediaNotification();
-                }
+                    }
             }
         };
 
@@ -2694,8 +2691,7 @@ public class SongPlayerFragment extends Fragment {
             resetPlayerHeroContainerHeight();
             ivPlayerCover.setImageDrawable(null);
             updateMediaSessionMetadata();
-            updateMediaNotification();
-            return;
+                return;
         }
 
         if (!TextUtils.equals(requestVideoId, mediaNotificationLargeIconVideoId)) {
@@ -2720,7 +2716,6 @@ public class SongPlayerFragment extends Fragment {
                 adjustPlayerHeroForCover(processedResource);
                 cacheMediaNotificationArtwork(requestVideoId, processedResource);
                 updateMediaSessionMetadata();
-                updateMediaNotification();
             }
 
             @Override
@@ -2742,8 +2737,7 @@ public class SongPlayerFragment extends Fragment {
                 }
                 ivPlayerCover.setImageDrawable(null);
                 updateMediaSessionMetadata();
-                updateMediaNotification();
-            }
+                    }
         };
 
         Glide.with(this)
@@ -2948,7 +2942,6 @@ public class SongPlayerFragment extends Fragment {
 
         updateMediaSessionMetadata();
         updateMediaSessionState();
-        updateMediaNotification();
         if (bootstrapArtwork) {
             cancelNextUpReveal();
             nextUpTracks.clear();
@@ -3383,7 +3376,7 @@ public class SongPlayerFragment extends Fragment {
         isPlaying = false;
         updatePlayPauseIcon();
         updateMediaSessionState();
-        clearMediaNotification();
+        updateMediaNotification();
         syncMiniStateWithPlaylist();
         persistPlaybackSnapshot(true);
     }
@@ -4009,25 +4002,15 @@ public class SongPlayerFragment extends Fragment {
         mediaSession.setActive(true);
     }
 
+
     private void updateMediaNotification() {
         if (mediaSession == null || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) {
-            return;
-        }
-        if (!canPostNotifications()) {
             return;
         }
         if (persistentAppContext == null) return;
         PlayerTrack track = tracks.get(currentIndex);
 
-        PendingIntent prevIntent = androidx.media.session.MediaButtonReceiver.buildMediaButtonPendingIntent(
-                persistentAppContext, PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS);
-        PendingIntent playPauseIntent = androidx.media.session.MediaButtonReceiver.buildMediaButtonPendingIntent(
-                persistentAppContext, isPlaying ? PlaybackStateCompat.ACTION_PAUSE : PlaybackStateCompat.ACTION_PLAY);
-        PendingIntent nextIntent = androidx.media.session.MediaButtonReceiver.buildMediaButtonPendingIntent(
-                persistentAppContext, PlaybackStateCompat.ACTION_SKIP_TO_NEXT);
-        PendingIntent shuffleIntent = androidx.media.session.MediaButtonReceiver.buildMediaButtonPendingIntent(
-                persistentAppContext, PlaybackStateCompat.ACTION_SET_SHUFFLE_MODE);
-
+        // Intento de abrir la app al tocar la notificacion
         Intent openAppIntent = new Intent(persistentAppContext, MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         int pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT;
@@ -4036,17 +4019,22 @@ public class SongPlayerFragment extends Fragment {
         }
         PendingIntent contentIntent = PendingIntent.getActivity(persistentAppContext, 8701, openAppIntent, pendingFlags);
 
+        PendingIntent prevIntent = androidx.media.session.MediaButtonReceiver.buildMediaButtonPendingIntent(
+                persistentAppContext, PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS);
+        PendingIntent playPauseIntent = androidx.media.session.MediaButtonReceiver.buildMediaButtonPendingIntent(
+                persistentAppContext, isPlaying ? PlaybackStateCompat.ACTION_PAUSE : PlaybackStateCompat.ACTION_PLAY);
+        PendingIntent nextIntent = androidx.media.session.MediaButtonReceiver.buildMediaButtonPendingIntent(
+                persistentAppContext, PlaybackStateCompat.ACTION_SKIP_TO_NEXT);
+
         NotificationCompat.Builder builder = new NotificationCompat.Builder(persistentAppContext, MEDIA_NOTIFICATION_CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notification_cat)
+                .setSmallIcon(R.drawable.ic_notification_cat)
                 .setContentTitle(track.title)
                 .setContentText(track.artist)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
-                .setColorized(true)
                 .setContentIntent(contentIntent)
-                .setOnlyAlertOnce(true)
+                .setSilent(true)
                 .setOngoing(isPlaying)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
                 .addAction(android.R.drawable.ic_media_previous, "Anterior", prevIntent)
                 .addAction(
                         isPlaying ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play,
@@ -4054,80 +4042,32 @@ public class SongPlayerFragment extends Fragment {
                         playPauseIntent
                 )
                 .addAction(android.R.drawable.ic_media_next, "Siguiente", nextIntent)
-                .addAction(R.drawable.ic_player_shuffle, "Aleatorio", shuffleIntent)
                 .setStyle(new androidx.media.app.NotificationCompat.MediaStyle()
                         .setMediaSession(mediaSession.getSessionToken())
                         .setShowActionsInCompactView(0, 1, 2));
 
-            if (!TextUtils.isEmpty(track.videoId)
-                && TextUtils.equals(track.videoId, mediaNotificationLargeIconVideoId)
-                && mediaNotificationLargeIcon != null
-                && !mediaNotificationLargeIcon.isRecycled()) {
-                builder.setLargeIcon(mediaNotificationLargeIcon);
-            } else {
-                builder.setLargeIcon((Bitmap) null);
-            }
-
-        android.app.Notification notification = builder.build();
-        NotificationManagerCompat.from(persistentAppContext).notify(MEDIA_NOTIFICATION_ID, notification);
-    }
-
-    private void clearMediaNotification() {
-        if (persistentAppContext == null) {
-            return;
-        }
-        NotificationManagerCompat.from(persistentAppContext).cancel(MEDIA_NOTIFICATION_ID);
-    }
-
-    private void ensureNotificationPermissionForPlayback() {
-        if (!isAdded() || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            return;
-        }
-        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.POST_NOTIFICATIONS)
-                == PackageManager.PERMISSION_GRANTED) {
-            return;
-        }
-        if (notificationPermissionRequested || notificationPermissionLauncher == null) {
-            return;
+        if (mediaSessionArtwork != null && !mediaSessionArtwork.isRecycled()) {
+            builder.setLargeIcon(mediaSessionArtwork);
         }
 
-        notificationPermissionRequested = true;
-        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS);
-    }
-
-    private boolean canPostNotifications() {
-        if (persistentAppContext == null) {
-            return false;
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            return ContextCompat.checkSelfPermission(persistentAppContext, Manifest.permission.POST_NOTIFICATIONS)
-                    == PackageManager.PERMISSION_GRANTED;
-        }
-        return NotificationManagerCompat.from(persistentAppContext).areNotificationsEnabled();
+        NotificationManagerCompat.from(persistentAppContext).notify(MEDIA_NOTIFICATION_ID, builder.build());
     }
 
     private void ensureMediaNotificationChannel() {
         if (persistentAppContext == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             return;
         }
-
         NotificationManager manager = persistentAppContext.getSystemService(NotificationManager.class);
-        if (manager == null) {
+        if (manager == null || manager.getNotificationChannel(MEDIA_NOTIFICATION_CHANNEL_ID) != null) {
             return;
         }
-
-        NotificationChannel channel = manager.getNotificationChannel(MEDIA_NOTIFICATION_CHANNEL_ID);
-        if (channel != null) {
-            return;
-        }
-
-        NotificationChannel newChannel = new NotificationChannel(
+        NotificationChannel channel = new NotificationChannel(
                 MEDIA_NOTIFICATION_CHANNEL_ID,
-                "Reproduccion multimedia",
+                "Reproducción",
                 NotificationManager.IMPORTANCE_LOW
         );
-        newChannel.setDescription("Controles de reproduccion de Sleppify");
-        manager.createNotificationChannel(newChannel);
+        channel.setShowBadge(false);
+        manager.createNotificationChannel(channel);
     }
 
     private void hydrateTracksFromArgs() {

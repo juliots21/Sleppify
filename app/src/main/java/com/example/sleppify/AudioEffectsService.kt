@@ -8,11 +8,16 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
-import android.media.audiofx.DynamicsProcessing
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import android.media.audiofx.DynamicsProcessing
 
 /**
  * Motor DSP avanzado basado en DynamicsProcessing (API 28+).
@@ -29,12 +34,25 @@ class AudioEffectsService : Service() {
     private var currentAudioSessionId: Int = GLOBAL_SESSION_ID
     private var isEngineActive = false
     private var isForegroundStarted = false
+    private var audioManager: AudioManager? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    private val deviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>?) {
+            syncAndRefresh()
+        }
+        override fun onAudioDevicesRemoved(removedDevices: Array<AudioDeviceInfo>?) {
+            syncAndRefresh()
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         ensureNotificationChannel()
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        audioManager?.registerAudioDeviceCallback(deviceCallback, mainHandler)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -62,6 +80,7 @@ class AudioEffectsService : Service() {
     }
 
     override fun onDestroy() {
+        audioManager?.unregisterAudioDeviceCallback(deviceCallback)
         releaseEngine()
         exitForeground()
         super.onDestroy()
@@ -160,6 +179,14 @@ class AudioEffectsService : Service() {
         }
 
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        
+        // Initial sync to ensure correct profile for current device on startup
+        val manager = audioManager
+        if (manager != null) {
+            val selected = AudioDeviceProfileStore.selectPreferredOutput(manager)
+            AudioDeviceProfileStore.syncActiveProfileForOutput(prefs, selected)
+        }
+
         val enabled = prefs.getBoolean(KEY_ENABLED, false)
 
         if (!enabled) {
@@ -170,39 +197,41 @@ class AudioEffectsService : Service() {
 
         val targetSession = if (sessionId != GLOBAL_SESSION_ID) sessionId else GLOBAL_SESSION_ID
 
-        try {
-            // Rebuild engine if session changed or not active
-            if (dynamicsProcessing == null || currentAudioSessionId != targetSession) {
-                releaseEngine()
-                dynamicsProcessing = createDynamicsProcessingEngine(targetSession)
-                currentAudioSessionId = targetSession
-                isEngineActive = true
-                Log.d(TAG, "engine:created session=$targetSession")
-            }
-
-            applyParametersFromPrefs(prefs)
-            dynamicsProcessing?.enabled = true
-            Log.d(TAG, "engine:applied session=$targetSession enabled=true")
-
-        } catch (e: Exception) {
-            Log.e(TAG, "engine:error session=$targetSession", e)
-
-            // If global session failed, try with session 0 as absolute fallback
-            if (targetSession != GLOBAL_SESSION_ID) {
-                try {
+        Thread {
+            try {
+                // Rebuild engine if session changed or not active
+                if (dynamicsProcessing == null || currentAudioSessionId != targetSession) {
                     releaseEngine()
-                    dynamicsProcessing = createDynamicsProcessingEngine(GLOBAL_SESSION_ID)
-                    currentAudioSessionId = GLOBAL_SESSION_ID
+                    dynamicsProcessing = createDynamicsProcessingEngine(targetSession)
+                    currentAudioSessionId = targetSession
                     isEngineActive = true
-                    applyParametersFromPrefs(prefs)
-                    dynamicsProcessing?.enabled = true
-                    Log.d(TAG, "engine:fallback_to_global success")
-                } catch (fallbackError: Exception) {
-                    Log.e(TAG, "engine:fallback_failed", fallbackError)
-                    releaseEngine()
+                    Log.d(TAG, "engine:created session=$targetSession")
+                }
+
+                applyParametersFromPrefs(prefs)
+                dynamicsProcessing?.enabled = true
+                Log.d(TAG, "engine:applied session=$targetSession enabled=true")
+
+            } catch (e: Exception) {
+                Log.e(TAG, "engine:error session=$targetSession", e)
+
+                // If global session failed, try with session 0 as absolute fallback
+                if (targetSession != GLOBAL_SESSION_ID) {
+                    try {
+                        releaseEngine()
+                        dynamicsProcessing = createDynamicsProcessingEngine(GLOBAL_SESSION_ID)
+                        currentAudioSessionId = GLOBAL_SESSION_ID
+                        isEngineActive = true
+                        applyParametersFromPrefs(prefs)
+                        dynamicsProcessing?.enabled = true
+                        Log.d(TAG, "engine:fallback_to_global success")
+                    } catch (fallbackError: Exception) {
+                        Log.e(TAG, "engine:fallback_failed", fallbackError)
+                        releaseEngine()
+                    }
                 }
             }
-        }
+        }.start()
     }
 
     /**
@@ -344,6 +373,20 @@ class AudioEffectsService : Service() {
 
 
         Log.d(TAG, "params:applied bands=9 bassDb=$bassDb")
+    }
+
+    private fun syncAndRefresh() {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val manager = audioManager ?: return
+        val selected = AudioDeviceProfileStore.selectPreferredOutput(manager)
+        
+        val changed = AudioDeviceProfileStore.syncActiveProfileForOutput(prefs, selected)
+        if (changed) {
+            Log.d(TAG, "device_change: profile synced for ${selected?.productName}")
+            if (prefs.getBoolean(KEY_ENABLED, false)) {
+                applyEffects(currentAudioSessionId)
+            }
+        }
     }
 
     private fun releaseEngine() {

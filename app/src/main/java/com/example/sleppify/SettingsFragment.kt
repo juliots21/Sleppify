@@ -19,6 +19,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.*
 import androidx.appcompat.app.AlertDialog
+import android.app.UiModeManager
+import android.content.res.Configuration
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
@@ -57,6 +59,9 @@ class SettingsFragment : Fragment() {
     private lateinit var swAiShiftPermissions: MaterialSwitch
     private lateinit var swAmoledMode: MaterialSwitch
     private lateinit var swDownloadOnMobileData: MaterialSwitch
+    private lateinit var swTvMode: MaterialSwitch
+    private lateinit var rowTvMode: View
+    private lateinit var dividerTvMode: View
     private lateinit var rowSummaryFrequency: View
     private lateinit var rowDownloadQuality: View
     private lateinit var tvDownloadQualityValue: TextView
@@ -73,7 +78,11 @@ class SettingsFragment : Fragment() {
     private lateinit var btnDeleteSettingsCache: MaterialButton
 
     private val settingsPrefs: SharedPreferences by lazy { 
-        requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, MODE_PRIVATE) 
+        requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE) 
+    }
+    
+    private val localPrefs: SharedPreferences by lazy {
+        requireContext().getSharedPreferences("sleppify_local_config", Context.MODE_PRIVATE)
     }
     
     private val authManager: AuthManager by lazy { AuthManager.getInstance(requireContext()) }
@@ -94,6 +103,7 @@ class SettingsFragment : Fragment() {
     private var lastProfileDisplayName: String? = null
     private var lastProfileEmail: String? = null
     private var lastProfilePhotoUrl: String? = null
+    private var lastTvModeEnabled = false
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
         return inflater.inflate(R.layout.fragment_settings, container, false)
@@ -131,6 +141,9 @@ class SettingsFragment : Fragment() {
         vStorageCache = v.findViewById(R.id.vStorageCache)
         vStorageFree = v.findViewById(R.id.vStorageFree)
         btnDeleteSettingsCache = v.findViewById(R.id.btnDeleteSettingsCache)
+        swTvMode = v.findViewById(R.id.swTvMode)
+        rowTvMode = v.findViewById(R.id.rowTvMode)
+        dividerTvMode = v.findViewById(R.id.dividerTvMode)
     }
 
     private fun setupInteractions() {
@@ -311,16 +324,19 @@ class SettingsFragment : Fragment() {
         val frequency = settingsPrefs.getInt(CloudSyncManager.KEY_DAILY_SUMMARY_INTERVAL_HOURS, 2)
         val crossfade = settingsPrefs.getInt(CloudSyncManager.KEY_OFFLINE_CROSSFADE_SECONDS, 0).coerceIn(0, 12)
         val mobileDownloads = settingsPrefs.getBoolean(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false)
+        val tvMode = localPrefs.getBoolean("tv_mode_enabled", false)
         val quality = normalizeQuality(settingsPrefs.getString(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_QUALITY, CloudSyncManager.DOWNLOAD_QUALITY_MEDIUM))
 
         if (hasSettingsSnapshot && lastSmartSuggestionsEnabled == suggestions && lastAmoledModeEnabled == amoled &&
             lastSummaryFrequencyTimes == frequency && lastOfflineCrossfadeSeconds == crossfade &&
-            lastAllowMobileDataDownloads == mobileDownloads && lastDownloadQuality == quality) return
+            lastAllowMobileDataDownloads == mobileDownloads && lastDownloadQuality == quality &&
+            lastTvModeEnabled == tvMode) return
 
         hasSettingsSnapshot = true
         lastSmartSuggestionsEnabled = suggestions; lastAmoledModeEnabled = amoled
         lastSummaryFrequencyTimes = frequency; lastOfflineCrossfadeSeconds = crossfade
         lastAllowMobileDataDownloads = mobileDownloads; lastDownloadQuality = quality
+        lastTvModeEnabled = tvMode
 
         swAiShiftPermissions.apply {
             setOnCheckedChangeListener(null)
@@ -348,6 +364,25 @@ class SettingsFragment : Fragment() {
                 settingsPrefs.edit().putBoolean(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, c).apply()
                 renderSettingsState()
             }
+        }
+
+        val uiModeManager = requireContext().getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager
+        val isRunningOnTv = uiModeManager?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
+        
+        if (isRunningOnTv) {
+            rowTvMode.visibility = View.VISIBLE
+            dividerTvMode.visibility = View.VISIBLE
+            swTvMode.apply {
+                setOnCheckedChangeListener(null)
+                isChecked = tvMode
+                setOnCheckedChangeListener { _, c ->
+                    localPrefs.edit().putBoolean("tv_mode_enabled", c).apply()
+                    // No sync to cloud
+                }
+            }
+        } else {
+            rowTvMode.visibility = View.GONE
+            dividerTvMode.visibility = View.GONE
         }
 
         tvSummaryFrequencyValue.text = if (frequency == 1) "1 vez" else "$frequency veces"

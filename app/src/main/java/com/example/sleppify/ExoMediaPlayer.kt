@@ -60,6 +60,7 @@ class ExoMediaPlayer {
     private var pendingIsHttpSource: Boolean = false
     private var prepared: Boolean = false
     private var released: Boolean = false
+    private var ownsPlayer: Boolean = false
     private var audioSessionId: Int = 0
     private var leftVolume = 1f
     private var rightVolume = 1f
@@ -68,6 +69,7 @@ class ExoMediaPlayer {
         this.appContext = context.applicationContext
         val player = ExoPlayer.Builder(appContext).build()
         this.exoPlayer = player
+        this.ownsPlayer = true
         this.audioSessionId = player.audioSessionId
         player.addListener(playerListener)
     }
@@ -80,6 +82,7 @@ class ExoMediaPlayer {
     constructor(context: Context, sharedExoPlayer: ExoPlayer) {
         this.appContext = context.applicationContext
         this.exoPlayer = sharedExoPlayer
+        this.ownsPlayer = false
         this.audioSessionId = sharedExoPlayer.audioSessionId
         sharedExoPlayer.addListener(playerListener)
     }
@@ -269,8 +272,10 @@ class ExoMediaPlayer {
         exoPlayer?.let { player ->
             try {
                 player.removeListener(playerListener)
-                player.stop()
-                player.release()
+                if (ownsPlayer) {
+                    player.stop()
+                    player.release()
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "release: exception", e)
             }

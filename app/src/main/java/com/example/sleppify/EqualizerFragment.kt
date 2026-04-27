@@ -391,7 +391,13 @@ class EqualizerFragment : Fragment() {
             }
         }
 
-        val popupWindow = PopupWindow(popupRoot, popupWidth, ViewGroup.LayoutParams.WRAP_CONTENT, true).apply {
+        val scrollContainer = android.widget.ScrollView(context).apply {
+            layoutParams = ViewGroup.LayoutParams(popupWidth, dp(280))
+            isFillViewport = true
+            addView(popupRoot)
+        }
+
+        val popupWindow = PopupWindow(scrollContainer, popupWidth, ViewGroup.LayoutParams.WRAP_CONTENT, true).apply {
             isOutsideTouchable = true
             isFocusable = true
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
@@ -525,6 +531,8 @@ class EqualizerFragment : Fragment() {
                     if (isSelected) R.color.stitch_blue_light else R.color.text_secondary
                 )
             )
+            isFocusable = true
+            isClickable = true
         }
 
         val rowContent = GradientDrawable().apply {

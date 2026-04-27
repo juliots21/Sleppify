@@ -57,12 +57,27 @@
             app:tint="@color/text_secondary" />
     </LinearLayout>
 
+    <com.google.android.material.navigationrail.NavigationRailView
+        android:id="@+id/navigationRail"
+        android:layout_width="wrap_content"
+        android:layout_height="0dp"
+        android:background="@color/surface_low"
+        android:visibility="gone"
+        app:itemIconTint="@color/stitch_blue"
+        app:itemTextColor="@color/stitch_blue"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/topAppBar"
+        app:menu="@menu/bottom_nav_menu" />
+
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/fragmentContainer"
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
         android:layout_height="0dp"
         android:background="@color/surface_dark"
         app:layout_constraintBottom_toTopOf="@id/bottomNavigation"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toEndOf="@id/navigationRail"
         app:layout_constraintTop_toBottomOf="@id/topAppBar" />
 
     <FrameLayout
@@ -74,7 +89,7 @@
         android:visibility="gone"
         app:layout_constraintBottom_toTopOf="@id/bottomNavigation"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintStart_toEndOf="@id/navigationRail"
         app:layout_constraintTop_toBottomOf="@id/topAppBar">
 
         <ProgressBar
@@ -87,20 +102,24 @@
 
     <com.google.android.material.bottomnavigation.BottomNavigationView
         android:id="@+id/bottomNavigation"
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:background="@color/surface_low"
         app:itemIconTint="@color/stitch_blue"
         app:itemTextColor="@color/stitch_blue"
         app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toEndOf="@id/navigationRail"
         app:menu="@menu/bottom_nav_menu" />
 
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/playerContainer"
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
         android:layout_height="0dp"
         android:elevation="24dp"
         app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toEndOf="@id/navigationRail"
         app:layout_constraintTop_toBottomOf="@id/topAppBar" />
 
     <androidx.constraintlayout.widget.ConstraintLayout

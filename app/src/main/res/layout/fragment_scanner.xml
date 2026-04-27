@@ -229,7 +229,7 @@
         android:id="@+id/bottomAnchor"
         android:layout_width="1dp"
         android:layout_height="1dp"
-        android:layout_marginBottom="70dp"
+        android:layout_marginBottom="16dp"
         android:visibility="invisible"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
@@ -240,7 +240,7 @@
         android:id="@+id/btnFlashlight"
         android:layout_width="wrap_content"
         android:layout_height="48dp"
-        android:layout_marginBottom="16dp"
+        android:layout_marginBottom="0dp"
         android:enabled="false"
         android:text="Encender la linterna"
         android:textAllCaps="false"
@@ -251,7 +251,7 @@
         app:iconPadding="8dp"
         app:iconTint="#8A909D"
         app:layout_constraintBottom_toTopOf="@id/barrierScanResult"
-        app:layout_goneMarginBottom="90dp"
+        app:layout_goneMarginBottom="8dp"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent" />
 
