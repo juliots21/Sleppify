@@ -1466,6 +1466,10 @@ public class MusicPlayerFragment extends Fragment {
                     .apply();
         }
 
+        // Activar inmediatamente la cookie en InnertubeResolver para que las
+        // siguientes peticiones de resolución y playback estén autenticadas.
+        InnertubeResolver.setAuthCookies(cookieHeader);
+
         streamingOauthCompleted = true;
         updateYoutubeButtonLabel();
 
@@ -2964,6 +2968,9 @@ public class MusicPlayerFragment extends Fragment {
 
         String webCookie = playerPrefs.getString(PREF_LAST_YOUTUBE_WEB_COOKIE, "");
         boolean hasWebSession = !TextUtils.isEmpty(webCookie == null ? "" : webCookie.trim());
+        // Pasar la cookie a InnertubeResolver para autenticar peticiones de
+        // resolución y playback (evita LOGIN_REQUIRED y CDN 403 sin PO Token).
+        InnertubeResolver.setAuthCookies(webCookie);
         boolean hasCachedLibrary = !libraryTracks.isEmpty();
         streamingOauthCompleted = hasWebSession || hasCachedLibrary || !TextUtils.isEmpty(youtubeAccessToken);
 

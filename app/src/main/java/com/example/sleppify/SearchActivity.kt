@@ -400,7 +400,7 @@ class SearchActivity : AppCompatActivity() {
                     allTracks.firstOrNull()?.videoId?.let { id ->
                         lifecycleScope.launch(Dispatchers.IO) {
                             Log.d("SearchActivity", "Predictive pre-fetch: Resolviendo stream...")
-                            YouTubeStreamResolver.resolveStreamUrl(id)
+                            InnertubeResolver.resolveStreamUrl(id)
                         }
                     }
                 }

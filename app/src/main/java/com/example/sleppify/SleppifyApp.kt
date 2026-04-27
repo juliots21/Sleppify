@@ -13,6 +13,9 @@ class SleppifyApp : Application() {
         try {
             com.bumptech.glide.Glide.get(this)
         } catch (e: Exception) {}
+        
+        // Pre-initialize ExoPlayer to reduce playback startup latency
+        ExoPlayerManager.initialize(this)
     }
 
     @Synchronized

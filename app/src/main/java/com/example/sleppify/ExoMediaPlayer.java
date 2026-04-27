@@ -17,7 +17,7 @@ import androidx.media3.common.Player;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.DataSource;
 import androidx.media3.datasource.DefaultDataSource;
-import androidx.media3.datasource.okhttp.OkHttpDataSource;
+import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import androidx.media3.exoplayer.source.ProgressiveMediaSource;
@@ -25,9 +25,6 @@ import androidx.media3.exoplayer.hls.HlsMediaSource;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
-
-import okhttp3.OkHttpClient;
 
 /**
  * Thin adapter around ExoPlayer (Media3) that mimics the relevant subset of
@@ -77,6 +74,18 @@ public class ExoMediaPlayer {
     public ExoMediaPlayer(@NonNull Context context) {
         this.appContext = context.getApplicationContext();
         this.exoPlayer = new ExoPlayer.Builder(appContext).build();
+        this.audioSessionId = this.exoPlayer.getAudioSessionId();
+        this.exoPlayer.addListener(playerListener);
+    }
+
+    /**
+     * Constructor that uses a shared ExoPlayer instance to reduce startup latency.
+     * @param context Application context
+     * @param sharedExoPlayer Pre-initialized ExoPlayer instance
+     */
+    public ExoMediaPlayer(@NonNull Context context, @NonNull ExoPlayer sharedExoPlayer) {
+        this.appContext = context.getApplicationContext();
+        this.exoPlayer = sharedExoPlayer;
         this.audioSessionId = this.exoPlayer.getAudioSessionId();
         this.exoPlayer.addListener(playerListener);
     }
@@ -174,17 +183,18 @@ public class ExoMediaPlayer {
 
         DataSource.Factory factory;
         if (pendingIsHttpSource) {
-            OkHttpClient okHttpClient = new OkHttpClient.Builder()
-                    .connectTimeout(15, TimeUnit.SECONDS)
-                    .readTimeout(15, TimeUnit.SECONDS)
-                    .followRedirects(true)
-                    .followSslRedirects(true)
-                    .build();
-
-            OkHttpDataSource.Factory httpFactory = new OkHttpDataSource.Factory(okHttpClient);
+            // Usar DefaultHttpDataSource (HttpURLConnection nativo de Android)
+            // en vez de OkHttpDataSource — el TLS fingerprint de OkHttp es detectado
+            // por el CDN de YouTube causando 403, mientras que HttpURLConnection
+            // tiene un fingerprint consistente con el de una app Android real.
+            DefaultHttpDataSource.Factory httpFactory = new DefaultHttpDataSource.Factory()
+                    .setConnectTimeoutMs(15_000)
+                    .setReadTimeoutMs(15_000)
+                    .setAllowCrossProtocolRedirects(true);
 
             if (pendingHeaders != null && !pendingHeaders.isEmpty()) {
                 httpFactory.setDefaultRequestProperties(pendingHeaders);
+                Log.d(TAG, "prepareAsync: setting " + pendingHeaders.size() + " headers on DefaultHttpDataSource: " + pendingHeaders.keySet());
             }
 
             factory = httpFactory;

@@ -1003,7 +1003,7 @@ public class PlaylistDetailFragment extends Fragment {
             urlPrefetchExecutor.submit(() -> {
                 try {
                     // This will cache the URL in InnertubeResolver
-                    YouTubeStreamResolver.resolveStreamUrl(videoId);
+                    InnertubeResolver.resolveStreamUrl(videoId);
                 } catch (Exception ignored) {
                 }
             });

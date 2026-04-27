@@ -165,7 +165,11 @@ class MainActivity : AppCompatActivity() {
 
         initViews()
         audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-        syncAudioProfile(true) // Apply EQ immediately on startup
+        syncAudioProfile(false) // Initial sync on startup
+        // Cargar cookies de la sesión web YouTube Music (si existen) lo más
+        // temprano posible para que las primeras peticiones InnerTube ya estén
+        // autenticadas y eviten LOGIN_REQUIRED / 403 en el CDN.
+        InnertubeResolver.loadAuthCookiesFromPrefs(this)
         setupListeners()
         configureHeaderActionForMainModules()
         configureAudioAuthorizationFlow()
@@ -203,6 +207,7 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             delay(100) // Allow UI to render first
             withContext(Dispatchers.IO) {
+                syncAudioEffectsServiceFromPreferences(forceSync = true)
                 syncDailyAgendaNotificationSchedule(forceSync = true)
             }
             // Handle signed in user async to avoid blocking UI
@@ -397,8 +402,7 @@ class MainActivity : AppCompatActivity() {
 
         val profileSwitched = AudioDeviceProfileStore.syncActiveProfileForOutput(audioPrefs, selected)
 
-        // Force apply if profile switched OR if it's the first sync of the session
-        if ((profileSwitched && applyIfChanged) || (applyIfChanged && !hasAudioServiceStateSnapshot)) {
+        if (profileSwitched && applyIfChanged) {
             syncAudioEffectsServiceFromPreferences(forceSync = true)
             // Notify EqualizerFragment if it's active
             (getMainModuleFragment(R.id.nav_equalizer) as? EqualizerFragment)?.onOutputProfileSwitchedLocally()

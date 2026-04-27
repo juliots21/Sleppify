@@ -18,12 +18,12 @@ import android.graphics.RenderEffect;
 import android.graphics.Shader;
 import android.graphics.drawable.Drawable;
 import android.media.AudioAttributes;
-// android.media.ExoMediaPlayer replaced by ExoExoMediaPlayer adapter (see ExoExoMediaPlayer.java)
+import android.media.AudioManager;
+import android.media.AudioDeviceInfo;
 import android.net.Uri;
 import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
-import android.media.AudioManager;
-import android.media.AudioDeviceInfo;
+import androidx.media3.exoplayer.ExoPlayer;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.google.android.material.bottomsheet.BottomSheetBehavior;
 import android.os.Build;
@@ -1321,7 +1321,7 @@ public class SongPlayerFragment extends Fragment {
         pendingStreamResolverFuture = streamResolverExecutor.submit(() -> {
             String resolvedUrl = forceAlternativeClient
                     ? InnertubeResolver.resolveStreamUrl(track.videoId, true)
-                    : YouTubeStreamResolver.resolveStreamUrl(track.videoId);
+                    : InnertubeResolver.resolveStreamUrl(track.videoId);
             
             localProgressHandler.post(() -> {
                 if (requestToken != activePlaybackRequestToken || !isAdded()) return;
@@ -1357,7 +1357,7 @@ public class SongPlayerFragment extends Fragment {
 
         Log.d(TAG, "prefetchNextTrackStream: starting pre-fetch for videoId=" + nextTrack.videoId);
         streamResolverExecutor.submit(() -> {
-            String url = YouTubeStreamResolver.resolveStreamUrl(nextTrack.videoId);
+            String url = InnertubeResolver.resolveStreamUrl(nextTrack.videoId);
             if (!TextUtils.isEmpty(url)) {
                 prefetchedNextVideoId = nextTrack.videoId;
                 prefetchedNextUrl = url;
@@ -1454,7 +1454,20 @@ public class SongPlayerFragment extends Fragment {
         localSourcePreparing = true;
         updatePlayerSurfaceForSource();
 
-        ExoMediaPlayer player = new ExoMediaPlayer(requireContext().getApplicationContext());
+        // Try to use shared ExoPlayer to reduce startup latency
+        ExoPlayer sharedExoPlayer = ExoPlayerManager.INSTANCE.getSharedExoPlayer();
+        ExoMediaPlayer player;
+        if (sharedExoPlayer != null) {
+            try {
+                player = new ExoMediaPlayer(requireContext().getApplicationContext(), sharedExoPlayer);
+                Log.d(TAG, "Using shared ExoPlayer instance");
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to use shared ExoPlayer, falling back", e);
+                player = new ExoMediaPlayer(requireContext().getApplicationContext());
+            }
+        } else {
+            player = new ExoMediaPlayer(requireContext().getApplicationContext());
+        }
         localExoMediaPlayer = player;
         player.setAudioAttributes(new AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
