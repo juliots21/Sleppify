@@ -63,12 +63,13 @@
         android:layout_height="0dp"
         android:background="@color/surface_low"
         android:visibility="gone"
+        app:headerLayout="@layout/nav_rail_header"
         app:itemIconTint="@color/stitch_blue"
         app:itemTextColor="@color/stitch_blue"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/topAppBar"
-        app:menu="@menu/bottom_nav_menu" />
+        app:layout_constraintTop_toTopOf="parent"
+        app:menu="@menu/nav_rail_menu" />
 
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/fragmentContainer"

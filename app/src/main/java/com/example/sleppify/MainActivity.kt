@@ -93,6 +93,7 @@ class MainActivity : AppCompatActivity() {
     private var inSettings = false
     private var forceInitialOauthGate = false
     private var loginGateAuthInProgress = false
+    private var isNavigating = false
     
     private val authManagerLazy: AuthManager by lazy { AuthManager.getInstance(this) }
 
@@ -258,12 +259,18 @@ class MainActivity : AppCompatActivity() {
     private fun updateNavigationForScreenSize() {
         val screenWidthDp = resources.configuration.screenWidthDp
         val isWide = screenWidthDp >= 600
+        val isTvMode = localPrefs.getBoolean("tv_mode_enabled", false)
+        
         val agendaItemBottom = bottomNav.menu.findItem(R.id.nav_schedule)
         val agendaItemRail = navRail.menu.findItem(R.id.nav_schedule)
+        val scannerItemBottom = bottomNav.menu.findItem(R.id.nav_scanner)
+        val scannerItemRail = navRail.menu.findItem(R.id.nav_scanner)
         
-        if (isWide) {
+        // Hide Agenda if wide screen or in TV mode
+        if (isWide || isTvMode) {
             agendaItemBottom?.isVisible = false
             agendaItemRail?.isVisible = false
+            
             if (currentMainNavItemId == R.id.nav_schedule) {
                 currentMainNavItemId = R.id.nav_music
                 bottomNav.selectedItemId = R.id.nav_music
@@ -274,23 +281,38 @@ class MainActivity : AppCompatActivity() {
             agendaItemBottom?.isVisible = true
             agendaItemRail?.isVisible = true
         }
+
+        // Hide Scanner if in TV mode (specifically requested)
+        if (isTvMode) {
+            scannerItemBottom?.isVisible = false
+            scannerItemRail?.isVisible = false
+            
+            if (currentMainNavItemId == R.id.nav_scanner) {
+                currentMainNavItemId = R.id.nav_music
+                bottomNav.selectedItemId = R.id.nav_music
+                navRail.selectedItemId = R.id.nav_music
+                switchToMainModule(R.id.nav_music)
+            }
+        } else {
+            scannerItemBottom?.isVisible = true
+            scannerItemRail?.isVisible = true
+        }
         
         applyTvModeLayout()
     }
 
     private fun applyTvModeLayout() {
         val isTvMode = localPrefs.getBoolean("tv_mode_enabled", false)
-        // We will implement NavigationRailView in activity_main.xml next.
-        // For now, let's just log or prepare the visibility.
-        val navRail = findViewById<View>(R.id.navigationRail) ?: return
+        val navRailView = findViewById<View>(R.id.navigationRail) ?: return
         
         if (isTvMode) {
             bottomNav.visibility = View.GONE
-            navRail.visibility = View.VISIBLE
-            // Update constraints if needed (handled in XML usually, but might need manual tweaks)
+            navRailView.visibility = View.VISIBLE
+            topAppBar.visibility = View.GONE
         } else {
-            navRail.visibility = View.GONE
-            if (!inSettings) bottomNav.visibility = View.VISIBLE
+            navRailView.visibility = View.GONE
+            bottomNav.visibility = if (inSettings) View.GONE else View.VISIBLE
+            topAppBar.visibility = View.VISIBLE
         }
     }
 
@@ -310,8 +332,14 @@ class MainActivity : AppCompatActivity() {
             switchToMainModule(item.itemId)
         }
         navRail.setOnItemSelectedListener { item ->
-            if (inSettings) exitSettings()
-            switchToMainModule(item.itemId)
+            if (item.itemId == R.id.nav_settings) {
+                if (!inSettings) enterSettings()
+                true
+            } else {
+                if (inSettings) exitSettings()
+                switchToMainModule(item.itemId)
+                true
+            }
         }
         cloudSyncManager.setSyncStateListener(this::setSyncOverlayVisible)
         onBackPressedDispatcher.addCallback(this, backPressedCallback)
@@ -598,9 +626,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun showMainShell() {
         loginGateContainer?.visibility = View.GONE
-        topAppBar.visibility = View.VISIBLE
         fragmentContainer.visibility = View.VISIBLE
-        bottomNav.visibility = if (inSettings) View.GONE else View.VISIBLE
+        applyTvModeLayout()
     }
 
     private fun handleSignedInUser(user: FirebaseUser, onSuccess: Runnable?) {
@@ -721,7 +748,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         configureHeaderActionForSettings()
-        bottomNav.visibility = View.GONE
+        applyTvModeLayout()
         lifecycleScope.launch {
             delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
             revealModuleContent()
@@ -749,7 +776,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         configureHeaderActionForMainModules()
-        bottomNav.visibility = View.VISIBLE
+        applyTvModeLayout()
         updateHeaderTitleForModule(selectedId)
         lifecycleScope.launch {
             delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
@@ -818,66 +845,67 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun switchToMainModule(itemId: Int): Boolean {
-        supportFragmentManager.executePendingTransactions()
-        setContainerOverlayMode(false)
-        val tag = moduleTagForItem(itemId) ?: return false
-        val target = supportFragmentManager.findFragmentByTag(tag) ?: getOrCreateMainModuleFragment(itemId) ?: return false
+        if (isNavigating) return true
+        isNavigating = true
+        try {
+            supportFragmentManager.executePendingTransactions()
+            setContainerOverlayMode(false)
+            val tag = moduleTagForItem(itemId) ?: return false
+            val target = supportFragmentManager.findFragmentByTag(tag) ?: getOrCreateMainModuleFragment(itemId) ?: return false
 
-        if (currentMainNavItemId == R.id.nav_music && itemId != R.id.nav_music) markStreamingEntryAsLibrary()
+            if (currentMainNavItemId == R.id.nav_music && itemId != R.id.nav_music) markStreamingEntryAsLibrary()
 
-        if (bottomNav.selectedItemId != itemId) bottomNav.selectedItemId = itemId
-        if (navRail.selectedItemId != itemId) navRail.selectedItemId = itemId
+            if (bottomNav.selectedItemId != itemId) bottomNav.selectedItemId = itemId
+            if (navRail.selectedItemId != itemId) navRail.selectedItemId = itemId
 
-        val isTrulySwitching = currentMainNavItemId != itemId || !target.isAdded
-        if (!isTrulySwitching && !inSettings) {
-            updateHeaderTitleForModule(itemId)
-            return true
-        }
-
-        val isNew = !target.isAdded
-        showModuleLoadingOverlay()
-        fragmentContainer.alpha = 0f
-
-        supportFragmentManager.beginTransaction().apply {
-            setReorderingAllowed(true)
-            playlistDetailFragment = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL)
-            songPlayerFragment = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER)
-            val current = getMainModuleFragment(currentMainNavItemId)
-            
-            hideIfVisible(this, current, target)
-            hideIfVisible(this, playlistDetailFragment, target)
-            hideIfVisible(this, songPlayerFragment, target)
-            hideIfVisible(this, settingsFragment, target)
-            
-            // Ensure the SongPlayerFragment in playerContainer is always hidden when
-            // switching modules. It lives in a separate elevated container, so hiding
-            // it via the fragment transaction alone is not enough — we must explicitly
-            // hide the fragment so the playerContainer doesn't cover the module content.
-            if (songPlayerFragment != null && songPlayerFragment!!.isAdded && !songPlayerFragment!!.isHidden) {
-                hide(songPlayerFragment!!)
+            val isTrulySwitching = currentMainNavItemId != itemId || !target.isAdded
+            if (!isTrulySwitching && !inSettings) {
+                updateHeaderTitleForModule(itemId)
+                return true
             }
-            
-            if (target.isAdded) show(target) else add(R.id.fragmentContainer, target, tag)
-            setMaxLifecycle(target, Lifecycle.State.RESUMED)
-            commit()
+
+            val isNew = !target.isAdded
+            showModuleLoadingOverlay()
+            fragmentContainer.alpha = 0f
+
+            supportFragmentManager.beginTransaction().apply {
+                setReorderingAllowed(true)
+                playlistDetailFragment = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL)
+                songPlayerFragment = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER)
+                val current = getMainModuleFragment(currentMainNavItemId)
+                
+                hideIfVisible(this, current, target)
+                hideIfVisible(this, playlistDetailFragment, target)
+                hideIfVisible(this, songPlayerFragment, target)
+                hideIfVisible(this, settingsFragment, target)
+                
+                if (songPlayerFragment != null && songPlayerFragment!!.isAdded && !songPlayerFragment!!.isHidden) {
+                    hide(songPlayerFragment!!)
+                }
+                
+                if (target.isAdded) show(target) else add(R.id.fragmentContainer, target, tag)
+                setMaxLifecycle(target, Lifecycle.State.RESUMED)
+                commit()
+            }
+
+            currentMainNavItemId = itemId
+
+            getSharedPreferences(PREFS_BOOTSTRAP, Context.MODE_PRIVATE)
+                .edit()
+                .putInt(PREF_LAST_MAIN_MODULE, itemId)
+                .apply()
+
+            if (itemId == R.id.nav_music) markStreamingEntryAsLibrary()
+            updateHeaderTitleForModule(itemId)
+
+            lifecycleScope.launch {
+                delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
+                revealModuleContent()
+            }
+            return true
+        } finally {
+            isNavigating = false
         }
-
-        currentMainNavItemId = itemId
-
-        // Persistir el último módulo abierto
-        getSharedPreferences(PREFS_BOOTSTRAP, Context.MODE_PRIVATE)
-            .edit()
-            .putInt(PREF_LAST_MAIN_MODULE, itemId)
-            .apply()
-
-        if (itemId == R.id.nav_music) markStreamingEntryAsLibrary()
-        updateHeaderTitleForModule(itemId)
-
-        lifecycleScope.launch {
-            delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
-            revealModuleContent()
-        }
-        return true
     }
 
     fun showModuleLoadingOverlay() {

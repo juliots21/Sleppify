@@ -212,6 +212,13 @@ class EqualizerFragment : Fragment() {
             markPresetAsCustom()
             applyIfEnabled()
         }
+        sliderBassGain.setOnFocusChangeListener { _, hasFocus ->
+            sliderBassGain.haloRadius = if (hasFocus) dp(24) else dp(0)
+        }
+        if (SystemType.isTv(requireContext())) {
+            sliderBassGain.isFocusable = true
+            sliderBassGain.isFocusableInTouchMode = true
+        }
 
         sliderBassFrequency.addOnChangeListener { _, value, _ ->
             tvBassFrequencyValue.text = formatHz(value)
@@ -219,6 +226,13 @@ class EqualizerFragment : Fragment() {
             preferences.edit().putFloat(AudioEffectsService.KEY_BASS_FREQUENCY_HZ, value).apply()
             markPresetAsCustom()
             applyIfEnabled()
+        }
+        sliderBassFrequency.setOnFocusChangeListener { _, hasFocus ->
+            sliderBassFrequency.haloRadius = if (hasFocus) dp(24) else dp(0)
+        }
+        if (SystemType.isTv(requireContext())) {
+            sliderBassFrequency.isFocusable = true
+            sliderBassFrequency.isFocusableInTouchMode = true
         }
 
         cardBassTypeSelector?.setOnClickListener { showBassTypePopup() }
@@ -392,8 +406,10 @@ class EqualizerFragment : Fragment() {
         }
 
         val scrollContainer = android.widget.ScrollView(context).apply {
-            layoutParams = ViewGroup.LayoutParams(popupWidth, dp(280))
+            // Increased height to support more presets and better scrolling on both TV and Mobile
+            layoutParams = ViewGroup.LayoutParams(popupWidth, dp(380))
             isFillViewport = true
+            isVerticalScrollBarEnabled = true
             addView(popupRoot)
         }
 
@@ -522,9 +538,9 @@ class EqualizerFragment : Fragment() {
         val row = TextView(context).apply {
             text = label
             setSingleLine(true)
-            textSize = 13f
+            textSize = 14f // Slightly larger for TV
             typeface = Typeface.DEFAULT_BOLD
-            setPadding(dp(12), dp(10), dp(12), dp(10))
+            setPadding(dp(16), dp(12), dp(16), dp(12)) // Larger padding for TV targets
             setTextColor(
                 ContextCompat.getColor(
                     context,
@@ -533,17 +549,17 @@ class EqualizerFragment : Fragment() {
             )
             isFocusable = true
             isClickable = true
+            
+            // Use a focus-aware background for TV remote navigation
+            val focusColor = withAlpha(ContextCompat.getColor(context, R.color.stitch_blue_light), 0.35f)
+            val selectedColor = withAlpha(ContextCompat.getColor(context, R.color.stitch_blue_light), 0.15f)
+            
+            val states = android.graphics.drawable.StateListDrawable()
+            states.addState(intArrayOf(android.R.attr.state_focused), ColorDrawable(focusColor))
+            states.addState(intArrayOf(android.R.attr.state_pressed), ColorDrawable(focusColor))
+            states.addState(intArrayOf(), if (isSelected) ColorDrawable(selectedColor) else ColorDrawable(Color.TRANSPARENT))
+            background = states
         }
-
-        val rowContent = GradientDrawable().apply {
-            cornerRadius = dp(10).toFloat()
-            setColor(
-                if (isSelected) withAlpha(ContextCompat.getColor(context, R.color.stitch_blue_light), 0.22f)
-                else Color.TRANSPARENT
-            )
-        }
-        val rippleColor = withAlpha(ContextCompat.getColor(context, R.color.stitch_blue_light), 0.32f)
-        row.background = RippleDrawable(ColorStateList.valueOf(rippleColor), rowContent, null)
 
         row.setOnClickListener { onClick() }
         return row
@@ -784,6 +800,28 @@ class EqualizerFragment : Fragment() {
             commitAcceptedGraphicEqChanges(draftBands)
             accepted = true
             dialog.dismiss()
+        }
+
+        if (SystemType.isTv(requireContext())) {
+            btnClose?.visibility = View.GONE
+            btnAccept?.visibility = View.GONE
+            dialogView.findViewById<View>(R.id.layoutEqEditorActions)?.visibility = View.GONE
+            
+            modalEqView?.isFocusable = true
+            modalEqView?.isFocusableInTouchMode = true
+            modalEqView?.requestFocus()
+            
+            modalEqView?.setOnKeyListener { _, keyCode, event ->
+                if (event.action == android.view.KeyEvent.ACTION_DOWN) {
+                    if (keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER || 
+                        keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
+                        keyCode == android.view.KeyEvent.KEYCODE_BACK) {
+                        btnAccept?.performClick()
+                        return@setOnKeyListener true
+                    }
+                }
+                false
+            }
         }
 
         dialog.show()

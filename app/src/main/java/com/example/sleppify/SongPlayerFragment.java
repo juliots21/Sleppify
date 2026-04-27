@@ -729,6 +729,7 @@ public class SongPlayerFragment extends Fragment {
 
         mediaSession = new MediaSessionCompat(requireContext().getApplicationContext(), "SleppifySongSession");
         mediaSession.setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS | MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS);
+        mediaSession.setActive(true);
         mediaSession.setCallback(new MediaSessionCompat.Callback() {
             @Override
             public void onPlay() {
@@ -3967,6 +3968,17 @@ public class SongPlayerFragment extends Fragment {
                     .putBitmap(MediaMetadataCompat.METADATA_KEY_ART, mediaSessionArtwork)
                     .putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, mediaSessionArtwork)
                     .putBitmap(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON, mediaSessionArtwork);
+        } else {
+            // Fallback to app icon if no artwork is available
+            try {
+                Drawable iconDrawable = ContextCompat.getDrawable(requireContext(), R.mipmap.ic_launcher);
+                if (iconDrawable instanceof android.graphics.drawable.BitmapDrawable) {
+                    Bitmap iconBitmap = ((android.graphics.drawable.BitmapDrawable) iconDrawable).getBitmap();
+                    metadataBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ART, iconBitmap)
+                                   .putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, iconBitmap)
+                                   .putBitmap(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON, iconBitmap);
+                }
+            } catch (Exception ignored) {}
         }
 
         if (!TextUtils.isEmpty(track.imageUrl)) {

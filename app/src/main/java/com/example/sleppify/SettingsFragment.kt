@@ -366,8 +366,7 @@ class SettingsFragment : Fragment() {
             }
         }
 
-        val uiModeManager = requireContext().getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager
-        val isRunningOnTv = uiModeManager?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
+        val isRunningOnTv = SystemType.isTv(requireContext())
         
         if (isRunningOnTv) {
             rowTvMode.visibility = View.VISIBLE

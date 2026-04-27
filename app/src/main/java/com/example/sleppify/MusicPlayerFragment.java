@@ -787,6 +787,20 @@ public class MusicPlayerFragment extends Fragment {
         btnMiniPlayPause = view.findViewById(R.id.btnMiniPlayPause);
         swipeLibraryRefresh = view.findViewById(R.id.swipeLibraryRefresh);
         FloatingActionButton fabCreatePlaylist = view.findViewById(R.id.fabCreatePlaylist);
+        
+        if (SystemType.INSTANCE.isTv(requireContext())) {
+            View.OnFocusChangeListener tvFocusListener = (v, hasFocus) -> {
+                if (hasFocus) {
+                    v.setBackgroundResource(R.drawable.bg_tv_item_focused);
+                } else {
+                    v.setBackgroundResource(0);
+                }
+            };
+            
+            llMiniPlayer.setOnFocusChangeListener(tvFocusListener);
+            if (llLibraryInlineSearch != null) llLibraryInlineSearch.setOnFocusChangeListener(tvFocusListener);
+        }
+
         if (fabCreatePlaylist != null) {
             fabCreatePlaylist.setOnClickListener(v -> showCreatePlaylistDialog());
         }
@@ -843,9 +857,10 @@ public class MusicPlayerFragment extends Fragment {
             });
         }
 
+        boolean isTv = SystemType.INSTANCE.isTv(requireContext());
         if (etLibraryQuickSearch != null) {
-            etLibraryQuickSearch.setFocusable(false);
-            etLibraryQuickSearch.setFocusableInTouchMode(false);
+            etLibraryQuickSearch.setFocusable(isTv);
+            etLibraryQuickSearch.setFocusableInTouchMode(isTv);
             etLibraryQuickSearch.setOnClickListener(v -> {
                 launchSearchActivity();
             });
@@ -6716,6 +6731,16 @@ public class MusicPlayerFragment extends Fragment {
             }
 
             holder.itemView.setOnClickListener(v -> onTrackClick.onTrackClick(item));
+            
+            if (SystemType.INSTANCE.isTv(holder.itemView.getContext())) {
+                holder.itemView.setOnFocusChangeListener((v, hasFocus) -> {
+                    if (hasFocus) {
+                        v.setBackgroundResource(R.drawable.bg_tv_item_focused);
+                    } else {
+                        v.setBackgroundResource(0);
+                    }
+                });
+            }
         }
 
         private void bindSearchRow(
