@@ -39,8 +39,6 @@ class CloudSyncManager private constructor(context: Context) {
         appContext.getSharedPreferences(AudioEffectsService.PREFS_NAME, Context.MODE_PRIVATE)
     private val settingsPrefs: SharedPreferences =
         appContext.getSharedPreferences(PREFS_SETTINGS, Context.MODE_PRIVATE)
-    private val agendaPrefs: SharedPreferences =
-        appContext.getSharedPreferences(PREFS_AGENDA, Context.MODE_PRIVATE)
     private val streamingCachePrefs: SharedPreferences =
         appContext.getSharedPreferences(PREFS_STREAMING_CACHE, Context.MODE_PRIVATE)
     private val handler = Handler(Looper.getMainLooper())
@@ -50,7 +48,6 @@ class CloudSyncManager private constructor(context: Context) {
     private var listenersRegistered = false
     private var suppressEqSync = false
     private var suppressSettingsSync = false
-    private var suppressAgendaSync = false
     private var suppressStreamingSync = false
     private var initialHydrationInProgress = false
 
@@ -61,21 +58,17 @@ class CloudSyncManager private constructor(context: Context) {
 
     private var eqListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
     private var settingsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
-    private var agendaListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
     private var streamingListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
 
     private val eqSyncRunnable = Runnable { uploadEqPreferences() }
     private val settingsSyncRunnable = Runnable { uploadSettingsPreferences() }
-    private val agendaSyncRunnable = Runnable { uploadAgendaJson() }
     private val streamingSyncRunnable = Runnable { uploadStreamingFavoritesPreferences() }
     private val eqUploadRetryRunnable = Runnable { uploadEqPreferences() }
     private val settingsUploadRetryRunnable = Runnable { uploadSettingsPreferences() }
-    private val agendaUploadRetryRunnable = Runnable { uploadAgendaJson() }
     private val streamingUploadRetryRunnable = Runnable { uploadStreamingFavoritesPreferences() }
 
     private var eqUploadRetryAttempt = 0
     private var settingsUploadRetryAttempt = 0
-    private var agendaUploadRetryAttempt = 0
     private var streamingUploadRetryAttempt = 0
 
     init {
@@ -83,7 +76,6 @@ class CloudSyncManager private constructor(context: Context) {
         Thread {
             ensureEqDefaults()
             ensureSettingsDefaults()
-            ensureAgendaDefaults()
             registerPreferenceListenersIfNeeded()
         }.apply {
             name = "CloudSync-Init"
@@ -133,27 +125,14 @@ class CloudSyncManager private constructor(context: Context) {
 
     private fun ensureSettingsDefaults() {
         settingsPrefs.putDefaults {
-            bool(KEY_AI_SHIFT_ENABLED, true)
-            bool(KEY_SMART_SUGGESTIONS_ENABLED, true)
-            int(KEY_DEFAULT_DURATION_MINUTES, 8 * 60 + 15)
-            int(KEY_NOTIFICATION_LEAD_MINUTES, 1)
-            int(KEY_DAILY_SUMMARY_INTERVAL_HOURS, 2)
-            bool(KEY_APPS_SHOW_SYSTEM_INFO, true)
-            stringSet(KEY_APPS_WHITELIST_PACKAGES, HashSet())
+            bool(KEY_AMOLED_MODE_ENABLED, true)
             bool(KEY_PLAYER_VIDEO_MODE_ENABLED, false)
             bool(KEY_PLAYER_SHUFFLE_ENABLED, false)
-            int(KEY_PLAYER_REPEAT_MODE, 1)
-            bool(KEY_AMOLED_MODE_ENABLED, false)
-            int(KEY_OFFLINE_CROSSFADE_SECONDS, 0)
-            string(KEY_OFFLINE_DOWNLOAD_QUALITY, DOWNLOAD_QUALITY_VERY_HIGH)
+            int(KEY_PLAYER_REPEAT_MODE, 0)
+            int(KEY_NOTIFICATION_LEAD_MINUTES, 15)
+            int(KEY_DEFAULT_DURATION_MINUTES, 60)
+            string(KEY_OFFLINE_DOWNLOAD_QUALITY, DOWNLOAD_QUALITY_HIGH)
             bool(KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false)
-        }
-        pruneDeprecatedSettingsKeys()
-    }
-
-    private fun ensureAgendaDefaults() {
-        if (!agendaPrefs.contains(KEY_AGENDA_JSON)) {
-            agendaPrefs.edit().putString(KEY_AGENDA_JSON, "{}").apply()
         }
     }
 
@@ -176,14 +155,6 @@ class CloudSyncManager private constructor(context: Context) {
             handler.postDelayed(settingsSyncRunnable, DEBOUNCE_MS)
         }
 
-        agendaListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
-            if (suppressAgendaSync || initialHydrationInProgress || activeUserId.isNullOrEmpty()) {
-                return@OnSharedPreferenceChangeListener
-            }
-            handler.removeCallbacks(agendaSyncRunnable)
-            handler.postDelayed(agendaSyncRunnable, DEBOUNCE_MS)
-        }
-
         streamingListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             if (suppressStreamingSync || initialHydrationInProgress || activeUserId.isNullOrEmpty()) {
                 return@OnSharedPreferenceChangeListener
@@ -197,7 +168,6 @@ class CloudSyncManager private constructor(context: Context) {
 
         eqPrefs.registerOnSharedPreferenceChangeListener(eqListener)
         settingsPrefs.registerOnSharedPreferenceChangeListener(settingsListener)
-        agendaPrefs.registerOnSharedPreferenceChangeListener(agendaListener)
         streamingCachePrefs.registerOnSharedPreferenceChangeListener(streamingListener)
         listenersRegistered = true
     }
@@ -217,14 +187,12 @@ class CloudSyncManager private constructor(context: Context) {
         activeUserId = userId
         handler.removeCallbacks(eqSyncRunnable)
         handler.removeCallbacks(settingsSyncRunnable)
-        handler.removeCallbacks(agendaSyncRunnable)
         handler.removeCallbacks(streamingSyncRunnable)
         clearUploadRetryCallbacks()
         resetUploadRetryAttempts()
         initialHydrationInProgress = true
         ensureEqDefaults()
         ensureSettingsDefaults()
-        ensureAgendaDefaults()
 
         startInitialHydrationAttempt(userId, 0, callback)
     }
@@ -247,14 +215,12 @@ class CloudSyncManager private constructor(context: Context) {
         activeUserId = userId
         handler.removeCallbacks(eqSyncRunnable)
         handler.removeCallbacks(settingsSyncRunnable)
-        handler.removeCallbacks(agendaSyncRunnable)
         handler.removeCallbacks(streamingSyncRunnable)
         clearUploadRetryCallbacks()
         resetUploadRetryAttempts()
         initialHydrationInProgress = true
         ensureEqDefaults()
         ensureSettingsDefaults()
-        ensureAgendaDefaults()
 
         startInitialHydrationAttempt(userId, 0, callback)
     }
@@ -272,7 +238,7 @@ class CloudSyncManager private constructor(context: Context) {
     ) {
         if (!TextUtils.equals(activeUserId, userId)) return
 
-        val pending = PendingSync(4) { success, message ->
+        val pending = PendingSync(3) { success, message ->
             if (!TextUtils.equals(activeUserId, userId)) return@PendingSync
 
             if (!success && isRecoverableSyncMessage(message)) {
@@ -294,7 +260,6 @@ class CloudSyncManager private constructor(context: Context) {
         }
         syncEqFromCloudThenLocal(pending)
         syncSettingsFromCloudThenLocal(pending)
-        syncAgendaFromCloudThenLocal(pending)
         syncStreamingFavoritesFromCloudThenLocal(pending)
     }
 
@@ -303,7 +268,6 @@ class CloudSyncManager private constructor(context: Context) {
         initialHydrationInProgress = false
         handler.removeCallbacks(eqSyncRunnable)
         handler.removeCallbacks(settingsSyncRunnable)
-        handler.removeCallbacks(agendaSyncRunnable)
         handler.removeCallbacks(streamingSyncRunnable)
         clearUploadRetryCallbacks()
         resetUploadRetryAttempts()
@@ -338,7 +302,6 @@ class CloudSyncManager private constructor(context: Context) {
                 val fallbackBatch = firestore.batch()
                 fallbackBatch.delete(eqDoc(userId))
                 fallbackBatch.delete(settingsDoc(userId))
-                fallbackBatch.delete(agendaDoc(userId))
                 fallbackBatch.delete(streamingDoc(userId))
                 fallbackBatch.delete(userScope(userId))
                 fallbackBatch.commit()
@@ -366,7 +329,6 @@ class CloudSyncManager private constructor(context: Context) {
         if (deleteCount == 0) {
             batch.delete(eqDoc(userId))
             batch.delete(settingsDoc(userId))
-            batch.delete(agendaDoc(userId))
             batch.delete(streamingDoc(userId))
             batch.delete(userScope(userId))
         }
@@ -400,26 +362,18 @@ class CloudSyncManager private constructor(context: Context) {
     }
 
     fun clearLocalUserData() {
-        suppressEqSync = true
-        suppressSettingsSync = true
-        suppressAgendaSync = true
-        suppressStreamingSync = true
-
         try {
             eqPrefs.edit().clear().apply()
             settingsPrefs.edit().clear().apply()
-            agendaPrefs.edit().clear().apply()
             streamingCachePrefs.edit().clear().apply()
         } finally {
             suppressEqSync = false
             suppressSettingsSync = false
-            suppressAgendaSync = false
             suppressStreamingSync = false
         }
 
         ensureEqDefaults()
         ensureSettingsDefaults()
-        ensureAgendaDefaults()
     }
 
     fun clearLocalUserDataCompletely() {
@@ -489,59 +443,6 @@ class CloudSyncManager private constructor(context: Context) {
         runCatching { node.delete() }
     }
 
-    val localAgendaJson: String
-        get() {
-            val json = agendaPrefs.getString(KEY_AGENDA_JSON, "{}")
-            return if (json.isNullOrEmpty()) "{}" else json
-        }
-
-    fun saveAgendaJsonLocally(agendaJson: String) {
-        agendaPrefs.edit().putString(KEY_AGENDA_JSON, agendaJson).apply()
-    }
-
-    fun syncAgendaJson(agendaJson: String) {
-        saveAgendaJsonLocally(agendaJson)
-        uploadAgendaJson()
-    }
-
-    fun refreshAgendaFromCloud(callback: SyncCallback) {
-        val uid = activeUserId
-        if (uid.isNullOrEmpty()) {
-            callback.onComplete(false, "No hay sesion activa para agenda en la nube.")
-            return
-        }
-
-        beginNetworkSync()
-
-        agendaDoc(uid).get()
-            .addOnSuccessListener { snapshot ->
-                if (!snapshot.exists()) {
-                    endNetworkSync()
-                    callback.onComplete(true, null)
-                    return@addOnSuccessListener
-                }
-
-                if (applyEncodedPrefsFromSnapshot(agendaPrefs, snapshot)) {
-                    ensureAgendaDefaults()
-                    endNetworkSync()
-                    callback.onComplete(true, null)
-                    return@addOnSuccessListener
-                }
-
-                val json = snapshot.getString(FIELD_AGENDA_JSON)
-                if (!TextUtils.isEmpty(json)) {
-                    agendaPrefs.edit().putString(KEY_AGENDA_JSON, json).apply()
-                }
-                ensureAgendaDefaults()
-                endNetworkSync()
-                callback.onComplete(true, null)
-            }
-            .addOnFailureListener { e ->
-                endNetworkSync()
-                callback.onComplete(false, e.message)
-            }
-    }
-
     // ----- Cloud-then-local sync generic helper -----
 
     private inline fun syncBucketFromCloudThenLocal(
@@ -574,9 +475,6 @@ class CloudSyncManager private constructor(context: Context) {
 
     private fun syncSettingsFromCloudThenLocal(pending: PendingSync) =
         syncBucketFromCloudThenLocal(pending, ::settingsDoc, ::handleSettingsSyncSnapshot)
-
-    private fun syncAgendaFromCloudThenLocal(pending: PendingSync) =
-        syncBucketFromCloudThenLocal(pending, ::agendaDoc, ::handleAgendaSyncSnapshot)
 
     private fun syncStreamingFavoritesFromCloudThenLocal(pending: PendingSync) =
         syncBucketFromCloudThenLocal(pending, ::streamingDoc, ::handleStreamingSyncSnapshot)
@@ -654,50 +552,6 @@ class CloudSyncManager private constructor(context: Context) {
         }
     }
 
-    private fun handleAgendaSyncSnapshot(
-        snapshot: DocumentSnapshot,
-        fromServer: Boolean,
-        serverError: Throwable?,
-        pending: PendingSync
-    ) {
-        if (!snapshot.exists()) {
-            if (fromServer) {
-                uploadAgendaJson()
-                endNetworkSync()
-                pending.finish(true, null)
-            } else {
-                endNetworkSync()
-                pending.finish(false, toUserFacingSyncError(serverError))
-            }
-            return
-        }
-
-        if (applyEncodedPrefsFromSnapshot(agendaPrefs, snapshot)) {
-            ensureAgendaDefaults()
-            endNetworkSync()
-            pending.finish(true, null)
-            return
-        }
-
-        val cloudJson = snapshot.getString(FIELD_AGENDA_JSON)
-        if (!TextUtils.isEmpty(cloudJson)) {
-            agendaPrefs.edit().putString(KEY_AGENDA_JSON, cloudJson).apply()
-            ensureAgendaDefaults()
-            endNetworkSync()
-            pending.finish(true, null)
-            return
-        }
-
-        if (fromServer) {
-            uploadAgendaJson()
-            endNetworkSync()
-            pending.finish(true, null)
-            return
-        }
-
-        endNetworkSync()
-        pending.finish(false, toUserFacingSyncError(serverError))
-    }
 
     private fun handleStreamingSyncSnapshot(
         snapshot: DocumentSnapshot,
@@ -784,11 +638,9 @@ class CloudSyncManager private constructor(context: Context) {
 
         handler.removeCallbacks(eqSyncRunnable)
         handler.removeCallbacks(settingsSyncRunnable)
-        handler.removeCallbacks(agendaSyncRunnable)
         handler.removeCallbacks(streamingSyncRunnable)
         uploadEqPreferences()
         uploadSettingsPreferences()
-        uploadAgendaJson()
         uploadStreamingFavoritesPreferences()
     }
 
@@ -858,41 +710,15 @@ class CloudSyncManager private constructor(context: Context) {
             }
     }
 
-    private fun uploadAgendaJson() {
-        val uid = activeUserId
-        if (uid.isNullOrEmpty()) return
-
-        val agendaJson = agendaPrefs.getString(KEY_AGENDA_JSON, "{}")
-        val payload = hashMapOf<String, Any>(
-            FIELD_PREFS to encodePreferences(agendaPrefs),
-            FIELD_AGENDA_JSON to if (agendaJson.isNullOrEmpty()) "{}" else agendaJson,
-            FIELD_UPDATED_AT to FieldValue.serverTimestamp()
-        )
-        beginNetworkSync()
-        agendaDoc(uid).set(payload)
-            .addOnSuccessListener {
-                agendaUploadRetryAttempt = 0
-                handler.removeCallbacks(agendaUploadRetryRunnable)
-                endNetworkSync()
-            }
-            .addOnFailureListener { e ->
-                endNetworkSync()
-                Log.w(TAG, "Fallo subiendo agenda", e)
-                scheduleAgendaUploadRetryIfNeeded(e)
-            }
-    }
-
     private fun clearUploadRetryCallbacks() {
         handler.removeCallbacks(eqUploadRetryRunnable)
         handler.removeCallbacks(settingsUploadRetryRunnable)
-        handler.removeCallbacks(agendaUploadRetryRunnable)
         handler.removeCallbacks(streamingUploadRetryRunnable)
     }
 
     private fun resetUploadRetryAttempts() {
         eqUploadRetryAttempt = 0
         settingsUploadRetryAttempt = 0
-        agendaUploadRetryAttempt = 0
         streamingUploadRetryAttempt = 0
     }
 
@@ -920,10 +746,6 @@ class CloudSyncManager private constructor(context: Context) {
             { settingsUploadRetryAttempt }, { settingsUploadRetryAttempt = it })
     }
 
-    private fun scheduleAgendaUploadRetryIfNeeded(throwable: Throwable?) {
-        scheduleUploadRetry(throwable, agendaUploadRetryRunnable,
-            { agendaUploadRetryAttempt }, { agendaUploadRetryAttempt = it })
-    }
 
     private fun scheduleStreamingUploadRetryIfNeeded(throwable: Throwable?) {
         scheduleUploadRetry(throwable, streamingUploadRetryRunnable,
@@ -967,12 +789,10 @@ class CloudSyncManager private constructor(context: Context) {
 
         val eqBucket = targetPrefs === eqPrefs
         val settingsBucket = targetPrefs === settingsPrefs
-        val agendaBucket = targetPrefs === agendaPrefs
 
         when {
             eqBucket -> suppressEqSync = true
             settingsBucket -> suppressSettingsSync = true
-            agendaBucket -> suppressAgendaSync = true
         }
 
         try {
@@ -986,7 +806,6 @@ class CloudSyncManager private constructor(context: Context) {
             when {
                 eqBucket -> suppressEqSync = false
                 settingsBucket -> suppressSettingsSync = false
-                agendaBucket -> suppressAgendaSync = false
             }
         }
     }
@@ -1027,7 +846,6 @@ class CloudSyncManager private constructor(context: Context) {
         fallback.putAll(rootData)
         fallback.remove(FIELD_PREFS)
         fallback.remove(FIELD_UPDATED_AT)
-        fallback.remove(FIELD_AGENDA_JSON)
         return if (fallback.isEmpty()) null else fallback
     }
 
@@ -1296,11 +1114,7 @@ class CloudSyncManager private constructor(context: Context) {
             KEY_NOTIFICATION_LEAD_MINUTES == key ||
             KEY_DAILY_SUMMARY_INTERVAL_HOURS == key ||
             KEY_OFFLINE_CROSSFADE_SECONDS == key ||
-            LEGACY_SCHEDULE_AI_ACCEPT_COUNT == key ||
-            LEGACY_SCHEDULE_AI_DISMISS_COUNT == key ||
-            LEGACY_SCHEDULE_AI_OPEN_COUNT == key ||
-            LEGACY_APPS_AI_ACCEPT_COUNT == key ||
-            LEGACY_APPS_AI_DISMISS_COUNT == key
+            KEY_OFFLINE_CROSSFADE_SECONDS == key
         ) {
             return true
         }
@@ -1312,11 +1126,7 @@ class CloudSyncManager private constructor(context: Context) {
     private fun isLikelyLongKey(key: String): Boolean {
         return key.startsWith(LEGACY_AI_EQ_NEXT_AT_PREFIX) ||
                 key.startsWith(LEGACY_AI_EQ_LAST_PROCESS_SESSION_PREFIX) ||
-                key.startsWith(LEGACY_AI_EQ_DISMISSED_SESSION_PREFIX) ||
-                LEGACY_SCHEDULE_AI_NEXT_AT == key ||
-                LEGACY_SCHEDULE_AI_LAST_PROCESS_SESSION == key ||
-                LEGACY_APPS_AI_NEXT_AT == key ||
-                LEGACY_APPS_AI_LAST_PROCESS_SESSION == key
+                key.startsWith(LEGACY_AI_EQ_DISMISSED_SESSION_PREFIX)
     }
 
     private fun userScope(uid: String): DocumentReference =
@@ -1337,11 +1147,6 @@ class CloudSyncManager private constructor(context: Context) {
             .collection(APP_SCOPE_COLLECTION)
             .document(DOC_SETTINGS)
 
-    private fun agendaDoc(uid: String): DocumentReference =
-        firestore.collection(USERS_COLLECTION)
-            .document(uid)
-            .collection(APP_SCOPE_COLLECTION)
-            .document(DOC_AGENDA)
 
     private fun streamingDoc(uid: String): DocumentReference =
         firestore.collection(USERS_COLLECTION)
@@ -1439,7 +1244,6 @@ class CloudSyncManager private constructor(context: Context) {
         private const val TAG = "CloudSyncManager"
 
         @JvmField val PREFS_SETTINGS = "sleppify_settings"
-        @JvmField val PREFS_AGENDA = "sleppify_agenda"
         @JvmField val PREFS_STREAMING_CACHE = "streaming_cache"
         @JvmField val KEY_AI_SHIFT_ENABLED = "ai_shift_enabled"
         @JvmField val KEY_SMART_SUGGESTIONS_ENABLED = "smart_suggestions_enabled"
@@ -1459,19 +1263,16 @@ class CloudSyncManager private constructor(context: Context) {
         @JvmField val DOWNLOAD_QUALITY_MEDIUM = "medium"
         @JvmField val DOWNLOAD_QUALITY_HIGH = "high"
         @JvmField val DOWNLOAD_QUALITY_VERY_HIGH = "very_high"
-        @JvmField val KEY_AGENDA_JSON = "agenda_json"
 
         private const val USERS_COLLECTION = "users"
         private const val APP_SCOPE_COLLECTION = "sleppify"
         private const val DOC_EQ = "eq"
         private const val DOC_SETTINGS = "settings"
-        private const val DOC_AGENDA = "agenda"
         private const val DOC_STREAMING = "streaming"
         private const val COLLECTION_PLAYLISTS = "playlists"
 
         private const val FIELD_PREFS = "prefs"
         private const val FIELD_UPDATED_AT = "updatedAt"
-        private const val FIELD_AGENDA_JSON = "agendaJson"
         private const val OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME = "offline_playlist_queue"
         private const val OFFLINE_DOWNLOAD_MANUAL_TRACK_QUEUE_UNIQUE_NAME = "offline_manual_track_queue"
         private const val LEGACY_SELECTED_PRESET = "selected_preset"
@@ -1484,15 +1285,6 @@ class CloudSyncManager private constructor(context: Context) {
         private const val LEGACY_AI_EQ_DISMISSED_SESSION_PREFIX = "ai_eq_dismissed_session_"
         private const val LEGACY_AI_EQ_PENDING_JSON_PREFIX = "ai_eq_pending_json_"
         private const val DEBUG_EQ_PREFIX = "debug_"
-        private const val LEGACY_SCHEDULE_AI_NEXT_AT = "schedule_ai_next_at"
-        private const val LEGACY_SCHEDULE_AI_LAST_PROCESS_SESSION = "schedule_ai_last_process_session"
-        private const val LEGACY_APPS_AI_NEXT_AT = "apps_ai_next_at"
-        private const val LEGACY_APPS_AI_LAST_PROCESS_SESSION = "apps_ai_last_process_session"
-        private const val LEGACY_SCHEDULE_AI_ACCEPT_COUNT = "schedule_ai_accept_count"
-        private const val LEGACY_SCHEDULE_AI_DISMISS_COUNT = "schedule_ai_dismiss_count"
-        private const val LEGACY_SCHEDULE_AI_OPEN_COUNT = "schedule_ai_open_count"
-        private const val LEGACY_APPS_AI_ACCEPT_COUNT = "apps_ai_accept_count"
-        private const val LEGACY_APPS_AI_DISMISS_COUNT = "apps_ai_dismiss_count"
         private const val LEGACY_APPS_TURBO_MODE = "apps_stop_turbo_mode"
 
         private val FAVORITES_TRACKS_UPDATED_AT_KEY =

@@ -120,8 +120,6 @@ class MainActivity : AppCompatActivity() {
     private var mediaProjectionPermissionLauncher: ActivityResultLauncher<Intent>? = null
     private var pendingAudioProcessingAuthorization = false
     private var hasAgendaScheduleSnapshot = false
-    private var lastSmartSuggestionsEnabled = false
-    private var lastSummaryTimesPerDay = 0
     private var headerBrandTypeface: Typeface? = null
     private var headerSettingsTypeface: Typeface? = null
     private var audioManager: AudioManager? = null
@@ -208,7 +206,6 @@ class MainActivity : AppCompatActivity() {
             delay(100) // Allow UI to render first
             withContext(Dispatchers.IO) {
                 syncAudioEffectsServiceFromPreferences(forceSync = true)
-                syncDailyAgendaNotificationSchedule(forceSync = true)
             }
             // Handle signed in user async to avoid blocking UI
             if (!shouldShowLoginGate && authManagerLazy.isSignedIn()) {
@@ -334,7 +331,6 @@ class MainActivity : AppCompatActivity() {
 
         cloudSyncManager.setSyncStateListener(this::setSyncOverlayVisible)
         syncAudioEffectsServiceFromPreferences(false)
-        syncDailyAgendaNotificationSchedule(false)
 
         val signedIn = authManagerLazy.isSignedIn() && authManagerLazy.getCurrentUser() != null
         if (!signedIn) {
@@ -570,7 +566,6 @@ class MainActivity : AppCompatActivity() {
             if (!isFinishing && !isDestroyed) {
                 notifyHydrationCompleted()
                 syncAudioEffectsServiceFromPreferences(true)
-                syncDailyAgendaNotificationSchedule(true)
                 // AI prefetch intentionally removed here to avoid burning quota on sync.
                 onSuccess?.run()
             }
@@ -701,42 +696,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun prefetchSmartSuggestions(force: Boolean) {
-        val now = System.currentTimeMillis()
-        if (!force && (now - lastSmartPrefetchAtMs) < PREFETCH_MIN_INTERVAL_MS) return
-        
-        lifecycleScope.launch {
-            delay(if (force) 200L else PREFETCH_DEBOUNCE_MS)
-            runSmartPrefetch()
-        }
-    }
-
-    private fun runSmartPrefetch() {
-        if (isFinishing || isDestroyed) return
-        lastSmartPrefetchAtMs = System.currentTimeMillis()
-        val name = if (authManagerLazy.isSignedIn()) authManagerLazy.getDisplayName() else null
-        SmartSuggestionPrefetcher.prefetchScheduleSuggestion(this, name)
-    }
-
-    private fun syncDailyAgendaNotificationSchedule(forceSync: Boolean) {
-        val settingsPrefs = getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, MODE_PRIVATE)
-        val enabled = settingsPrefs.getBoolean(CloudSyncManager.KEY_SMART_SUGGESTIONS_ENABLED, settingsPrefs.getBoolean(CloudSyncManager.KEY_AI_SHIFT_ENABLED, true))
-        val times = settingsPrefs.getInt(CloudSyncManager.KEY_DAILY_SUMMARY_INTERVAL_HOURS, 2)
-
-        if (!forceSync && hasAgendaScheduleSnapshot && lastSmartSuggestionsEnabled == enabled && lastSummaryTimesPerDay == times) return
-
-        hasAgendaScheduleSnapshot = true
-        lastSmartSuggestionsEnabled = enabled
-        lastSummaryTimesPerDay = times
-
-        if (!enabled) {
-            DailyAgendaNotificationWorker.cancel(applicationContext)
-            TaskReminderScheduler.cancelAll(applicationContext)
-        } else {
-            DailyAgendaNotificationWorker.schedule(applicationContext, times)
-            TaskReminderScheduler.rescheduleAll(applicationContext)
-        }
-    }
 
     private fun restoreMainModuleReferences() {
         scheduleFragment = supportFragmentManager.findFragmentByTag(TAG_MODULE_SCHEDULE)

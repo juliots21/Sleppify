@@ -603,7 +603,7 @@ public class SongPlayerFragment extends Fragment {
     @Override
     public void onResume() {
         super.onResume();
-        if (getView() != null) {
+        if (getView() != null && !isHidden()) {
             getView().setTranslationY(0f);
             getView().setVisibility(View.VISIBLE);
         }
@@ -3400,6 +3400,7 @@ public class SongPlayerFragment extends Fragment {
     public String externalGetReturnTargetTag() {
         return returnTargetTag;
     }
+
 
     public void externalSnapshotForNavigation() {
         persistPositionForLoadedTrack();

@@ -327,14 +327,6 @@ class SettingsFragment : Fragment() {
             isChecked = suggestions
             setOnCheckedChangeListener { _, c ->
                 settingsPrefs.edit().putBoolean(CloudSyncManager.KEY_SMART_SUGGESTIONS_ENABLED, c).putBoolean(CloudSyncManager.KEY_AI_SHIFT_ENABLED, c).apply()
-                val appContext = requireContext().applicationContext
-                if (c) {
-                    DailyAgendaNotificationWorker.schedule(appContext, settingsPrefs.getInt(CloudSyncManager.KEY_DAILY_SUMMARY_INTERVAL_HOURS, 2))
-                    TaskReminderScheduler.rescheduleAll(appContext)
-                } else {
-                    DailyAgendaNotificationWorker.cancel(appContext)
-                    TaskReminderScheduler.cancelAll(appContext)
-                }
                 (activity as? MainActivity)?.refreshSessionUi()
             }
         }
@@ -418,7 +410,6 @@ class SettingsFragment : Fragment() {
             .setTitle("Frecuencia resumen IA")
             .setSingleChoiceItems(labs, vals.indexOf(cur)) { d, w ->
                 settingsPrefs.edit().putInt(CloudSyncManager.KEY_DAILY_SUMMARY_INTERVAL_HOURS, vals[w]).apply()
-                if (lastSmartSuggestionsEnabled) DailyAgendaNotificationWorker.schedule(requireContext().applicationContext, vals[w])
                 renderSettingsState()
                 d.dismiss()
             }
