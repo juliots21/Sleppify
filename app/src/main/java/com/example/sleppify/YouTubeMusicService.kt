@@ -110,7 +110,7 @@ class YouTubeMusicService @JvmOverloads constructor(
 
     private class TrackTempData(val title: String, val artist: String, val thumbnailUrl: String)
 
-    private class VideoPlaybackInfo(val duration: String, val embeddable: Boolean)
+    private class VideoPlaybackInfo(val rawDuration: String, val embeddable: Boolean)
 
     private class PublicVideoFilterInfo(val embeddable: Boolean, val durationSeconds: Int)
 
@@ -599,11 +599,11 @@ class YouTubeMusicService @JvmOverloads constructor(
             val playbackInfo = playbackInfoMap[videoId]
             if (playbackInfo != null && !playbackInfo.embeddable) continue
 
-            val durationSeconds = parseYoutubeDurationSeconds(playbackInfo?.duration)
+            val durationSeconds = parseYoutubeDurationSeconds(playbackInfo?.rawDuration)
             if (durationSeconds in 1 until MIN_PUBLIC_MUSIC_DURATION_SECONDS) continue
             if (!shouldIncludeMusicSearchResult(data.title, data.artist)) continue
 
-            var duration = formatYoutubeDuration(playbackInfo?.duration)
+            var duration = formatYoutubeDuration(playbackInfo?.rawDuration)
             if (TextUtils.isEmpty(duration)) duration = "--:--"
 
             result.add(PlaylistTrackResult(videoId, data.title, data.artist, duration, data.thumbnailUrl))
@@ -739,9 +739,8 @@ class YouTubeMusicService @JvmOverloads constructor(
                 val status = item.optJSONObject("status")
 
                 val rawDuration = contentDetails?.optString("duration", "")?.trim().orEmpty()
-                val duration = formatYoutubeDuration(rawDuration)
                 val embeddable = status == null || status.optBoolean("embeddable", true)
-                playbackInfoMap[id] = VideoPlaybackInfo(duration, embeddable)
+                playbackInfoMap[id] = VideoPlaybackInfo(rawDuration, embeddable)
             }
             playbackInfoMap
         }
@@ -837,12 +836,11 @@ class YouTubeMusicService @JvmOverloads constructor(
     }
 
     private fun buildSearchSubtitle(resultType: String, channelTitle: String): String {
-        val typeLabel = when (resultType) {
-            "playlist" -> "Playlist"
-            "channel" -> "Artista"
-            else -> "Cancion"
+        return when (resultType) {
+            "playlist" -> if (channelTitle.isEmpty()) "Playlist" else "Playlist • $channelTitle"
+            "channel" -> if (channelTitle.isEmpty()) "Artista" else "Artista • $channelTitle"
+            else -> channelTitle
         }
-        return if (channelTitle.isEmpty()) typeLabel else "$typeLabel • $channelTitle"
     }
 
     private fun shouldIncludeMusicSearchResult(title: String, channelTitle: String?): Boolean {

@@ -264,13 +264,15 @@
                 </LinearLayout>
             </LinearLayout>
 
-            <!-- Refactored Footer: Centered Row for Device and Queue -->
+            <!-- Refactored Footer: Device on the left, Queue on the right -->
             <LinearLayout
                 android:id="@+id/llPlayerFooter"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="32dp"
-                android:gravity="center"
+                android:layout_marginStart="14dp"
+                android:layout_marginEnd="0dp"
+                android:gravity="center_vertical"
                 android:orientation="horizontal"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
@@ -302,10 +304,11 @@
                         android:textStyle="bold" />
                 </LinearLayout>
 
-                <!-- Increased Spacer to push them further apart towards the sides -->
+                <!-- Flexible spacer to push device to the left and queue to the right -->
                 <View
-                    android:layout_width="170dp"
-                    android:layout_height="1dp" />
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
 
                 <LinearLayout
                     android:id="@+id/llQueueTrigger"

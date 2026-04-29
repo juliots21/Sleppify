@@ -72,7 +72,7 @@ object FavoritesPlaylistStore {
                     safeVideoId,
                     fallback(title, "Tema"),
                     safe(artist),
-                    fallback(duration, "--:--"),
+                    sanitizeDuration(duration),
                     safe(imageUrl)
                 )
             )
@@ -138,7 +138,7 @@ object FavoritesPlaylistStore {
                     videoId,
                     fallback(obj.optString("title", ""), "Tema"),
                     safe(obj.optString("artist", "")),
-                    fallback(obj.optString("duration", ""), "--:--"),
+                    sanitizeDuration(obj.optString("duration", "")),
                     safe(obj.optString("imageUrl", ""))
                 )
                 dedup[videoId] = track
@@ -195,6 +195,11 @@ object FavoritesPlaylistStore {
     private fun fallback(value: String?, fallback: String): String {
         val safeValue = safe(value)
         return if (safeValue.isEmpty()) fallback else safeValue
+    }
+
+    private fun sanitizeDuration(value: String?): String {
+        val safeValue = safe(value)
+        return if (safeValue == "--:--") "" else safeValue
     }
 
     class FavoriteTrack(

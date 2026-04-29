@@ -241,6 +241,12 @@ class MainActivity : AppCompatActivity() {
         tvLoginStatus = findViewById(R.id.tvLoginStatus)
         btnLoginGoogle = findViewById(R.id.btnLoginGoogle)
 
+        if (SystemType.isTv(this)) {
+            moduleLoadingOverlay.setBackgroundColor(Color.TRANSPARENT)
+            moduleLoadingOverlay.isClickable = false
+            moduleLoadingOverlay.isFocusable = false
+        }
+
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             val density = resources.displayMetrics.density
@@ -727,7 +733,7 @@ class MainActivity : AppCompatActivity() {
 
         inSettings = true
         showModuleLoadingOverlay()
-        fragmentContainer.alpha = 0f
+        // fragmentContainer.alpha = 0f (Removed to keep content visible)
 
         val target = settingsFragment ?: SettingsFragment().also { settingsFragment = it }
         val isNew = !target.isAdded
@@ -759,7 +765,6 @@ class MainActivity : AppCompatActivity() {
         if (!inSettings) return
         inSettings = false
         showModuleLoadingOverlay()
-        fragmentContainer.alpha = 0f
 
         val selectedId = bottomNav.selectedItemId
         val target = getMainModuleFragment(selectedId) ?: getOrCreateMainModuleFragment(selectedId)
@@ -866,7 +871,7 @@ class MainActivity : AppCompatActivity() {
 
             val isNew = !target.isAdded
             showModuleLoadingOverlay()
-            fragmentContainer.alpha = 0f
+            // fragmentContainer.alpha = 0f (Removed to keep content visible)
 
             supportFragmentManager.beginTransaction().apply {
                 setReorderingAllowed(true)

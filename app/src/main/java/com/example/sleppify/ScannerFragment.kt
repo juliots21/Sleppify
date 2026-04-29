@@ -146,19 +146,27 @@ class ScannerFragment : Fragment() {
                 // Handle tap-to-focus for single touch
                 if (event.pointerCount == 1) {
                     when (event.action) {
+                        MotionEvent.ACTION_DOWN -> {
+                            // Trigger tap-to-focus on press (more responsive than ACTION_UP)
+                            val cam = camera ?: return@setOnTouchListener false
+                            val factory = pv.meteringPointFactory
+                            val point = factory.createPoint(event.x, event.y)
+                            val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
+                                .setAutoCancelDuration(3, java.util.concurrent.TimeUnit.SECONDS)
+                                .build()
+                            cam.cameraControl?.startFocusAndMetering(action)
+                            // Return true to consume the event
+                            return@setOnTouchListener true
+                        }
                         MotionEvent.ACTION_UP -> {
-                            val factory = previewScanner?.meteringPointFactory
-                            val point = factory?.createPoint(event.x, event.y)
-                            val action = point?.let {
-                                FocusMeteringAction.Builder(it, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
-                                    .setAutoCancelDuration(3, java.util.concurrent.TimeUnit.SECONDS)
-                                    .build()
-                            }
-                            action?.let { camera?.cameraControl?.startFocusAndMetering(it) }
+                            // Perform click for accessibility
+                            view.performClick()
+                            return@setOnTouchListener true
                         }
                     }
                 }
-                return@setOnTouchListener event.pointerCount > 1
+                // Consume single-touch events, allow multi-touch for zoom
+                return@setOnTouchListener event.pointerCount == 1
             }
         }
 
@@ -418,6 +426,10 @@ class ScannerFragment : Fragment() {
             if (!isAdded || previewScanner == null) { detectionLock.set(false); return@launch }
             showFreezeFrame()
             showScanResultBottomCard(items)
+
+            // Auto-reset after 1 second to resume scanning
+            delay(1000)
+            resumeScanning()
         }
     }
 
@@ -585,6 +597,14 @@ class ScannerFragment : Fragment() {
         freezeOverlay?.visibility = View.GONE
         freezeOverlay?.setImageBitmap(null)
         hideScanResultCard()
+    }
+
+    /** Resume scanning without dismissing bottomsheet/card - allows continuous scanning */
+    private fun resumeScanning() {
+        detectionLock.set(false)
+        freezeOverlay?.visibility = View.GONE
+        freezeOverlay?.setImageBitmap(null)
+        // Note: Does NOT hide card or dismiss bottomsheet - they remain visible
     }
 
     private data class DetectedScanItem(val rawValue: String, val detectedType: String)

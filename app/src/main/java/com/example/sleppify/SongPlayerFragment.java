@@ -406,7 +406,8 @@ public class SongPlayerFragment extends Fragment {
         return fragment;
     }
 
-    @Nullable
+
+
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -426,6 +427,7 @@ public class SongPlayerFragment extends Fragment {
         return inflater.inflate(R.layout.fragment_song_player, container, false);
     }
 
+    @Override
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
 
@@ -2426,35 +2428,6 @@ public class SongPlayerFragment extends Fragment {
         localProgressHandler.removeCallbacks(localProgressTicker);
     }
 
-    private void releaseLocalExoMediaPlayer() {
-        cancelOfflineCrossfade();
-        cancelSourcePrepareTimeout();
-        localSourcePreparing = false;
-        if (localExoMediaPlayer == null) {
-            return;
-        }
-        try {
-            localExoMediaPlayer.stop();
-        } catch (Exception ignored) {
-        }
-        try {
-            localExoMediaPlayer.release();
-        } catch (Exception ignored) {
-        }
-        localExoMediaPlayer = null;
-        usingOfflineSource = false;
-    }
-
-    private void clearPlayerCoverRequest() {
-        if (playerCoverTarget == null) {
-            return;
-        }
-        if (isAdded()) {
-            Glide.with(this).clear(playerCoverTarget);
-        }
-        playerCoverTarget = null;
-    }
-
     private void clearPlayerBackdropRequest() {
         if (playerBackdropTarget == null) {
             return;
@@ -2475,211 +2448,6 @@ public class SongPlayerFragment extends Fragment {
         notificationArtworkTarget = null;
     }
 
-    private void showPlayerArtworkLoadingState() {
-        if (ivPlayerCover != null) {
-            // Set to black instead of null as per user request
-            ivPlayerCover.setImageResource(android.R.color.black);
-        }
-        if (ivPlayerBackdrop != null) {
-            ivPlayerBackdrop.animate().cancel();
-            ivPlayerBackdrop.setImageDrawable(null);
-            ivPlayerBackdrop.setAlpha(0f);
-        }
-    }
-
-    private void completePlayerArtworkBootstrap() {
-        if (!playerArtworkBootstrapPending) {
-            return;
-        }
-        playerArtworkBootstrapPending = false;
-        refreshNextUp();
-    }
-
-    private void cancelDeferredBackdropLoad() {
-        if (deferredBackdropLoadRunnable != null) {
-            localProgressHandler.removeCallbacks(deferredBackdropLoadRunnable);
-            deferredBackdropLoadRunnable = null;
-        }
-    }
-
-    private void scheduleBackdropLoad(
-            @NonNull PlayerTrack requestedTrack,
-            boolean bootstrapArtwork
-    ) {
-        cancelDeferredBackdropLoad();
-
-        String requestVideoId = requestedTrack.videoId == null ? "" : requestedTrack.videoId;
-        deferredBackdropLoadRunnable = () -> {
-            deferredBackdropLoadRunnable = null;
-            if (!isAdded() || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) {
-                return;
-            }
-
-            PlayerTrack current = tracks.get(currentIndex);
-            String currentVideoId = current.videoId == null ? "" : current.videoId;
-            if (!TextUtils.equals(currentVideoId, requestVideoId)) {
-                return;
-            }
-
-            loadPlayerBackdrop(current, bootstrapArtwork);
-        };
-
-        deferredBackdropLoadRunnable.run();
-    }
-
-    private void revealBackdropWithFade() {
-        if (ivPlayerBackdrop == null) {
-            return;
-        }
-
-        ivPlayerBackdrop.animate().cancel();
-        applyPlayerBackdropBlur();
-        float targetAlpha = ivPlayerBackdrop.getAlpha();
-        if (targetAlpha <= 0f) {
-            targetAlpha = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? 0.68f : 0.35f;
-        }
-        ivPlayerBackdrop.setAlpha(targetAlpha);
-    }
-
-    private void clearMediaNotificationArtwork() {
-        clearNotificationArtworkRequest();
-        activeNotificationArtworkVideoId = "";
-        mediaNotificationLargeIcon = null;
-        mediaNotificationLargeIconVideoId = "";
-        mediaSessionArtwork = null;
-        mediaSessionArtworkVideoId = "";
-    }
-
-    private void cacheMediaNotificationArtwork(@NonNull String videoId, @NonNull Bitmap source) {
-        if (source.isRecycled()) {
-            return;
-        }
-
-        Bitmap notificationBitmap = scaleArtworkBitmap(source, 1024);
-        Bitmap sessionBitmap = scaleArtworkBitmap(source, MEDIA_SESSION_ARTWORK_MAX_SIZE_PX);
-
-        mediaNotificationLargeIcon = notificationBitmap;
-        mediaNotificationLargeIconVideoId = videoId;
-        mediaSessionArtwork = sessionBitmap;
-        mediaSessionArtworkVideoId = videoId;
-    }
-
-    @NonNull
-    private Bitmap scaleArtworkBitmap(@NonNull Bitmap source, int maxEdgePx) {
-        int width = Math.max(1, source.getWidth());
-        int height = Math.max(1, source.getHeight());
-        int largestEdge = Math.max(width, height);
-        if (largestEdge <= Math.max(1, maxEdgePx)) {
-            return source;
-        }
-
-        float scale = maxEdgePx / (float) largestEdge;
-        int targetWidth = Math.max(1, Math.round(width * scale));
-        int targetHeight = Math.max(1, Math.round(height * scale));
-        try {
-            return Bitmap.createScaledBitmap(source, targetWidth, targetHeight, true);
-        } catch (Throwable ignored) {
-            return source;
-        }
-    }
-
-    private void resetPlayerHeroContainerHeight() {
-        setPlayerHeroContainerHeight(dpToPx(PLAYER_HERO_DEFAULT_HEIGHT_DP));
-    }
-
-    private void setPlayerHeroContainerHeight(int heightPx) {
-        // Disabled to allow ConstraintLayout 1:1 ratio to rule
-        if (true) return;
-        
-        if (flPlayerHero == null || heightPx <= 0) {
-            return;
-        }
-
-        ViewGroup.LayoutParams params = flPlayerHero.getLayoutParams();
-        if (params == null || params.height == heightPx) {
-            return;
-        }
-
-        params.height = heightPx;
-        flPlayerHero.setLayoutParams(params);
-    }
-
-    private void adjustPlayerHeroForCover(@NonNull Bitmap bitmap) {
-        if (flPlayerHero == null) {
-            return;
-        }
-
-        int width = flPlayerHero.getWidth();
-        if (width <= 0) {
-            flPlayerHero.post(() -> adjustPlayerHeroForCover(bitmap));
-            return;
-        }
-
-        int bmpWidth = Math.max(1, bitmap.getWidth());
-        int bmpHeight = Math.max(1, bitmap.getHeight());
-        float aspect = bmpHeight / (float) bmpWidth;
-
-        int targetHeight = dpToPx(PLAYER_HERO_DEFAULT_HEIGHT_DP);
-        if (aspect > 1.02f) {
-            targetHeight = Math.round(width * aspect);
-            targetHeight = Math.max(dpToPx(PLAYER_HERO_MIN_HEIGHT_DP), targetHeight);
-            targetHeight = Math.min(dpToPx(PLAYER_HERO_MAX_HEIGHT_DP), targetHeight);
-        }
-
-        setPlayerHeroContainerHeight(targetHeight);
-    }
-
-    private int dpToPx(int dp) {
-        return Math.round(dp * requireContext().getResources().getDisplayMetrics().density);
-    }
-
-    private void loadMediaNotificationArtwork(@NonNull PlayerTrack track) {
-        String requestVideoId = track.videoId == null ? "" : track.videoId.trim();
-        if (TextUtils.isEmpty(requestVideoId)) return;
-
-        String fallbackImageUrl = track.imageUrl == null ? "" : track.imageUrl.trim();
-        String preferredImageUrl = resolvePreferredCoverUrl(requestVideoId, fallbackImageUrl);
-        if (TextUtils.isEmpty(preferredImageUrl)) return;
-        if (persistentAppContext == null) return;
-
-        activeNotificationArtworkVideoId = requestVideoId;
-        clearNotificationArtworkRequest();
-
-        notificationArtworkTarget = new CustomTarget<Bitmap>() {
-            @Override
-            public void onResourceReady(@NonNull Bitmap resource, @Nullable Transition<? super Bitmap> transition) {
-                if (!TextUtils.equals(activeNotificationArtworkVideoId, requestVideoId)) {
-                    return;
-                }
-                cacheMediaNotificationArtwork(requestVideoId, resource);
-                updateMediaSessionMetadata();
-            }
-
-            @Override
-            public void onLoadCleared(@Nullable Drawable placeholder) {
-            }
-
-            @Override
-            public void onLoadFailed(@Nullable Drawable errorDrawable) {
-                if (!TextUtils.equals(activeNotificationArtworkVideoId, requestVideoId)) {
-                    return;
-                }
-                if (TextUtils.equals(mediaNotificationLargeIconVideoId, requestVideoId)) {
-                    clearMediaNotificationArtwork();
-                    updateMediaSessionMetadata();
-                    }
-            }
-        };
-
-        Glide.with(persistentAppContext)
-                .asBitmap()
-                .load(preferredImageUrl)
-                .transform(new YouTubeCropTransformation())
-                .format(DecodeFormat.PREFER_RGB_565)
-                .diskCacheStrategy(DiskCacheStrategy.ALL)
-                .into(notificationArtworkTarget);
-    }
-
     private void loadPlayerCover(@NonNull PlayerTrack track, boolean bootstrapArtwork) {
         loadMediaNotificationArtwork(track);
         String requestVideoId = track.videoId == null ? "" : track.videoId.trim();
@@ -2692,7 +2460,7 @@ public class SongPlayerFragment extends Fragment {
             resetPlayerHeroContainerHeight();
             ivPlayerCover.setImageDrawable(null);
             updateMediaSessionMetadata();
-                return;
+            return;
         }
 
         if (!TextUtils.equals(requestVideoId, mediaNotificationLargeIconVideoId)) {
@@ -2702,21 +2470,41 @@ public class SongPlayerFragment extends Fragment {
         activeCoverVideoId = requestVideoId;
         clearPlayerCoverRequest();
 
+        if (!bootstrapArtwork && ivPlayerCover != null) {
+            ivPlayerCover.animate().cancel();
+            ivPlayerCover.animate()
+                    .alpha(0f)
+                    .setDuration(120L)
+                    .start();
+        }
+
         playerCoverTarget = new CustomTarget<Bitmap>() {
             @Override
             public void onResourceReady(@NonNull Bitmap resource, @Nullable Transition<? super Bitmap> transition) {
                 if (!isAdded() || !TextUtils.equals(activeCoverVideoId, requestVideoId)) {
                     return;
                 }
-                
-                // Process the bitmap using the intelligent smart-crop utility
-                Bitmap processedResource = YouTubeImageProcessor.smartCrop(resource);
 
-                ivPlayerCover.setImageBitmap(processedResource);
-                ivPlayerCover.setAlpha(1f);
-                adjustPlayerHeroForCover(processedResource);
-                cacheMediaNotificationArtwork(requestVideoId, processedResource);
-                updateMediaSessionMetadata();
+                // Move smartCrop to background thread to avoid UI lag
+                streamResolverExecutor.execute(() -> {
+                    Bitmap processedResource = YouTubeImageProcessor.smartCrop(resource);
+                    
+                    localProgressHandler.post(() -> {
+                        if (!isAdded() || !TextUtils.equals(activeCoverVideoId, requestVideoId)) {
+                            return;
+                        }
+                        ivPlayerCover.setImageBitmap(processedResource);
+                        ivPlayerCover.animate().cancel();
+                        ivPlayerCover.setAlpha(0f);
+                        ivPlayerCover.animate()
+                                .alpha(1f)
+                                .setDuration(240L)
+                                .start();
+                        adjustPlayerHeroForCover(processedResource);
+                        cacheMediaNotificationArtwork(requestVideoId, processedResource);
+                        updateMediaSessionMetadata();
+                    });
+                });
             }
 
             @Override
@@ -2738,14 +2526,14 @@ public class SongPlayerFragment extends Fragment {
                 }
                 ivPlayerCover.setImageDrawable(null);
                 updateMediaSessionMetadata();
-                    }
+            }
         };
 
         Glide.with(this)
                 .asBitmap()
                 .load(preferredImageUrl)
                 .transform(new YouTubeCropTransformation())
-                .format(DecodeFormat.PREFER_ARGB_8888) // High quality
+                .format(DecodeFormat.PREFER_ARGB_8888)
                 .diskCacheStrategy(DiskCacheStrategy.ALL)
                 .error(
                         Glide.with(this)
@@ -2782,6 +2570,10 @@ public class SongPlayerFragment extends Fragment {
         activeBackdropVideoId = requestVideoId;
         clearPlayerBackdropRequest();
 
+        if (!bootstrapArtwork) {
+            fadeOutBackdropToBlack();
+        }
+
         if (TextUtils.isEmpty(preferredImageUrl)) {
             ivPlayerBackdrop.setImageDrawable(null);
             ivPlayerBackdrop.setAlpha(0f);
@@ -2797,11 +2589,10 @@ public class SongPlayerFragment extends Fragment {
                 }
 
                 ivPlayerBackdrop.setImageDrawable(resource);
+                applyPlayerBackdropBlur();
+                revealBackdropWithFade();
                 if (bootstrapArtwork) {
-                    revealBackdropWithFade();
                     completePlayerArtworkBootstrap();
-                } else {
-                    applyPlayerBackdropBlur();
                 }
             }
 
@@ -2810,12 +2601,8 @@ public class SongPlayerFragment extends Fragment {
                 if (!isAdded()) {
                     return;
                 }
-
-                if (bootstrapArtwork) {
-                    ivPlayerBackdrop.setImageDrawable(null);
-                    ivPlayerBackdrop.setAlpha(0f);
-                }
-                // Non-bootstrap: keep old backdrop visible (don't wipe it)
+                ivPlayerBackdrop.setImageDrawable(null);
+                ivPlayerBackdrop.setAlpha(0f);
             }
 
             @Override
@@ -2824,11 +2611,8 @@ public class SongPlayerFragment extends Fragment {
                     return;
                 }
 
-                if (bootstrapArtwork) {
-                    ivPlayerBackdrop.setImageDrawable(null);
-                    ivPlayerBackdrop.setAlpha(0f);
-                }
-                // Non-bootstrap: keep old backdrop visible on failure
+                ivPlayerBackdrop.setImageDrawable(null);
+                ivPlayerBackdrop.setAlpha(0f);
                 completePlayerArtworkBootstrap();
             }
         };
@@ -2882,10 +2666,7 @@ public class SongPlayerFragment extends Fragment {
         return fallbackImageUrl;
     }
 
-    /**
-     * Intelligent edge detection to remove black bars (letterboxing) or 
-     * blurred dominant color pillars from YouTube music thumbnails.
-     */
+    // ... (rest of the code remains the same)
 
     @Override
     public void onDestroy() {
@@ -3263,7 +3044,13 @@ public class SongPlayerFragment extends Fragment {
             tvActionLikeCount.setText(stats.likeCount);
         }
         if (tvActionDislikeCount != null) {
-            tvActionDislikeCount.setText(stats.dislikeCount);
+            // Only show dislike count if it's not "0" or just hide it as requested
+            if ("0".equals(stats.dislikeCount) || TextUtils.isEmpty(stats.dislikeCount)) {
+                tvActionDislikeCount.setVisibility(View.GONE);
+            } else {
+                tvActionDislikeCount.setVisibility(View.VISIBLE);
+                tvActionDislikeCount.setText(stats.dislikeCount);
+            }
         }
         if (tvActionCommentCount != null) {
             tvActionCommentCount.setText(stats.commentCount);
@@ -3380,6 +3167,31 @@ public class SongPlayerFragment extends Fragment {
         updateMediaNotification();
         syncMiniStateWithPlaylist();
         persistPlaybackSnapshot(true);
+    }
+
+    public void externalAnimateEnterSlide() {
+        View root = getView();
+        if (root == null) {
+            return;
+        }
+        root.post(() -> {
+            View v = getView();
+            if (v == null) {
+                return;
+            }
+            int distance = v.getHeight();
+            if (distance <= 0) {
+                distance = v.getResources().getDisplayMetrics().heightPixels;
+            }
+            v.animate().cancel();
+            v.setTranslationY(distance);
+            v.setAlpha(1f);
+            v.animate()
+                    .translationY(0f)
+                    .setDuration(280L)
+                    .setInterpolator(new android.view.animation.PathInterpolator(0.4f, 0f, 0.2f, 1f))
+                    .start();
+        });
     }
 
     public void externalSetReturnTargetTag(@NonNull String targetTag) {
@@ -4760,6 +4572,241 @@ public class SongPlayerFragment extends Fragment {
         // Attach to both to ensure we catch the gesture
         scrollView.setOnTouchListener(swipeListener);
         root.setOnTouchListener(swipeListener);
+    }
+
+    private void releaseLocalExoMediaPlayer() {
+        if (localExoMediaPlayer == null) {
+            return;
+        }
+        try {
+            localExoMediaPlayer.release();
+        } catch (Exception ignored) {
+        }
+        localExoMediaPlayer = null;
+        usingOfflineSource = false;
+    }
+
+    private void clearPlayerCoverRequest() {
+        if (playerCoverTarget == null) {
+            return;
+        }
+        if (isAdded()) {
+            Glide.with(this).clear(playerCoverTarget);
+        }
+        playerCoverTarget = null;
+    }
+
+    private void showPlayerArtworkLoadingState() {
+        if (ivPlayerCover != null) {
+            ivPlayerCover.setImageResource(android.R.color.black);
+        }
+        if (ivPlayerBackdrop != null) {
+            ivPlayerBackdrop.animate().cancel();
+            ivPlayerBackdrop.setImageDrawable(null);
+            ivPlayerBackdrop.setAlpha(0f);
+        }
+    }
+
+    private void completePlayerArtworkBootstrap() {
+        if (!playerArtworkBootstrapPending) {
+            return;
+        }
+        playerArtworkBootstrapPending = false;
+        refreshNextUp();
+    }
+
+    private void cancelDeferredBackdropLoad() {
+        if (deferredBackdropLoadRunnable != null) {
+            localProgressHandler.removeCallbacks(deferredBackdropLoadRunnable);
+            deferredBackdropLoadRunnable = null;
+        }
+    }
+
+    private void scheduleBackdropLoad(
+            @NonNull PlayerTrack requestedTrack,
+            boolean bootstrapArtwork
+    ) {
+        cancelDeferredBackdropLoad();
+
+        String requestVideoId = requestedTrack.videoId == null ? "" : requestedTrack.videoId;
+        deferredBackdropLoadRunnable = () -> {
+            deferredBackdropLoadRunnable = null;
+            if (!isAdded() || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) {
+                return;
+            }
+
+            PlayerTrack current = tracks.get(currentIndex);
+            String currentVideoId = current.videoId == null ? "" : current.videoId;
+            if (!TextUtils.equals(currentVideoId, requestVideoId)) {
+                return;
+            }
+
+            loadPlayerBackdrop(current, bootstrapArtwork);
+        };
+
+        deferredBackdropLoadRunnable.run();
+    }
+
+    private void revealBackdropWithFade() {
+        if (ivPlayerBackdrop == null) {
+            return;
+        }
+
+        ivPlayerBackdrop.animate().cancel();
+        applyPlayerBackdropBlur();
+        float targetAlpha = ivPlayerBackdrop.getAlpha();
+        if (targetAlpha <= 0f) {
+            targetAlpha = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? 0.68f : 0.35f;
+        }
+        ivPlayerBackdrop.setAlpha(targetAlpha);
+    }
+
+    private void clearMediaNotificationArtwork() {
+        clearNotificationArtworkRequest();
+        activeNotificationArtworkVideoId = "";
+        mediaNotificationLargeIcon = null;
+        mediaNotificationLargeIconVideoId = "";
+        mediaSessionArtwork = null;
+        mediaSessionArtworkVideoId = "";
+    }
+
+    private void cacheMediaNotificationArtwork(@NonNull String videoId, @NonNull Bitmap source) {
+        if (source.isRecycled()) {
+            return;
+        }
+
+        Bitmap notificationBitmap = scaleArtworkBitmap(source, 1024);
+        Bitmap sessionBitmap = scaleArtworkBitmap(source, MEDIA_SESSION_ARTWORK_MAX_SIZE_PX);
+
+        mediaNotificationLargeIcon = notificationBitmap;
+        mediaNotificationLargeIconVideoId = videoId;
+        mediaSessionArtwork = sessionBitmap;
+        mediaSessionArtworkVideoId = videoId;
+    }
+
+    @NonNull
+    private Bitmap scaleArtworkBitmap(@NonNull Bitmap source, int maxEdgePx) {
+        int width = Math.max(1, source.getWidth());
+        int height = Math.max(1, source.getHeight());
+        int largestEdge = Math.max(width, height);
+        if (largestEdge <= Math.max(1, maxEdgePx)) {
+            return source;
+        }
+
+        float scale = maxEdgePx / (float) largestEdge;
+        int targetWidth = Math.max(1, Math.round(width * scale));
+        int targetHeight = Math.max(1, Math.round(height * scale));
+        try {
+            return Bitmap.createScaledBitmap(source, targetWidth, targetHeight, true);
+        } catch (Throwable ignored) {
+            return source;
+        }
+    }
+
+    private void resetPlayerHeroContainerHeight() {
+        setPlayerHeroContainerHeight(dpToPx(PLAYER_HERO_DEFAULT_HEIGHT_DP));
+    }
+
+    private void setPlayerHeroContainerHeight(int heightPx) {
+        // Disabled to allow ConstraintLayout 1:1 ratio to rule
+        if (true) return;
+        
+        if (flPlayerHero == null || heightPx <= 0) {
+            return;
+        }
+
+        ViewGroup.LayoutParams params = flPlayerHero.getLayoutParams();
+        if (params == null || params.height == heightPx) {
+            return;
+        }
+
+        params.height = heightPx;
+        flPlayerHero.setLayoutParams(params);
+    }
+
+    private void adjustPlayerHeroForCover(@NonNull Bitmap bitmap) {
+        if (flPlayerHero == null) {
+            return;
+        }
+
+        int width = flPlayerHero.getWidth();
+        if (width <= 0) {
+            flPlayerHero.post(() -> adjustPlayerHeroForCover(bitmap));
+            return;
+        }
+
+        int bmpWidth = Math.max(1, bitmap.getWidth());
+        int bmpHeight = Math.max(1, bitmap.getHeight());
+        float aspect = bmpHeight / (float) bmpWidth;
+
+        int targetHeight = dpToPx(PLAYER_HERO_DEFAULT_HEIGHT_DP);
+        if (aspect > 1.02f) {
+            targetHeight = Math.round(width * aspect);
+            targetHeight = Math.max(dpToPx(PLAYER_HERO_MIN_HEIGHT_DP), targetHeight);
+            targetHeight = Math.min(dpToPx(PLAYER_HERO_MAX_HEIGHT_DP), targetHeight);
+        }
+
+        setPlayerHeroContainerHeight(targetHeight);
+    }
+
+    private int dpToPx(int dp) {
+        return Math.round(dp * requireContext().getResources().getDisplayMetrics().density);
+    }
+
+    private void loadMediaNotificationArtwork(@NonNull PlayerTrack track) {
+        String requestVideoId = track.videoId == null ? "" : track.videoId.trim();
+        if (TextUtils.isEmpty(requestVideoId)) return;
+
+        String fallbackImageUrl = track.imageUrl == null ? "" : track.imageUrl.trim();
+        String preferredImageUrl = resolvePreferredCoverUrl(requestVideoId, fallbackImageUrl);
+        if (TextUtils.isEmpty(preferredImageUrl)) return;
+        if (persistentAppContext == null) return;
+
+        activeNotificationArtworkVideoId = requestVideoId;
+        clearNotificationArtworkRequest();
+
+        notificationArtworkTarget = new CustomTarget<Bitmap>() {
+            @Override
+            public void onResourceReady(@NonNull Bitmap resource, @Nullable Transition<? super Bitmap> transition) {
+                if (!TextUtils.equals(activeNotificationArtworkVideoId, requestVideoId)) {
+                    return;
+                }
+                cacheMediaNotificationArtwork(requestVideoId, resource);
+                updateMediaSessionMetadata();
+            }
+
+            @Override
+            public void onLoadCleared(@Nullable Drawable placeholder) {
+            }
+
+            @Override
+            public void onLoadFailed(@Nullable Drawable errorDrawable) {
+                if (!TextUtils.equals(activeNotificationArtworkVideoId, requestVideoId)) {
+                    return;
+                }
+                if (TextUtils.equals(mediaNotificationLargeIconVideoId, requestVideoId)) {
+                    clearMediaNotificationArtwork();
+                    updateMediaSessionMetadata();
+                }
+            }
+        };
+
+        Glide.with(persistentAppContext)
+                .asBitmap()
+                .load(preferredImageUrl)
+                .transform(new YouTubeCropTransformation())
+                .format(DecodeFormat.PREFER_RGB_565)
+                .diskCacheStrategy(DiskCacheStrategy.ALL)
+                .into(notificationArtworkTarget);
+    }
+
+    private void fadeOutBackdropToBlack() {
+        if (ivPlayerBackdrop == null) return;
+        ivPlayerBackdrop.animate().cancel();
+        ivPlayerBackdrop.animate()
+                .alpha(0f)
+                .setDuration(220)
+                .start();
     }
 }
     

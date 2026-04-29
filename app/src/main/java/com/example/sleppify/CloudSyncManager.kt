@@ -973,7 +973,8 @@ class CloudSyncManager private constructor(context: Context) {
         return key == FAVORITES_TRACKS_UPDATED_AT_KEY ||
                 key == FAVORITES_TRACKS_DATA_KEY ||
                 key == FAVORITES_TRACKS_FULL_CACHE_KEY ||
-                key == FAVORITES_OFFLINE_COMPLETE_KEY
+                key == FAVORITES_OFFLINE_COMPLETE_KEY ||
+                key == "stream_recent_search_queries"
     }
 
     private fun isDeprecatedEqSyncKey(key: String?): Boolean {
@@ -1177,6 +1178,18 @@ class CloudSyncManager private constructor(context: Context) {
             .set(data, SetOptions.merge())
             .addOnSuccessListener { Log.d(TAG, "Playlist $playlistName synced to cloud") }
             .addOnFailureListener { e -> Log.e(TAG, "Error syncing playlist $playlistName", e) }
+    }
+
+    fun deleteCloudPlaylist(playlistName: String) {
+        val uid = activeUserId
+        if (uid.isNullOrEmpty()) return
+        
+        firestore.collection(USERS_COLLECTION).document(uid)
+            .collection(COLLECTION_PLAYLISTS)
+            .document(playlistName)
+            .delete()
+            .addOnSuccessListener { Log.d(TAG, "Deleted cloud playlist: $playlistName") }
+            .addOnFailureListener { e -> Log.e(TAG, "Error deleting cloud playlist: $playlistName", e) }
     }
 
     fun fetchCloudPlaylists(callback: CloudPlaylistsCallback) {

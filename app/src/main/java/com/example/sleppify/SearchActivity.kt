@@ -3,6 +3,7 @@ package com.example.sleppify
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.graphics.Color
 import android.graphics.Typeface
 import android.media.AudioManager
 import android.net.ConnectivityManager
@@ -88,6 +89,7 @@ class SearchActivity : AppCompatActivity() {
     private lateinit var ivSearchClear: ImageView
     private lateinit var rvSearchResults: RecyclerView
     private lateinit var tvSearchState: TextView
+    private lateinit var llSearchBar: LinearLayout
     private lateinit var rvSearchSuggestions: RecyclerView
     private lateinit var llFeaturedResult: LinearLayout
     private lateinit var ivFeaturedThumb: ShapeableImageView
@@ -155,6 +157,7 @@ class SearchActivity : AppCompatActivity() {
         val topAppBar = findViewById<View>(R.id.topAppBar)
         tvModuleTitle = findViewById(R.id.tvModuleTitle)
         btnSettings = findViewById(R.id.btnSettings)
+        llSearchBar = findViewById(R.id.llSearchBar)
         etSearchQuery = findViewById(R.id.etSearchQuery)
         ivSearchClear = findViewById(R.id.ivSearchClear)
         rvSearchResults = findViewById(R.id.rvSearchResults)
@@ -165,6 +168,12 @@ class SearchActivity : AppCompatActivity() {
         tvFeaturedTitle = findViewById(R.id.tvFeaturedTitle)
         tvFeaturedSubtitle = findViewById(R.id.tvFeaturedSubtitle)
         moduleLoadingOverlay = findViewById(R.id.moduleLoadingOverlay)
+
+        if (SystemType.isTv(this)) {
+            moduleLoadingOverlay.setBackgroundColor(Color.TRANSPARENT)
+            moduleLoadingOverlay.isClickable = false
+            moduleLoadingOverlay.isFocusable = false
+        }
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -272,7 +281,7 @@ class SearchActivity : AppCompatActivity() {
 
     private fun configureStandardHeader() {
         btnSettings.visibility = View.VISIBLE
-        (btnSettings as ImageView).setImageResource(R.drawable.ic_settings)
+        (btnSettings as? ImageView)?.setImageResource(R.drawable.ic_settings)
         btnSettings.contentDescription = "Ajustes"
         btnSettings.setOnClickListener {
             val intent = Intent(this, MainActivity::class.java).apply {
@@ -299,8 +308,6 @@ class SearchActivity : AppCompatActivity() {
             setOnClickListener { onBackPressedDispatcher.onBackPressed() }
         }
     }
-
-
 
     private fun performSearch() {
         if (searching) return
@@ -532,7 +539,7 @@ class SearchActivity : AppCompatActivity() {
     private fun bindFeaturedTrack(track: YouTubeMusicService.TrackResult) {
         tvFeaturedTitle.text = track.title
         val type = searchTypeLabel(track)
-        tvFeaturedSubtitle.text = if (track.subtitle.isNullOrEmpty()) type else "$type • ${track.subtitle}"
+        tvFeaturedSubtitle.text = track.subtitle ?: searchTypeLabel(track)
         loadArtworkInto(ivFeaturedThumb, track.thumbnailUrl)
         llFeaturedResult.setOnClickListener { onTrackClicked(track) }
         findViewById<View>(R.id.btnFeaturedPlay).setOnClickListener { onTrackClicked(track) }
@@ -583,7 +590,7 @@ class SearchActivity : AppCompatActivity() {
         
         tvTitle.text = track.title ?: "Tema"
         val typeLabel = searchTypeLabel(track)
-        tvSubtitle.text = if (track.subtitle.isNullOrEmpty()) typeLabel else "$typeLabel • ${track.subtitle}"
+        tvSubtitle.text = track.subtitle ?: searchTypeLabel(track)
         loadArtworkInto(ivArt, track.thumbnailUrl)
 
         val isPlaylist = "playlist".equals(track.resultType, ignoreCase = true)
@@ -811,7 +818,7 @@ class SearchActivity : AppCompatActivity() {
             val item = data[position]
             holder.title.text = item.title ?: "Resultado"
             val type = searchTypeLabel(item)
-            holder.subtitle.text = if (item.subtitle.isNullOrEmpty()) type else "$type • ${item.subtitle}"
+            holder.subtitle.text = item.subtitle ?: searchTypeLabel(item)
             loadArtworkInto(holder.thumb, item.thumbnailUrl)
             holder.divider.visibility = if (position == data.size - 1) View.GONE else View.VISIBLE
             holder.itemView.setOnClickListener { onClick(item) }

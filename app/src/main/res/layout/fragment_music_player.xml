@@ -15,9 +15,6 @@
     android:background="@color/surface_dark"
     android:clipChildren="false"
     android:clipToPadding="false"
-    android:paddingHorizontal="12dp"
-    android:paddingTop="0dp"
-    android:paddingBottom="0dp"
     tools:context=".MusicPlayerFragment">
 
     <LinearLayout
@@ -30,6 +27,8 @@
         android:orientation="horizontal"
         android:paddingTop="4dp"
         android:paddingBottom="4dp"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent">
@@ -102,6 +101,8 @@
         android:elevation="4dp"
         android:gravity="center_vertical"
         android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/llLibraryHeaderRow">
@@ -164,6 +165,8 @@
         android:orientation="vertical"
         android:paddingTop="10dp"
         android:paddingBottom="6dp"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
         android:visibility="gone"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
@@ -271,42 +274,41 @@
         </LinearLayout>
     </LinearLayout>
 
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/rvMusicResults"
+    <LinearLayout
+        android:id="@+id/llMusicBody"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:layout_marginTop="10dp"
-        android:clipToPadding="false"
-        android:paddingBottom="96dp"
-        app:layout_constraintBottom_toTopOf="@id/llMiniPlayer"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
+        android:orientation="horizontal"
         app:layout_constraintTop_toBottomOf="@id/llFeaturedResult"
-        tools:listitem="@layout/item_music_result" />
-
-
-
-    <com.google.android.material.floatingactionbutton.FloatingActionButton
-        android:id="@+id/fabCreatePlaylist"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_margin="14dp"
-        android:backgroundTint="@color/stitch_blue"
-        android:contentDescription="Crear playlist"
-        android:src="@android:drawable/ic_input_add"
-        app:tint="@color/white"
-        app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Medium"
         app:layout_constraintBottom_toTopOf="@id/llMiniPlayer"
-        app:layout_constraintEnd_toEndOf="@id/llMiniPlayer"
-        android:layout_marginBottom="8dp"
-        android:layout_marginEnd="14dp" />
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <!-- TV PLAYER PANE (Embedded Player) -->
+        <include layout="@layout/layout_tv_split_player" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rvMusicResults"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1.8"
+            android:clipToPadding="false"
+            android:paddingBottom="24dp"
+            android:nextFocusLeft="@id/btnTvPlayPause"
+            android:focusable="true"
+            android:focusableInTouchMode="true"
+            android:descendantFocusability="afterDescendants"
+            tools:listitem="@layout/item_music_result" />
+            
+    </LinearLayout>
+
+
+
 
     <LinearLayout
         android:id="@+id/llMiniPlayer"
         android:layout_width="0dp"
         android:layout_height="84dp"
-        android:layout_marginStart="-24dp"
-        android:layout_marginEnd="-24dp"
         android:layout_marginBottom="-8dp"
         android:background="@drawable/bg_playlist_footer_extension"
         android:clickable="true"
@@ -327,8 +329,8 @@
             android:layout_height="wrap_content"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingStart="24dp"
-            android:paddingEnd="24dp">
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp">
 
             <com.google.android.material.imageview.ShapeableImageView
                 android:id="@+id/ivMiniPlayerArt"
@@ -355,7 +357,8 @@
                     android:maxLines="1"
                     android:text="Selecciona una canción"
                     android:textColor="@color/text_primary"
-                    android:textSize="13sp" />
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
 
                 <TextView
                     android:id="@+id/tvMiniPlayerSubtitle"

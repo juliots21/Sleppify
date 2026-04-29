@@ -501,6 +501,7 @@ public class MusicPlayerFragment extends Fragment {
     }
 
     private LinearLayout llSearchRow;
+    private View llLibraryHeaderRow;
     private View llLibraryInlineSearch;
     private View tvLibraryTitle;
     private View llMusicState;
@@ -535,6 +536,18 @@ public class MusicPlayerFragment extends Fragment {
     private SeekBar sbMiniPlayerProgress;
     private ImageButton btnMiniPlayPause;
     private SwipeRefreshLayout swipeLibraryRefresh;
+
+    // TV-specific split player members
+    private boolean isTv;
+    private View llTvPlayerPane;
+    private ImageView ivTvPlayerCover;
+    private TextView tvTvPlayerTitle;
+    private TextView tvTvPlayerSubtitle;
+    private SeekBar sbTvProgress;
+    private ImageButton btnTvPlayPause;
+    private ImageButton btnTvNext;
+    private ImageButton btnTvPrev;
+    private ImageView ivTvPlayerBackground;
 
     private final YouTubeMusicService youTubeMusicService = new YouTubeMusicService();
     private final ExecutorService offlinePrefetchExecutor = Executors.newSingleThreadExecutor();
@@ -762,7 +775,8 @@ public class MusicPlayerFragment extends Fragment {
     @Override
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
-
+        
+        llLibraryHeaderRow = view.findViewById(R.id.llLibraryHeaderRow);
         llLibraryInlineSearch = view.findViewById(R.id.llLibraryInlineSearch);
         tvLibraryTitle = view.findViewById(R.id.tvLibraryTitle);
         llMusicState = view.findViewById(R.id.llMusicState);
@@ -786,7 +800,102 @@ public class MusicPlayerFragment extends Fragment {
         sbMiniPlayerProgress = view.findViewById(R.id.sbMiniPlayerProgress);
         btnMiniPlayPause = view.findViewById(R.id.btnMiniPlayPause);
         swipeLibraryRefresh = view.findViewById(R.id.swipeLibraryRefresh);
-        FloatingActionButton fabCreatePlaylist = view.findViewById(R.id.fabCreatePlaylist);
+
+        // TV Player initialization
+        llTvPlayerPane = view.findViewById(R.id.llTvPlayerPane);
+        ivTvPlayerCover = view.findViewById(R.id.ivTvPlayerCover);
+        tvTvPlayerTitle = view.findViewById(R.id.tvTvPlayerTitle);
+        tvTvPlayerSubtitle = view.findViewById(R.id.tvTvPlayerSubtitle);
+        sbTvProgress = view.findViewById(R.id.sbTvProgress);
+        btnTvPlayPause = view.findViewById(R.id.btnTvPlayPause);
+        btnTvNext = view.findViewById(R.id.btnTvNext);
+        btnTvPrev = view.findViewById(R.id.btnTvPrev);
+        
+        isTv = SystemType.INSTANCE.isTv(requireContext());
+        if (isTv) {
+            if (btnTvNext != null) {
+                btnTvNext.setNextFocusRightId(R.id.rvMusicResults);
+            }
+            if (btnTvPrev != null) {
+                btnTvPrev.setNextFocusLeftId(R.id.navigationRail);
+            }
+
+            if (llTvPlayerPane != null) {
+                llTvPlayerPane.setVisibility(View.VISIBLE);
+                llTvPlayerPane.setNextFocusLeftId(R.id.navigationRail);
+                
+                btnTvPlayPause.setOnClickListener(v -> toggleMiniPlayback());
+                btnTvNext.setOnClickListener(v -> {
+                    SongPlayerFragment player = findSongPlayerFragment();
+                    if (player != null) player.externalSkipNext();
+                });
+                btnTvPrev.setOnClickListener(v -> {
+                    SongPlayerFragment player = findSongPlayerFragment();
+                    if (player != null) player.externalSkipPrevious();
+                });
+
+                // Apply TV focus highlights
+                View.OnFocusChangeListener tvFocusHighlight = (v, hasFocus) -> {
+                    if (hasFocus) {
+                        v.setBackgroundResource(R.drawable.bg_tv_item_focused);
+                    } else {
+                        v.setBackgroundResource(0);
+                    }
+                };
+                btnTvPlayPause.setOnFocusChangeListener(tvFocusHighlight);
+                btnTvNext.setOnFocusChangeListener(tvFocusHighlight);
+                btnTvPrev.setOnFocusChangeListener(tvFocusHighlight);
+                if (sbTvProgress != null) sbTvProgress.setOnFocusChangeListener(tvFocusHighlight);
+
+                // TV focus for library header elements
+                if (llLibraryInlineSearch != null) {
+                    llLibraryInlineSearch.setOnFocusChangeListener(tvFocusHighlight);
+                    llLibraryInlineSearch.setNextFocusLeftId(R.id.navigationRail);
+                }
+                if (llMiniPlayer != null) llMiniPlayer.setOnFocusChangeListener(tvFocusHighlight);
+
+                // Mas margen a la izquierda para el buscador (TV)
+                if (llLibraryHeaderRow != null) {
+                    ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) llLibraryHeaderRow.getLayoutParams();
+                    if (lp != null) {
+                        lp.setMarginStart((int) (32 * getResources().getDisplayMetrics().density));
+                        llLibraryHeaderRow.setLayoutParams(lp);
+                    }
+                }
+
+                // Apply correct background based on Amoled mode
+                if (isAmoledModeEnabled()) {
+                    llTvPlayerPane.setBackgroundResource(R.drawable.bg_tv_player_pane_amoled);
+                } else {
+                    llTvPlayerPane.setBackgroundResource(R.drawable.bg_tv_player_pane);
+                }
+
+                ivTvPlayerBackground = view.findViewById(R.id.ivTvPlayerBackground);
+                if (ivTvPlayerBackground != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    ivTvPlayerBackground.setRenderEffect(android.graphics.RenderEffect.createBlurEffect(50f, 50f, android.graphics.Shader.TileMode.CLAMP));
+                }
+
+                // Fix D-pad focus navigation
+                if (rvMusicResults != null) {
+                    rvMusicResults.setNextFocusLeftId(R.id.btnTvPlayPause);
+                    // Cuando presionas abajo en la lista, ve al navigation rail (módulos)
+                    rvMusicResults.setNextFocusDownId(R.id.navigationRail);
+                    // Cuando presionas arriba en la lista, ve al buscador
+                    rvMusicResults.setNextFocusUpId(R.id.llLibraryInlineSearch);
+                }
+                // Desde el buscador/biblioteca, al presionar abajo va a la lista
+                if (llLibraryInlineSearch != null) {
+                    llLibraryInlineSearch.setNextFocusDownId(R.id.rvMusicResults);
+                }
+                // Desde el mini player, al presionar arriba va a la lista
+                if (llMiniPlayer != null) {
+                    llMiniPlayer.setNextFocusUpId(R.id.rvMusicResults);
+                }
+                llTvPlayerPane.setNextFocusRightId(R.id.rvMusicResults);
+                btnTvNext.setNextFocusRightId(R.id.rvMusicResults);
+                if (sbTvProgress != null) sbTvProgress.setNextFocusRightId(R.id.rvMusicResults);
+            }
+        }
         
         if (SystemType.INSTANCE.isTv(requireContext())) {
             View.OnFocusChangeListener tvFocusListener = (v, hasFocus) -> {
@@ -801,9 +910,6 @@ public class MusicPlayerFragment extends Fragment {
             if (llLibraryInlineSearch != null) llLibraryInlineSearch.setOnFocusChangeListener(tvFocusListener);
         }
 
-        if (fabCreatePlaylist != null) {
-            fabCreatePlaylist.setOnClickListener(v -> showCreatePlaylistDialog());
-        }
 
         adapter = new MusicResultsAdapter(this::openTrack, this::onMusicResultMoreClicked);
         musicResultsLayoutManager = new LinearLayoutManager(requireContext());
@@ -944,6 +1050,14 @@ public class MusicPlayerFragment extends Fragment {
             stopMiniProgressTicker();
             return;
         }
+
+        if (llMiniPlayer != null && !isTv) {
+            // Ensure MiniPlayer is visible with a smooth fade-in when returning
+            llMiniPlayer.setAlpha(0f);
+            llMiniPlayer.setVisibility(View.VISIBLE);
+            llMiniPlayer.animate().alpha(1f).setDuration(280).start();
+        }
+
         startObservingOfflineQueue();
         ensureFavoritesPlaylistInLibraryTracks();
         refreshCurrentPlayingPlaylistState();
@@ -1906,7 +2020,6 @@ public class MusicPlayerFragment extends Fragment {
         if (llLibraryInlineSearch != null) llLibraryInlineSearch.setVisibility(View.VISIBLE);
         llLibraryEmptyState.setVisibility(View.GONE);
         updateLibraryInlineClearButton();
-        rvMusicResults.setVisibility(View.VISIBLE);
         llMusicStateVisible(false);
         tracks.clear();
         adapter.submitResults(new ArrayList<>(libraryTracks));
@@ -1916,6 +2029,16 @@ public class MusicPlayerFragment extends Fragment {
             showLibraryEmptyState();
         } else {
             tvMusicState.setText("");
+        }
+
+        // Controlar la visibilidad del RecyclerView a través de animación para evitar parpadeo
+        if (rvMusicResults != null) {
+            rvMusicResults.animate().cancel();
+            if (rvMusicResults.getVisibility() != View.VISIBLE) {
+                rvMusicResults.setAlpha(0f);
+                rvMusicResults.setVisibility(View.VISIBLE);
+                rvMusicResults.animate().alpha(1f).setDuration(180L).start();
+            }
         }
 
         maybeEnqueueNextOfflineAutoPlaylist();
@@ -3767,44 +3890,51 @@ public class MusicPlayerFragment extends Fragment {
         }
 
         String safeUrl = imageUrl.trim();
+        Context context = target.getContext();
+        float density = context.getResources().getDisplayMetrics().density;
+        
+        int targetWidth;
+        int targetHeight;
+
         ViewGroup.LayoutParams params = target.getLayoutParams();
         int rawWidth = resolveArtworkTargetSize(target.getWidth(), params == null ? 0 : params.width);
         int rawHeight = resolveArtworkTargetSize(target.getHeight(), params == null ? 0 : params.height);
+        boolean hasTargetSize = rawWidth > 0 && rawHeight > 0;
 
-        String signature;
-        if (rawWidth > 0 && rawHeight > 0) {
-            int targetWidth;
-            int targetHeight;
-            signature = safeUrl + "|dynamic";
-            Object previousSignature = target.getTag(R.id.tag_artwork_signature);
-            if (previousSignature instanceof String && signature.equals(previousSignature)) {
-                return;
-            }
-            target.setTag(R.id.tag_artwork_signature, signature);
-            Glide.with(target)
-                    .load(safeUrl)
-                    .transform(new YouTubeCropTransformation())
-                    .diskCacheStrategy(DiskCacheStrategy.ALL)
-                    .placeholder(R.drawable.ic_music)
-                    .error(R.drawable.ic_music)
-                    .into(target);
-            return;
+        if (hasTargetSize) {
+            targetWidth = bucketArtworkDimension(rawWidth);
+            targetHeight = bucketArtworkDimension(rawHeight);
+        } else {
+            targetWidth = Math.round(160 * density); 
+            targetHeight = targetWidth;
         }
 
-        signature = safeUrl + "|auto";
+        if (YouTubeImageProcessor.shouldProcess(safeUrl)) {
+            int side = YouTubeImageProcessor.decodeDimensionForSmartCrop(targetWidth);
+            targetWidth = side;
+            targetHeight = side;
+        }
+
+        String signature = safeUrl + "|" + targetWidth + "x" + targetHeight;
         Object previousSignature = target.getTag(R.id.tag_artwork_signature);
         if (previousSignature instanceof String && signature.equals(previousSignature)) {
             return;
         }
         target.setTag(R.id.tag_artwork_signature, signature);
 
-        RequestBuilder<Drawable> request = Glide.with(target)
-                .load(safeUrl)
-                .transform(new YouTubeCropTransformation())
-                .diskCacheStrategy(DiskCacheStrategy.ALL)
-                .placeholder(R.drawable.ic_music)
-                .error(R.drawable.ic_music);
-        request.into(target);
+        boolean offlineOnly = !isNetworkAvailable();
+
+        Glide.with(target)
+            .load(safeUrl)
+            .transform(new YouTubeCropTransformation())
+            .format(com.bumptech.glide.load.DecodeFormat.PREFER_RGB_565)
+            .diskCacheStrategy(DiskCacheStrategy.ALL)
+            .onlyRetrieveFromCache(offlineOnly)
+            .placeholder(R.drawable.ic_music)
+            .error(R.drawable.ic_music)
+            .override(targetWidth, targetHeight)
+            .dontAnimate()
+            .into(target);
     }
 
 
@@ -3932,15 +4062,21 @@ public class MusicPlayerFragment extends Fragment {
         if ("playlist".equals(track.resultType)) {
             return "Playlist";
         }
-        if ("channel".equals(track.resultType)) {
-            return "Artista";
+        if ("album".equals(track.resultType)) {
+            return "Álbum";
         }
-
-        return "Cancion";
+        return "";
     }
 
     private void showSearchTrackOptions(@NonNull YouTubeMusicService.TrackResult track, @NonNull View anchor) {
         if (!isAdded()) return;
+
+        anchor.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+        anchor.animate().cancel();
+        anchor.animate().alpha(0.85f).setDuration(80L)
+            .withEndAction(() -> anchor.animate().alpha(1f).setDuration(120L).start())
+            .start();
+
 
         com.google.android.material.bottomsheet.BottomSheetDialog dialog = new com.google.android.material.bottomsheet.BottomSheetDialog(requireContext());
         View view = LayoutInflater.from(requireContext()).inflate(R.layout.bottom_sheet_track_options, null);
@@ -4273,18 +4409,20 @@ public class MusicPlayerFragment extends Fragment {
     }
 
     private void openPlayerFromMiniBar() {
+        if (llMiniPlayer != null) {
+            llMiniPlayer.animate().alpha(0f).setDuration(200).withEndAction(() -> {
+                llMiniPlayer.setVisibility(View.GONE);
+                llMiniPlayer.setAlpha(1f);
+            }).start();
+        }
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
         if (existingPlayer != null && existingPlayer.isAdded()) {
             existingPlayer.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
             getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
-                    .setCustomAnimations(
-                            R.anim.player_screen_enter,
-                            R.anim.hold
-                    )
-                    
                     .show(existingPlayer)
+                    .runOnCommit(existingPlayer::externalAnimateEnterSlide)
                     .commit();
             invalidateMiniSnapshotCache();
             return;
@@ -4363,14 +4501,8 @@ public class MusicPlayerFragment extends Fragment {
                 getParentFragmentManager()
                         .beginTransaction()
                         .setReorderingAllowed(true)
-                        .setCustomAnimations(
-                                R.anim.player_screen_enter,
-                                R.anim.player_screen_exit,
-                                R.anim.player_screen_enter,
-                                R.anim.player_screen_exit
-                        )
-                        
                         .show(existingPlayer)
+                        .runOnCommit(existingPlayer::externalAnimateEnterSlide)
                         .commit();
             }
 
@@ -4394,20 +4526,15 @@ public class MusicPlayerFragment extends Fragment {
         );
         playerFragment.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
 
+        final SongPlayerFragment newPlayerForAnim = playerFragment;
         androidx.fragment.app.FragmentTransaction transaction = getParentFragmentManager()
                 .beginTransaction()
                 .setReorderingAllowed(true)
-                .setCustomAnimations(
-                        R.anim.player_screen_enter,
-                        R.anim.player_screen_exit,
-                        R.anim.player_screen_enter,
-                        R.anim.player_screen_exit
-                )
                 .add(R.id.playerContainer, playerFragment, "song_player");
 
         if (showPlayer) {
             transaction
-                    
+                    .runOnCommit(newPlayerForAnim::externalAnimateEnterSlide)
                     .commit();
         } else {
             transaction
@@ -4578,12 +4705,8 @@ public class MusicPlayerFragment extends Fragment {
             getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
-                    .setCustomAnimations(
-                            R.anim.player_screen_enter,
-                            R.anim.hold
-                    )
-                    
                     .show(existingPlayer)
+                    .runOnCommit(existingPlayer::externalAnimateEnterSlide)
                     .commit();
         } else {
             SongPlayerFragment playerFragment = SongPlayerFragment.newInstance(
@@ -4597,15 +4720,12 @@ public class MusicPlayerFragment extends Fragment {
             );
             playerFragment.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
 
+            final SongPlayerFragment newPlayerForAnim = playerFragment;
             getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
-                    .setCustomAnimations(
-                            R.anim.player_screen_enter,
-                            R.anim.hold
-                    )
-                    
                     .add(R.id.playerContainer, playerFragment, "song_player")
+                    .runOnCommit(newPlayerForAnim::externalAnimateEnterSlide)
                     .commit();
         }
 
@@ -4724,8 +4844,10 @@ public class MusicPlayerFragment extends Fragment {
             return;
         }
 
-        if (llMiniPlayer.getVisibility() != View.VISIBLE) {
+        if (llMiniPlayer.getVisibility() != View.VISIBLE && !isTv) {
             llMiniPlayer.setVisibility(View.VISIBLE);
+        } else if (isTv && llMiniPlayer.getVisibility() != View.GONE) {
+            llMiniPlayer.setVisibility(View.GONE);
         }
         
         String trackTitle = TextUtils.isEmpty(currentTrack.title) ? "Última reproducción" : currentTrack.title;
@@ -4736,6 +4858,45 @@ public class MusicPlayerFragment extends Fragment {
         String trackArtist = TextUtils.isEmpty(currentTrack.artist) ? "" : currentTrack.artist;
         if (!TextUtils.equals(tvMiniPlayerSubtitle.getText(), trackArtist)) {
             tvMiniPlayerSubtitle.setText(trackArtist);
+        }
+
+        // Update TV player if visible
+        if (isTv && llTvPlayerPane != null) {
+            tvTvPlayerTitle.setText(trackTitle);
+            tvTvPlayerSubtitle.setText(trackArtist);
+            btnTvPlayPause.setImageResource(miniPlaying ? R.drawable.ic_player_pause : R.drawable.ic_player_play);
+            
+            if (sbTvProgress != null) {
+                int clampedCurrent = Math.max(0, Math.min(totalSeconds, currentSeconds));
+                int progress = Math.round((clampedCurrent / (float) Math.max(1, totalSeconds)) * 1000f);
+                sbTvProgress.setProgress(Math.max(0, Math.min(1000, progress)));
+            }
+
+            if (!TextUtils.equals(currentTrack.videoId, lastMiniArtworkTrackId) 
+                || !TextUtils.equals(currentTrack.imageUrl, lastMiniArtworkUrl)) {
+                
+                lastMiniArtworkTrackId = currentTrack.videoId;
+                lastMiniArtworkUrl = currentTrack.imageUrl;
+
+                if (!TextUtils.isEmpty(currentTrack.imageUrl)) {
+                    Glide.with(this)
+                        .load(currentTrack.imageUrl)
+                        .diskCacheStrategy(DiskCacheStrategy.ALL)
+                        .placeholder(R.drawable.ic_music)
+                        .error(R.drawable.ic_music)
+                        .into(ivTvPlayerCover);
+
+                    if (ivTvPlayerBackground != null) {
+                        Glide.with(this)
+                            .load(currentTrack.imageUrl)
+                            .diskCacheStrategy(DiskCacheStrategy.ALL)
+                            .into(ivTvPlayerBackground);
+                    }
+                } else {
+                    ivTvPlayerCover.setImageResource(R.drawable.ic_music);
+                    if (ivTvPlayerBackground != null) ivTvPlayerBackground.setImageDrawable(null);
+                }
+            }
         }
         
         btnMiniPlayPause.setImageResource(miniPlaying
@@ -4809,10 +4970,10 @@ public class MusicPlayerFragment extends Fragment {
     ) {
         if (!isAdded()) return;
 
-        anchor.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK);
+        anchor.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
         anchor.animate().cancel();
-        anchor.animate().scaleX(0.88f).scaleY(0.88f).setDuration(70L)
-            .withEndAction(() -> anchor.animate().scaleX(1f).scaleY(1f).setDuration(120L).start())
+        anchor.animate().alpha(0.85f).setDuration(80L)
+            .withEndAction(() -> anchor.animate().alpha(1f).setDuration(120L).start())
             .start();
 
         if ("playlist".equals(track.resultType)) {
@@ -5040,7 +5201,10 @@ public class MusicPlayerFragment extends Fragment {
         int index = Math.max(0, Math.min(selectedIndex, ids.size() - 1));
 
         if (llMiniPlayer != null) {
-            llMiniPlayer.setVisibility(View.GONE);
+            llMiniPlayer.animate().alpha(0f).setDuration(200).withEndAction(() -> {
+                llMiniPlayer.setVisibility(View.GONE);
+                llMiniPlayer.setAlpha(1f);
+            }).start();
         }
 
         clearPersistedPositionForVideoId(ids.get(index));
@@ -5053,12 +5217,8 @@ public class MusicPlayerFragment extends Fragment {
             getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
-                    .setCustomAnimations(
-                            R.anim.player_screen_enter,
-                            R.anim.hold
-                    )
-                    
                     .show(existingPlayer)
+                    .runOnCommit(existingPlayer::externalAnimateEnterSlide)
                     .commit();
         } else {
             SongPlayerFragment playerFragment = SongPlayerFragment.newInstance(
@@ -5072,15 +5232,12 @@ public class MusicPlayerFragment extends Fragment {
             );
             playerFragment.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
 
+            final SongPlayerFragment newPlayerForAnim = playerFragment;
             getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
-                    .setCustomAnimations(
-                            R.anim.player_screen_enter,
-                            R.anim.hold
-                    )
-                    
                     .add(R.id.playerContainer, playerFragment, "song_player")
+                    .runOnCommit(newPlayerForAnim::externalAnimateEnterSlide)
                     .commit();
         }
 
@@ -5096,8 +5253,24 @@ public class MusicPlayerFragment extends Fragment {
             .setPositiveButton("Eliminar", (dialog, which) -> {
                 boolean deleted = CustomPlaylistsStore.INSTANCE.deletePlaylist(requireContext(), playlistTrack.title);
                 if (deleted) {
-                    // Refresh library
+                    // Also delete from cloud
+                    CloudSyncManager.getInstance(requireContext()).deleteCloudPlaylist(playlistTrack.title);
+                    
+                    // Remove from local list immediately for real-time feel
+                    String contentId = playlistTrack.contentId;
+                    for (int i = 0; i < libraryTracks.size(); i++) {
+                        if (TextUtils.equals(libraryTracks.get(i).contentId, contentId)) {
+                            libraryTracks.remove(i);
+                            break;
+                        }
+                    }
+                    
+                    // Re-render library list
                     renderLibraryResults();
+                    
+                    // Refresh from source to ensure consistency
+                    fetchLibraryPlaylists(true);
+                    
                     android.widget.Toast.makeText(requireContext(), "Playlist eliminada", android.widget.Toast.LENGTH_SHORT).show();
                 } else {
                     android.widget.Toast.makeText(requireContext(), "No se pudo eliminar la playlist", android.widget.Toast.LENGTH_SHORT).show();
@@ -6147,9 +6320,12 @@ public class MusicPlayerFragment extends Fragment {
             selectedIndex = 0;
         }
 
-        // Hide mini-player immediately to prevent UI overlap when player opens, unless starting in mini mode
+        // Fade out mini-player to match player entry animation
         if (llMiniPlayer != null && !startInMiniMode) {
-            llMiniPlayer.setVisibility(View.GONE);
+            llMiniPlayer.animate().alpha(0f).setDuration(200).withEndAction(() -> {
+                llMiniPlayer.setVisibility(View.GONE);
+                llMiniPlayer.setAlpha(1f);
+            }).start();
         }
 
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
@@ -6162,6 +6338,7 @@ public class MusicPlayerFragment extends Fragment {
                         .beginTransaction()
                         .setReorderingAllowed(true)
                         .show(existingPlayer)
+                        .runOnCommit(existingPlayer::externalAnimateEnterSlide)
                         .commit();
             } else {
                 existingPlayer.externalTryEnterMiniMode();
@@ -6183,6 +6360,7 @@ public class MusicPlayerFragment extends Fragment {
             );
             playerFragment.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
 
+            final SongPlayerFragment newPlayerForAnim = playerFragment;
             androidx.fragment.app.FragmentTransaction transaction = getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
@@ -6190,8 +6368,10 @@ public class MusicPlayerFragment extends Fragment {
                     
             if (startInMiniMode) {
                 transaction.hide(playerFragment);
+                transaction.commit();
+            } else {
+                transaction.runOnCommit(newPlayerForAnim::externalAnimateEnterSlide).commit();
             }
-            transaction.commit();
             
             if (startInMiniMode) {
                 updateMiniPlayerUi();
@@ -6422,10 +6602,11 @@ public class MusicPlayerFragment extends Fragment {
         }
     }
 
-    private final class MusicResultsAdapter extends RecyclerView.Adapter<MusicResultsAdapter.TrackViewHolder> {
+    private final class MusicResultsAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
 
         private static final int VIEW_TYPE_LIST = 0;
         private static final int VIEW_TYPE_SEARCH = 2;
+        private static final int VIEW_TYPE_CREATE_PLAYLIST = 3;
 
         private final List<YouTubeMusicService.TrackResult> data = new ArrayList<>();
         private final OnLibraryTrackClick onTrackClick;
@@ -6495,16 +6676,16 @@ public class MusicPlayerFragment extends Fragment {
 
         @Override
         public long getItemId(int position) {
-            if (position < 0 || position >= data.size()) {
-                return RecyclerView.NO_ID;
+            if (searchMode) {
+                if (position < 0 || position >= data.size()) return RecyclerView.NO_ID;
+                YouTubeMusicService.TrackResult item = data.get(position);
+                return (item.resultType + "|" + item.contentId + "|" + item.title).hashCode();
+            } else {
+                if (position == data.size()) return -1;
+                if (position < 0 || position >= data.size()) return RecyclerView.NO_ID;
+                YouTubeMusicService.TrackResult item = data.get(position);
+                return (item.resultType + "|" + item.contentId + "|" + item.title).hashCode();
             }
-            YouTubeMusicService.TrackResult item = data.get(position);
-            String identity = (item.resultType == null ? "" : item.resultType)
-                    + "|"
-                    + (item.contentId == null ? "" : item.contentId)
-                    + "|"
-                    + (item.title == null ? "" : item.title);
-            return identity.hashCode();
         }
 
         void setSearchMode(boolean searchMode) {
@@ -6573,12 +6754,21 @@ public class MusicPlayerFragment extends Fragment {
                 requestPlaylistOfflineStateRefreshAsync(playlistId, playlistOfflineStateGeneration);
             }
 
-            diffResult.dispatchUpdatesTo(this);
+            if (searchMode) {
+                diffResult.dispatchUpdatesTo(this);
+            } else {
+                // Adjust for the fixed row at position 0
+                notifyDataSetChanged(); 
+            }
         }
 
         @NonNull
         @Override
-        public TrackViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+        public RecyclerView.ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+            if (viewType == VIEW_TYPE_CREATE_PLAYLIST) {
+                View view = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_create_playlist_row, parent, false);
+                return new CreatePlaylistViewHolder(view);
+            }
             int layoutRes;
             if (viewType == VIEW_TYPE_SEARCH) {
                 layoutRes = R.layout.item_music_search_result;
@@ -6594,12 +6784,36 @@ public class MusicPlayerFragment extends Fragment {
             if (searchMode) {
                 return VIEW_TYPE_SEARCH;
             }
+            if (position == data.size()) {
+                return VIEW_TYPE_CREATE_PLAYLIST;
+            }
             return VIEW_TYPE_LIST;
         }
 
         @Override
-        public void onBindViewHolder(@NonNull TrackViewHolder holder, int position) {
+        public void onBindViewHolder(@NonNull RecyclerView.ViewHolder genericHolder, int position) {
+            int viewType = getItemViewType(position);
+            if (viewType == VIEW_TYPE_CREATE_PLAYLIST) {
+                genericHolder.itemView.setOnClickListener(v -> showCreatePlaylistDialog());
+                if (isTv) {
+                    genericHolder.itemView.setFocusable(true);
+                    genericHolder.itemView.setOnFocusChangeListener((v, hasFocus) -> {
+                        if (hasFocus) {
+                            v.setBackgroundResource(R.drawable.bg_tv_item_focused);
+                        } else {
+                            v.setBackgroundResource(0);
+                        }
+                    });
+                }
+                return;
+            }
+
+            TrackViewHolder holder = (TrackViewHolder) genericHolder;
             YouTubeMusicService.TrackResult item = data.get(position);
+            if (isTv) {
+                holder.itemView.setFocusable(true);
+                holder.itemView.setNextFocusLeftId(R.id.btnTvNext);
+            }
 
             if (searchMode) {
                 bindSearchRow(holder, item, position);
@@ -6652,7 +6866,7 @@ public class MusicPlayerFragment extends Fragment {
                 loadArtworkInto(holder.ivTrackThumb, item.thumbnailUrl);
             }
 
-            holder.vTrackDivider.setVisibility(position == data.size() - 1 ? View.GONE : View.VISIBLE);
+            holder.vTrackDivider.setVisibility(position == getItemCount() - 1 ? View.GONE : View.VISIBLE);
 
             boolean isPlaylistItem = "playlist".equals(item.resultType);
             holder.ivTrackMore.setVisibility(isPlaylistItem ? View.VISIBLE : View.GONE);
@@ -6722,7 +6936,7 @@ public class MusicPlayerFragment extends Fragment {
 
                 holder.ivTrackMore.setOnClickListener(v -> onTrackMoreClick.onTrackMoreClick(item, holder.ivTrackMore));
                 holder.itemView.setOnLongClickListener(v -> {
-                    onTrackMoreClick.onTrackMoreClick(item, holder.ivTrackMore);
+                    onTrackMoreClick.onTrackMoreClick(item, holder.itemView);
                     return true;
                 });
             } else {
@@ -6773,18 +6987,16 @@ public class MusicPlayerFragment extends Fragment {
             holder.tvTrackTitle.setText(title);
 
             String typeLabel = searchTypeLabel(item);
-            String subtitle = TextUtils.isEmpty(item.subtitle)
-                    ? typeLabel
-                    : typeLabel + " • " + item.subtitle;
+            String subtitle = TextUtils.isEmpty(item.subtitle) ? typeLabel : item.subtitle;
             holder.tvTrackSubtitle.setText(subtitle);
 
             loadArtworkInto(holder.ivTrackThumb, item.thumbnailUrl);
 
-            holder.vTrackDivider.setVisibility(position == data.size() - 1 ? View.GONE : View.VISIBLE);
+            holder.vTrackDivider.setVisibility(position == getItemCount() - 1 ? View.GONE : View.VISIBLE);
             holder.ivTrackMore.setVisibility(View.VISIBLE);
             holder.ivTrackMore.setOnClickListener(v -> showSearchTrackOptions(item, holder.ivTrackMore));
             holder.itemView.setOnLongClickListener(v -> {
-                showSearchTrackOptions(item, holder.ivTrackMore);
+                showSearchTrackOptions(item, holder.itemView);
                 return true;
             });
             holder.itemView.setOnClickListener(v -> onTrackClick.onTrackClick(item));
@@ -6807,7 +7019,10 @@ public class MusicPlayerFragment extends Fragment {
 
         @Override
         public int getItemCount() {
-            return data.size();
+            if (searchMode) {
+                return data.size();
+            }
+            return data.size() + 1;
         }
 
         private void requestPlaylistOfflineStateRefreshAsync(
@@ -6853,6 +7068,12 @@ public class MusicPlayerFragment extends Fragment {
                 }
             }
             return -1;
+        }
+
+        private final class CreatePlaylistViewHolder extends RecyclerView.ViewHolder {
+            CreatePlaylistViewHolder(@NonNull View itemView) {
+                super(itemView);
+            }
         }
 
         final class TrackViewHolder extends RecyclerView.ViewHolder {
@@ -6903,6 +7124,14 @@ public class MusicPlayerFragment extends Fragment {
             this.duration = duration;
             this.imageUrl = imageUrl;
         }
+    }
+    private boolean isAmoledModeEnabled() {
+        if (!isAdded()) {
+            return false;
+        }
+        SharedPreferences settingsPrefs = requireContext()
+                .getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Activity.MODE_PRIVATE);
+        return settingsPrefs.getBoolean(CloudSyncManager.KEY_AMOLED_MODE_ENABLED, false);
     }
 }
 
