@@ -179,17 +179,36 @@
                 android:layout_weight="1"
                 android:orientation="vertical">
 
-                <TextView
-                    android:id="@+id/tvFeaturedTitle"
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:ellipsize="end"
-                    android:fontFamily="@font/manrope_variable"
-                    android:maxLines="2"
-                    android:textAllCaps="true"
-                    android:textColor="@color/text_primary"
-                    android:textSize="20sp"
-                    android:textStyle="bold" />
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/tvFeaturedTitle"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:ellipsize="end"
+                        android:fontFamily="@font/manrope_variable"
+                        android:maxLines="2"
+                        android:textAllCaps="true"
+                        android:textColor="@color/text_primary"
+                        android:textSize="20sp"
+                        android:textStyle="bold" />
+
+                    <ImageView
+                        android:id="@+id/ivFeaturedOfflineIndicator"
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:layout_marginStart="8dp"
+                        android:background="@drawable/bg_offline_state_outline_muted"
+                        android:padding="5dp"
+                        android:src="@drawable/ic_check_small"
+                        android:visibility="gone"
+                        app:tint="@color/text_secondary" />
+                </LinearLayout>
 
                 <TextView
                     android:id="@+id/tvFeaturedSubtitle"
@@ -288,7 +307,7 @@
         android:visibility="gone"
         android:clickable="true"
         android:focusable="true"
-        app:layout_constraintBottom_toTopOf="@id/bottomNavigation"
+        app:layout_constraintBottom_toTopOf="@id/llMiniPlayer"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/llSearchBar">
@@ -407,7 +426,7 @@
             android:progressTint="@color/stitch_blue"
             android:splitTrack="false"
             android:thumb="@null"
-            android:thumbTint="@android:color/transparent" />
+            android:thumTint="@android:color/transparent" />
     </LinearLayout>
 
     <!-- Full Player Container (overlays everything when visible) -->
@@ -420,6 +439,6 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
+        app:layout_constraintTop_toBottomOf="@id/topAppBar" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

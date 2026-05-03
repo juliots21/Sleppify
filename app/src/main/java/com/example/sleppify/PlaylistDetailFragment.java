@@ -567,10 +567,11 @@ public class PlaylistDetailFragment extends Fragment {
         }
 
         if (llMiniPlayer != null && !isTv) {
-            // Ensure MiniPlayer is visible with a smooth fade-in when returning
-            llMiniPlayer.setAlpha(0f);
+            float distance = llMiniPlayer.getHeight() > 0 ? llMiniPlayer.getHeight() : 300f;
+            llMiniPlayer.setTranslationY(distance);
             llMiniPlayer.setVisibility(View.VISIBLE);
-            llMiniPlayer.animate().alpha(1f).setDuration(280).start();
+            llMiniPlayer.animate().cancel();
+            llMiniPlayer.animate().translationY(0f).setDuration(280).start();
         }
 
         boolean updatedAmoledMode = isAmoledModeEnabled();
@@ -738,9 +739,17 @@ public class PlaylistDetailFragment extends Fragment {
         if (llMiniPlayer != null) {
             llMiniPlayer.animate().cancel();
             if (animated) {
-                llMiniPlayer.animate().alpha(1f).setDuration(PLAYLIST_INITIAL_CONTENT_FADE_MS).start();
+                float distance = llMiniPlayer.getHeight() > 0 ? llMiniPlayer.getHeight() : 300f;
+                if (llMiniPlayer.getTranslationY() == 0f && llMiniPlayer.getVisibility() != View.VISIBLE) {
+                    llMiniPlayer.setTranslationY(distance);
+                } else if (llMiniPlayer.getVisibility() == View.VISIBLE) {
+                     distance = llMiniPlayer.getTranslationY();
+                } else {
+                     llMiniPlayer.setTranslationY(distance);
+                }
+                llMiniPlayer.animate().translationY(0f).setDuration(PLAYLIST_INITIAL_CONTENT_FADE_MS).start();
             } else {
-                llMiniPlayer.setAlpha(1f);
+                llMiniPlayer.setTranslationY(0f);
             }
         }
 
@@ -1415,13 +1424,75 @@ public class PlaylistDetailFragment extends Fragment {
         int requestedLimit = resolveTrackFetchLimit(forceRefresh, loadMore);
 
         if (favoritesContext || customContext) {
+            // Clean HTML entities from stored titles/artists
+            List<PlaylistTrack> cleaned = new ArrayList<>(cachedTracks.size());
+            for (PlaylistTrack track : cachedTracks) {
+                String cleanTitle = decodeHtmlEntities(track.title);
+                String cleanArtist = decodeHtmlEntities(track.artist);
+                cleaned.add(new PlaylistTrack(track.videoId, cleanTitle, cleanArtist, track.duration, track.imageUrl));
+            }
+            cachedTracks = cleaned;
+
             renderTracks(cachedTracks, playlistId, true);
             if (cachedTracks.isEmpty() && !isOfflineStatusPinned()) {
                 notifyHeaderChanged();
             }
-            if (forceRefresh) {
+
+            // On pull-to-refresh, try to enrich tracks missing durations
+            if (forceRefresh && !cachedTracks.isEmpty() && !effectiveAccessToken.isEmpty()) {
+                List<String> missingDurationIds = new ArrayList<>();
+                for (PlaylistTrack track : cachedTracks) {
+                    if (TextUtils.isEmpty(track.duration) || "--:--".equals(track.duration)) {
+                        if (!TextUtils.isEmpty(track.videoId)) {
+                            missingDurationIds.add(track.videoId);
+                        }
+                    }
+                }
+
+                final List<PlaylistTrack> tracksToEnrich = new ArrayList<>(cachedTracks);
+                final String enrichPlaylistId = playlistId;
+                final boolean isFavContext = favoritesContext;
+
+                if (!missingDurationIds.isEmpty()) {
+                    youTubeMusicService.fetchVideoDurations(effectiveAccessToken, missingDurationIds, new YouTubeMusicService.VideoDurationCallback() {
+                        @Override
+                        public void onSuccess(@NonNull Map<String, String> durations) {
+                            if (!isAdded()) return;
+                            if (!durations.isEmpty()) {
+                                List<PlaylistTrack> enriched = new ArrayList<>(tracksToEnrich.size());
+                                boolean changed = false;
+                                for (PlaylistTrack track : tracksToEnrich) {
+                                    String newDuration = durations.get(track.videoId);
+                                    if (newDuration != null && !newDuration.isEmpty()) {
+                                        enriched.add(new PlaylistTrack(track.videoId, track.title, track.artist, newDuration, track.imageUrl));
+                                        changed = true;
+                                    } else {
+                                        enriched.add(track);
+                                    }
+                                }
+                                if (changed) {
+                                    persistEnrichedLocalTracks(enrichPlaylistId, enriched, isFavContext);
+                                    renderTracks(enriched, enrichPlaylistId, false);
+                                }
+                            }
+                            setPlaylistPullRefreshState(false);
+                        }
+
+                        @Override
+                        public void onError(@NonNull String error) {
+                            if (!isAdded()) return;
+                            setPlaylistPullRefreshState(false);
+                        }
+                    });
+                } else {
+                    // No missing durations, but still persist cleaned titles
+                    persistEnrichedLocalTracks(enrichPlaylistId, tracksToEnrich, isFavContext);
+                    setPlaylistPullRefreshState(false);
+                }
+            } else if (forceRefresh) {
                 setPlaylistPullRefreshState(false);
             }
+
             playlistTracksLoadMoreInFlight = false;
             playlistTracksCanLoadMore = false;
             return;
@@ -2383,6 +2454,46 @@ public class PlaylistDetailFragment extends Fragment {
         }
 
         return new ArrayList<>(source);
+    }
+
+    @NonNull
+    private static String decodeHtmlEntities(@Nullable String text) {
+        if (TextUtils.isEmpty(text)) return "";
+        if (!text.contains("&")) return text;
+        return androidx.core.text.HtmlCompat.fromHtml(text, androidx.core.text.HtmlCompat.FROM_HTML_MODE_LEGACY).toString().trim();
+    }
+
+    private void persistEnrichedLocalTracks(
+            @NonNull String playlistId,
+            @NonNull List<PlaylistTrack> tracks,
+            boolean isFavorites
+    ) {
+        if (!isAdded() || tracks.isEmpty()) return;
+        try {
+            if (isFavorites) {
+                for (PlaylistTrack track : tracks) {
+                    FavoritesPlaylistStore.upsertFavorite(
+                            requireContext(),
+                            track.videoId,
+                            track.title,
+                            track.artist,
+                            track.duration,
+                            track.imageUrl
+                    );
+                }
+            } else if (isCustomPlaylistContext(playlistId)) {
+                String name = playlistId.substring(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX.length());
+                List<FavoritesPlaylistStore.FavoriteTrack> updated = new ArrayList<>(tracks.size());
+                for (PlaylistTrack track : tracks) {
+                    updated.add(new FavoritesPlaylistStore.FavoriteTrack(
+                            track.videoId, track.title, track.artist, track.duration, track.imageUrl
+                    ));
+                }
+                CustomPlaylistsStore.INSTANCE.savePlaylist(requireContext(), name, updated);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error persisting enriched tracks", e);
+        }
     }
 
     @NonNull
@@ -3454,12 +3565,14 @@ public class PlaylistDetailFragment extends Fragment {
     }
 
     private void openPlayerFromMiniBar() {
-        // Fade out mini-player to match player entry animation
         if (llMiniPlayer != null) {
-            llMiniPlayer.animate().alpha(0f).setDuration(200).withEndAction(() -> {
-                llMiniPlayer.setVisibility(View.GONE);
-                llMiniPlayer.setAlpha(1f);
-            }).start();
+            llMiniPlayer.animate().cancel();
+            float distance = llMiniPlayer.getHeight() > 0 ? llMiniPlayer.getHeight() : 300f;
+            llMiniPlayer.animate().translationY(distance).setDuration(250)
+                .setInterpolator(new android.view.animation.PathInterpolator(0.4f, 0f, 0.2f, 1f))
+                .withEndAction(() -> {
+                    llMiniPlayer.setVisibility(View.GONE);
+                }).start();
         }
 
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
@@ -3492,12 +3605,14 @@ public class PlaylistDetailFragment extends Fragment {
             return;
         }
 
-        // Fade out mini-player to match player entry animation
         if (llMiniPlayer != null) {
-            llMiniPlayer.animate().alpha(0f).setDuration(200).withEndAction(() -> {
-                llMiniPlayer.setVisibility(View.GONE);
-                llMiniPlayer.setAlpha(1f);
-            }).start();
+            llMiniPlayer.animate().cancel();
+            float distance = llMiniPlayer.getHeight() > 0 ? llMiniPlayer.getHeight() : 300f;
+            llMiniPlayer.animate().translationY(distance).setDuration(250)
+                .setInterpolator(new android.view.animation.PathInterpolator(0.4f, 0f, 0.2f, 1f))
+                .withEndAction(() -> {
+                    llMiniPlayer.setVisibility(View.GONE);
+                }).start();
         }
 
         ensurePlaybackQueue();
@@ -4062,7 +4177,6 @@ public class PlaylistDetailFragment extends Fragment {
         if (currentTrackIndex >= 0 && currentTrackIndex < currentTracks.size()) {
             currentListTrack = currentTracks.get(currentTrackIndex);
         }
-
         if (currentListTrack == null && snapshotTrack == null && !playerAttached) {
             llMiniPlayer.setVisibility(View.GONE);
             miniPlaying = false;
@@ -4070,7 +4184,16 @@ public class PlaylistDetailFragment extends Fragment {
         }
 
         if (llMiniPlayer.getVisibility() != View.VISIBLE && !isTv) {
+            float distance = llMiniPlayer.getHeight() > 0 ? llMiniPlayer.getHeight() : 300f;
+            llMiniPlayer.setTranslationY(distance);
             llMiniPlayer.setVisibility(View.VISIBLE);
+            llMiniPlayer.animate().cancel();
+            llMiniPlayer.animate()
+                    .translationY(0f)
+                    .setDuration(250)
+                    .setInterpolator(new android.view.animation.PathInterpolator(0.4f, 0f, 0.2f, 1f))
+                    .withEndAction(null)
+                    .start();
         } else if (isTv && llMiniPlayer.getVisibility() != View.GONE) {
             llMiniPlayer.setVisibility(View.GONE);
         }

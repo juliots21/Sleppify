@@ -944,10 +944,11 @@ public class MusicPlayerFragment extends Fragment {
             return;
         }
         if (llMiniPlayer != null && !isTv) {
-            // Ensure MiniPlayer is visible with a smooth fade-in when returning
-            llMiniPlayer.setAlpha(0f);
+            float distance = llMiniPlayer.getHeight() > 0 ? llMiniPlayer.getHeight() : 300f;
+            llMiniPlayer.setTranslationY(distance);
             llMiniPlayer.setVisibility(View.VISIBLE);
-            llMiniPlayer.animate().alpha(1f).setDuration(280).start();
+            llMiniPlayer.animate().cancel();
+            llMiniPlayer.animate().translationY(0f).setDuration(280).start();
         }
         startObservingOfflineQueue();
         ensureFavoritesPlaylistInLibraryTracks();
@@ -3844,10 +3845,13 @@ public class MusicPlayerFragment extends Fragment {
     }
     private void openPlayerFromMiniBar() {
         if (llMiniPlayer != null) {
-            llMiniPlayer.animate().alpha(0f).setDuration(200).withEndAction(() -> {
-                llMiniPlayer.setVisibility(View.GONE);
-                llMiniPlayer.setAlpha(1f);
-            }).start();
+            llMiniPlayer.animate().cancel();
+            float distance = llMiniPlayer.getHeight() > 0 ? llMiniPlayer.getHeight() : 300f;
+            llMiniPlayer.animate().translationY(distance).setDuration(250)
+                .setInterpolator(new android.view.animation.PathInterpolator(0.4f, 0f, 0.2f, 1f))
+                .withEndAction(() -> {
+                    llMiniPlayer.setVisibility(View.GONE);
+                }).start();
         }
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
         if (existingPlayer != null && existingPlayer.isAdded()) {
@@ -3887,6 +3891,15 @@ public class MusicPlayerFragment extends Fragment {
             return;
         }
         if (!openLastPlaylistDetailFromPrefs()) {
+        }
+    }
+
+    private void pauseMiniPlayback() {
+        SongPlayerFragment existingPlayer = findSongPlayerFragment();
+        if (existingPlayer != null && existingPlayer.isAdded()) {
+            existingPlayer.externalPause();
+            invalidateMiniSnapshotCache();
+            updateMiniPlayerUi();
         }
     }
     private boolean launchPlayerFromLastTrackPrefs(boolean startPlaying, boolean showPlayer) {
@@ -4218,7 +4231,16 @@ public class MusicPlayerFragment extends Fragment {
             return;
         }
         if (llMiniPlayer.getVisibility() != View.VISIBLE && !isTv) {
+            float distance = llMiniPlayer.getHeight() > 0 ? llMiniPlayer.getHeight() : 300f;
+            llMiniPlayer.setTranslationY(distance);
             llMiniPlayer.setVisibility(View.VISIBLE);
+            llMiniPlayer.animate().cancel();
+            llMiniPlayer.animate()
+                    .translationY(0f)
+                    .setDuration(250)
+                    .setInterpolator(new android.view.animation.PathInterpolator(0.4f, 0f, 0.2f, 1f))
+                    .withEndAction(null)
+                    .start();
         } else if (isTv && llMiniPlayer.getVisibility() != View.GONE) {
             llMiniPlayer.setVisibility(View.GONE);
         }
@@ -4525,10 +4547,13 @@ public class MusicPlayerFragment extends Fragment {
         if (!isAdded() || ids.isEmpty()) return;
         int index = Math.max(0, Math.min(selectedIndex, ids.size() - 1));
         if (llMiniPlayer != null) {
-            llMiniPlayer.animate().alpha(0f).setDuration(200).withEndAction(() -> {
-                llMiniPlayer.setVisibility(View.GONE);
-                llMiniPlayer.setAlpha(1f);
-            }).start();
+            llMiniPlayer.animate().cancel();
+            float distance = llMiniPlayer.getHeight() > 0 ? llMiniPlayer.getHeight() : 300f;
+            llMiniPlayer.animate().translationY(distance).setDuration(250)
+                .setInterpolator(new android.view.animation.PathInterpolator(0.4f, 0f, 0.2f, 1f))
+                .withEndAction(() -> {
+                    llMiniPlayer.setVisibility(View.GONE);
+                }).start();
         }
         clearPersistedPositionForVideoId(ids.get(index));
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
@@ -5464,10 +5489,13 @@ public class MusicPlayerFragment extends Fragment {
         }
         // Fade out mini-player to match player entry animation
         if (llMiniPlayer != null && !startInMiniMode) {
-            llMiniPlayer.animate().alpha(0f).setDuration(200).withEndAction(() -> {
-                llMiniPlayer.setVisibility(View.GONE);
-                llMiniPlayer.setAlpha(1f);
-            }).start();
+            llMiniPlayer.animate().cancel();
+            float distance = llMiniPlayer.getHeight() > 0 ? llMiniPlayer.getHeight() : 300f;
+            llMiniPlayer.animate().translationY(distance).setDuration(250)
+                .setInterpolator(new android.view.animation.PathInterpolator(0.4f, 0f, 0.2f, 1f))
+                .withEndAction(() -> {
+                    llMiniPlayer.setVisibility(View.GONE);
+                }).start();
         }
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
         if (existingPlayer != null && existingPlayer.isAdded()) {

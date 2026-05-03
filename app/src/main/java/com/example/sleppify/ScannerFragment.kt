@@ -2,10 +2,13 @@ package com.example.sleppify
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.animation.ValueAnimator
 import android.content.*
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -14,6 +17,8 @@ import android.os.Bundle
 import android.text.TextUtils
 import android.util.Patterns
 import android.view.*
+import android.view.animation.OvershootInterpolator
+import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -69,6 +74,7 @@ class ScannerFragment : Fragment() {
     private var ivScanResultOpen: ImageView? = null
     private var btnScanResultViewOptions: TextView? = null
     private var btnCancelScan: View? = null
+    private var scanFocusOverlay: ScanFocusOverlayView? = null
     private var pendingScanForMenu: DetectedScanItem? = null
     private var pendingScanIsUrl: Boolean = false
     private var scanOptionsBottomSheet: BottomSheetDialog? = null
@@ -108,6 +114,7 @@ class ScannerFragment : Fragment() {
         
         previewScanner = view.findViewById(R.id.previewScanner)
         freezeOverlay = view.findViewById(R.id.ivFreezeOverlay)
+        scanFocusOverlay = view.findViewById(R.id.scanFocusOverlay)
         actionImportImages = view.findViewById(R.id.actionImportImages)
         scannerRoot = view.findViewById(R.id.scannerRoot)
         btnFlashlight = view.findViewById(R.id.btnFlashlight)
@@ -223,6 +230,7 @@ class ScannerFragment : Fragment() {
         scannerRoot = null
         btnFlashlight = null
         zoomGestureDetector = null
+        scanFocusOverlay = null
         scanOptionsBottomSheet?.dismiss()
         scanOptionsBottomSheet = null
         super.onDestroyView()
@@ -414,23 +422,146 @@ class ScannerFragment : Fragment() {
         
         val inputImage = InputImage.fromMediaImage(mediaImage, proxy.imageInfo.rotationDegrees)
         barcodeScanner.process(inputImage)
-            .addOnSuccessListener { barcodes -> onBarcodesDetected(barcodes) }
+            .addOnSuccessListener { barcodes ->
+                onBarcodesDetected(
+                    barcodes = barcodes,
+                    imageWidth = proxy.width,
+                    imageHeight = proxy.height,
+                    rotationDegrees = proxy.imageInfo.rotationDegrees
+                )
+            }
             .addOnCompleteListener { proxy.close() }
     }
 
-    private fun onBarcodesDetected(barcodes: List<Barcode>) {
+    private fun onBarcodesDetected(barcodes: List<Barcode>, imageWidth: Int, imageHeight: Int, rotationDegrees: Int) {
         val items = extractDetectedItems(barcodes)
         if (items.isEmpty() || !detectionLock.compareAndSet(false, true)) return
 
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Main) {
             if (!isAdded || previewScanner == null) { detectionLock.set(false); return@launch }
             showFreezeFrame()
-            showScanResultBottomCard(items)
 
-            // Auto-reset after 1 second to resume scanning
-            delay(1000)
-            resumeScanning()
+            val firstBox = barcodes.firstOrNull { it.boundingBox != null }?.boundingBox
+            val targetRect = firstBox?.let { mapImageRectToPreviewView(it, imageWidth, imageHeight, rotationDegrees) }
+            if (targetRect != null) {
+                animateFocusToRect(targetRect) {
+                    showScanResultBottomCardAnimated(items)
+
+                    viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Main) {
+                        delay(1000)
+                        resumeScanning()
+                    }
+                }
+            } else {
+                showScanResultBottomCardAnimated(items)
+
+                // Auto-reset after 1 second to resume scanning
+                delay(1000)
+                resumeScanning()
+            }
         }
+    }
+
+    private fun mapImageRectToPreviewView(imageRect: Rect, imageWidth: Int, imageHeight: Int, rotationDegrees: Int): RectF? {
+        val pv = previewScanner ?: return null
+        if (pv.width <= 0 || pv.height <= 0) return null
+
+        val src = RectF(imageRect)
+
+        val rot = ((rotationDegrees % 360) + 360) % 360
+        val rotatedImageWidth = if (rot == 90 || rot == 270) imageHeight else imageWidth
+        val rotatedImageHeight = if (rot == 90 || rot == 270) imageWidth else imageHeight
+
+        val vw = pv.width.toFloat()
+        val vh = pv.height.toFloat()
+        val iw = rotatedImageWidth.toFloat().coerceAtLeast(1f)
+        val ih = rotatedImageHeight.toFloat().coerceAtLeast(1f)
+
+        // PreviewView uses scaleType="fillCenter" in XML, which behaves like center-crop.
+        // So we map image buffer coords -> view coords using center-crop transform.
+        val scale = kotlin.math.max(vw / iw, vh / ih)
+        val dx = (vw - iw * scale) / 2f
+        val dy = (vh - ih * scale) / 2f
+
+        val mapped = RectF(
+            src.left * scale + dx,
+            src.top * scale + dy,
+            src.right * scale + dx,
+            src.bottom * scale + dy
+        )
+
+        // Clamp to view bounds to avoid negative / off-screen values.
+        val clamped = RectF(
+            mapped.left.coerceIn(0f, vw),
+            mapped.top.coerceIn(0f, vh),
+            mapped.right.coerceIn(0f, vw),
+            mapped.bottom.coerceIn(0f, vh)
+        )
+
+        return clamped.takeIf { it.width() > 6f && it.height() > 6f }
+    }
+
+    private fun animateFocusToRect(target: RectF, onDone: () -> Unit) {
+        val overlay = scanFocusOverlay ?: run { onDone(); return }
+        val pv = previewScanner ?: run { onDone(); return }
+        if (pv.width <= 0 || pv.height <= 0) {
+            pv.post { animateFocusToRect(target, onDone) }
+            return
+        }
+
+        val pad = dpToPx(10).toFloat()
+        val clamped = RectF(
+            (target.left - pad).coerceAtLeast(0f),
+            (target.top - pad).coerceAtLeast(0f),
+            (target.right + pad).coerceAtMost(pv.width.toFloat()),
+            (target.bottom + pad).coerceAtMost(pv.height.toFloat())
+        )
+
+        val startSize = dpToPx(220).toFloat()
+        val start = RectF(
+            pv.width / 2f - startSize / 2f,
+            pv.height / 2f - startSize / 2f,
+            pv.width / 2f + startSize / 2f,
+            pv.height / 2f + startSize / 2f
+        )
+
+        overlay.visibility = View.VISIBLE
+        overlay.alpha = 0f
+        overlay.setRect(start)
+        overlay.setDimAlpha(0f)
+
+        overlay.animate().cancel()
+        overlay.animate()
+            .alpha(1f)
+            .setDuration(110)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
+
+        val anim = ValueAnimator.ofFloat(0f, 1f)
+        anim.duration = 290
+        val os = OvershootInterpolator(0.85f)
+        anim.addUpdateListener { va ->
+            val t = va.animatedValue as Float
+            val tt = os.getInterpolation(t.coerceIn(0f, 1f))
+            overlay.setRect(lerpRect(start, clamped, tt))
+            overlay.setDimAlpha(t)
+        }
+        anim.addListener(object : android.animation.AnimatorListenerAdapter() {
+            override fun onAnimationEnd(animation: android.animation.Animator) {
+                onDone()
+            }
+        })
+        anim.start()
+    }
+
+    private fun lerpRect(a: RectF, b: RectF, t: Float): RectF {
+        val tt = t.coerceIn(0f, 1f)
+        return RectF(
+            a.left + (b.left - a.left) * tt,
+            a.top + (b.top - a.top) * tt,
+            a.right + (b.right - a.right) * tt,
+            a.bottom + (b.bottom - a.bottom) * tt
+        )
     }
 
     private fun showFreezeFrame() {
@@ -477,10 +608,28 @@ class ScannerFragment : Fragment() {
         cardScanResult?.visibility = View.VISIBLE
     }
 
+    private fun showScanResultBottomCardAnimated(items: List<DetectedScanItem>) {
+        showScanResultBottomCard(items)
+        val card = cardScanResult ?: return
+
+        card.animate().cancel()
+        val dy = dpToPx(22).toFloat()
+        card.alpha = 0f
+        card.translationY = -dy
+        card.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(240)
+            .setInterpolator(OvershootInterpolator(0.75f))
+            .start()
+    }
+
     private fun hideScanResultCard() {
         scanOptionsBottomSheet?.dismiss()
         scanOptionsBottomSheet = null
         cardScanResult?.visibility = View.GONE
+        cardScanResult?.alpha = 1f
+        cardScanResult?.translationY = 0f
         pendingScanForMenu = null
         pendingScanIsUrl = false
     }
@@ -596,6 +745,9 @@ class ScannerFragment : Fragment() {
         detectionLock.set(false)
         freezeOverlay?.visibility = View.GONE
         freezeOverlay?.setImageBitmap(null)
+        scanFocusOverlay?.visibility = View.GONE
+        scanFocusOverlay?.alpha = 1f
+        scanFocusOverlay?.clearRect()
         hideScanResultCard()
     }
 
@@ -604,6 +756,9 @@ class ScannerFragment : Fragment() {
         detectionLock.set(false)
         freezeOverlay?.visibility = View.GONE
         freezeOverlay?.setImageBitmap(null)
+        scanFocusOverlay?.visibility = View.GONE
+        scanFocusOverlay?.alpha = 1f
+        scanFocusOverlay?.clearRect()
         // Note: Does NOT hide card or dismiss bottomsheet - they remain visible
     }
 

@@ -55,7 +55,6 @@ import java.util.ArrayList
 class MainActivity : AppCompatActivity() {
 
     companion object {
-        private const val TAG_MODULE_SCHEDULE = "module_schedule"
         private const val TAG_MODULE_MUSIC = "module_music"
         private const val TAG_MODULE_SCANNER = "module_scanner"
         private const val TAG_MODULE_EQUALIZER = "module_equalizer"
@@ -83,6 +82,7 @@ class MainActivity : AppCompatActivity() {
         const val ACTION_ADD_TO_QUEUE = "com.example.sleppify.ACTION_ADD_TO_QUEUE"
         const val ACTION_OPEN_CURRENT_PLAYER = "com.example.sleppify.ACTION_OPEN_CURRENT_PLAYER"
         const val ACTION_TOGGLE_CURRENT_PLAYBACK = "com.example.sleppify.ACTION_TOGGLE_CURRENT_PLAYBACK"
+        const val ACTION_PAUSE_CURRENT_PLAYBACK = "com.example.sleppify.ACTION_PAUSE_CURRENT_PLAYBACK"
         const val EXTRA_OPENED_FROM_SEARCH_ACTIVITY = "com.example.sleppify.EXTRA_OPENED_FROM_SEARCH_ACTIVITY"
         private const val REQUEST_CODE_RECORD_AUDIO = 4107
         private const val AMOLED_APPLY_DEBOUNCE_MS = 1500L
@@ -93,7 +93,9 @@ class MainActivity : AppCompatActivity() {
         @JvmStatic
         fun dispatchSearchPlayback(intent: Intent): Boolean {
             val activity = activeInstance?.get() ?: return false
-            if (!activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            // Permite procesar el intent incluso si la actividad está en background (parada),
+            // siempre que no haya sido destruida. Esto es vital para SearchActivity.
+            if (activity.isDestroyed || activity.isFinishing) {
                 return false
             }
             activity.runOnUiThread {
@@ -127,7 +129,6 @@ class MainActivity : AppCompatActivity() {
 
     private val cloudSyncManager: CloudSyncManager by lazy { CloudSyncManager.getInstance(this) }
     
-    private var scheduleFragment: Fragment? = null
     private var musicFragment: Fragment? = null
     private var scannerFragment: Fragment? = null
     private var equalizerFragment: Fragment? = null
@@ -149,7 +150,6 @@ class MainActivity : AppCompatActivity() {
     private var mediaProjectionManager: MediaProjectionManager? = null
     private var mediaProjectionPermissionLauncher: ActivityResultLauncher<Intent>? = null
     private var pendingAudioProcessingAuthorization = false
-    private var hasAgendaScheduleSnapshot = false
     private var headerBrandTypeface: Typeface? = null
     private var headerSettingsTypeface: Typeface? = null
     private var audioManager: AudioManager? = null
@@ -304,27 +304,8 @@ class MainActivity : AppCompatActivity() {
         val screenWidthDp = resources.configuration.screenWidthDp
         val isWide = screenWidthDp >= 600
         val isTvMode = localPrefs.getBoolean("tv_mode_enabled", false)
-        
-        val agendaItemBottom = bottomNav.menu.findItem(R.id.nav_schedule)
-        val agendaItemRail = navRail.menu.findItem(R.id.nav_schedule)
         val scannerItemBottom = bottomNav.menu.findItem(R.id.nav_scanner)
         val scannerItemRail = navRail.menu.findItem(R.id.nav_scanner)
-        
-        // Hide Agenda if wide screen or in TV mode
-        if (isWide || isTvMode) {
-            agendaItemBottom?.isVisible = false
-            agendaItemRail?.isVisible = false
-            
-            if (currentMainNavItemId == R.id.nav_schedule) {
-                currentMainNavItemId = R.id.nav_music
-                bottomNav.selectedItemId = R.id.nav_music
-                navRail.selectedItemId = R.id.nav_music
-                switchToMainModule(R.id.nav_music)
-            }
-        } else {
-            agendaItemBottom?.isVisible = true
-            agendaItemRail?.isVisible = true
-        }
 
         // Hide Scanner if in TV mode (specifically requested)
         if (isTvMode) {
@@ -394,7 +375,8 @@ class MainActivity : AppCompatActivity() {
         setIntent(intent)
         if (intent.action == ACTION_PLAY_FROM_SEARCH || intent.action == ACTION_PLAY_NEXT || intent.action == ACTION_ADD_TO_QUEUE) {
             handlePlayFromSearchIntent(intent)
-        } else if (intent.action == ACTION_OPEN_CURRENT_PLAYER || intent.action == ACTION_TOGGLE_CURRENT_PLAYBACK) {
+        } else if (intent.action == ACTION_OPEN_CURRENT_PLAYER || intent.action == ACTION_TOGGLE_CURRENT_PLAYBACK
+                || intent.action == ACTION_PAUSE_CURRENT_PLAYBACK) {
             handlePlayFromSearchIntent(intent)
         }
         if (intent.getBooleanExtra("SHOW_SETTINGS", false)) {
@@ -443,6 +425,7 @@ class MainActivity : AppCompatActivity() {
                 ACTION_ADD_TO_QUEUE -> "addToQueueFromSearch"
                 ACTION_OPEN_CURRENT_PLAYER -> "openPlayerFromMiniBar"
                 ACTION_TOGGLE_CURRENT_PLAYBACK -> "toggleMiniPlayback"
+                ACTION_PAUSE_CURRENT_PLAYBACK -> "pauseMiniPlayback"
                 else -> "playTrackFromSearch"
             }
 
@@ -828,7 +811,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun notifyHydrationCompleted() {
         (getMainModuleFragment(R.id.nav_equalizer) as? EqualizerFragment)?.onCloudEqHydrationCompleted()
-        (getMainModuleFragment(R.id.nav_schedule) as? WeeklySchedulerFragment)?.onCloudAgendaHydrationCompleted()
     }
 
     private fun setSyncOverlayVisible(visible: Boolean) { /* Signals visual sync in header */ }
@@ -851,12 +833,15 @@ class MainActivity : AppCompatActivity() {
                 setCompoundDrawablesRelative(this, null, null, null)
             }
             compoundDrawablePadding = (8 * density).toInt()
-            setOnClickListener { goToAgendaFromHeader() }
+            setOnClickListener(null)
         }
     }
 
     private fun configureHeaderActionForSettings() {
-        btnSettings.visibility = View.GONE
+        btnSettings.visibility = View.VISIBLE
+        btnSettings.setImageResource(R.drawable.ic_settings)
+        btnSettings.contentDescription = getString(R.string.header_action_settings)
+
         tvModuleTitle.apply {
             text = getString(R.string.header_title_settings)
             isAllCaps = false
@@ -871,15 +856,6 @@ class MainActivity : AppCompatActivity() {
     private fun resolveHeaderBrandTypeface() = headerBrandTypeface ?: ResourcesCompat.getFont(this, R.font.manrope_variable).also { headerBrandTypeface = it } ?: Typeface.DEFAULT_BOLD
 
     private fun resolveHeaderSettingsTypeface() = headerSettingsTypeface ?: ResourcesCompat.getFont(this, R.font.inter_variable).also { headerSettingsTypeface = it } ?: Typeface.DEFAULT_BOLD
-
-    private fun goToAgendaFromHeader() {
-        if (inSettings) exitSettings()
-        if (bottomNav.selectedItemId != R.id.nav_schedule) {
-            bottomNav.selectedItemId = R.id.nav_schedule
-        } else {
-            switchToMainModule(R.id.nav_schedule)
-        }
-    }
 
     private fun enterSettings() {
         if (inSettings) return
@@ -945,7 +921,6 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun restoreMainModuleReferences() {
-        scheduleFragment = supportFragmentManager.findFragmentByTag(TAG_MODULE_SCHEDULE)
         musicFragment = supportFragmentManager.findFragmentByTag(TAG_MODULE_MUSIC)
         scannerFragment = supportFragmentManager.findFragmentByTag(TAG_MODULE_SCANNER)
         equalizerFragment = supportFragmentManager.findFragmentByTag(TAG_MODULE_EQUALIZER)
@@ -958,7 +933,6 @@ class MainActivity : AppCompatActivity() {
     private fun getOrCreateMainModuleFragment(itemId: Int): Fragment? {
         getMainModuleFragment(itemId)?.let { return it }
         val fragment: Fragment? = when (itemId) {
-            R.id.nav_schedule -> WeeklySchedulerFragment()
             R.id.nav_music -> MusicPlayerFragment()
             R.id.nav_scanner -> ScannerFragment()
             R.id.nav_equalizer -> EqualizerFragment()
@@ -967,7 +941,6 @@ class MainActivity : AppCompatActivity() {
         }
         fragment?.let {
             when (itemId) {
-                R.id.nav_schedule -> scheduleFragment = it
                 R.id.nav_music -> musicFragment = it
                 R.id.nav_scanner -> scannerFragment = it
                 R.id.nav_equalizer -> equalizerFragment = it
@@ -978,7 +951,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun getMainModuleFragment(itemId: Int): Fragment? = when (itemId) {
-        R.id.nav_schedule -> scheduleFragment
         R.id.nav_music -> musicFragment
         R.id.nav_scanner -> scannerFragment
         R.id.nav_equalizer -> equalizerFragment
@@ -987,7 +959,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun moduleTagForItem(itemId: Int) = when (itemId) {
-        R.id.nav_schedule -> TAG_MODULE_SCHEDULE
         R.id.nav_music -> TAG_MODULE_MUSIC
         R.id.nav_scanner -> TAG_MODULE_SCANNER
         R.id.nav_equalizer -> TAG_MODULE_EQUALIZER

@@ -2663,6 +2663,7 @@ public class SongPlayerFragment extends Fragment {
                         adjustPlayerHeroForCover(processedResource);
                         cacheMediaNotificationArtwork(requestVideoId, processedResource);
                         updateMediaSessionMetadata();
+                        updateMediaNotification();
                     });
                 });
             }
@@ -3318,6 +3319,12 @@ public class SongPlayerFragment extends Fragment {
         togglePlayback();
     }
 
+    public void externalPause() {
+        if (isPlaying) {
+            togglePlayback();
+        }
+    }
+
     public void externalPauseForSessionExit() {
         pauseRequestedByUser = true;
         cancelAutoplayRecovery();
@@ -3341,6 +3348,16 @@ public class SongPlayerFragment extends Fragment {
 
         playerEnterAnimationRunning = true;
 
+        int initDistance = root.getHeight();
+        if (initDistance <= 0) {
+            initDistance = root.getResources().getDisplayMetrics().heightPixels;
+        }
+
+        root.animate().cancel();
+        root.setVisibility(View.VISIBLE);
+        root.setTranslationY(initDistance);
+        root.setAlpha(1f);
+
         root.post(() -> {
             View v = getView();
             if (v == null) {
@@ -3354,9 +3371,7 @@ public class SongPlayerFragment extends Fragment {
             }
 
             v.animate().cancel();
-            v.setVisibility(View.VISIBLE);
             v.setTranslationY(distance);
-            v.setAlpha(1f);
             v.animate()
                     .translationY(0f)
                     .setDuration(300L)
@@ -3784,11 +3799,6 @@ public class SongPlayerFragment extends Fragment {
             return music;
         }
 
-        Fragment schedule = findAddedByTag(fm, "module_schedule");
-        if (schedule != null) {
-            return schedule;
-        }
-
         Fragment equalizer = findAddedByTag(fm, "module_equalizer");
         if (equalizer != null) {
             return equalizer;
@@ -4173,13 +4183,8 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
-        PlayerTrack currentTrack = tracks.get(currentIndex);
-        ArrayList<PlayerTrack> reorderedQueue = new ArrayList<>(Math.max(1, nextUpTracks.size() + 1));
-        reorderedQueue.add(currentTrack);
-        reorderedQueue.addAll(nextUpTracks);
-
         tracks.clear();
-        tracks.addAll(reorderedQueue);
+        tracks.addAll(nextUpTracks);
         currentIndex = 0;
 
         if (!shuffleEnabled) {
@@ -5096,6 +5101,7 @@ public class SongPlayerFragment extends Fragment {
                 }
                 cacheMediaNotificationArtwork(requestVideoId, resource);
                 updateMediaSessionMetadata();
+                updateMediaNotification();
             }
 
             @Override
@@ -5111,6 +5117,7 @@ public class SongPlayerFragment extends Fragment {
                     new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
                         clearMediaNotificationArtwork();
                         updateMediaSessionMetadata();
+                        updateMediaNotification();
                     });
 
                     updateMediaSessionMetadata();

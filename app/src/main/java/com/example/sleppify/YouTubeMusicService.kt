@@ -54,15 +54,22 @@ class YouTubeMusicService @JvmOverloads constructor(
         fun onError(error: String)
     }
 
+    interface VideoDurationCallback {
+        fun onSuccess(durations: Map<String, String>)
+        fun onError(error: String)
+    }
+
     // ----- Public data classes (field-accessible from Java via @JvmField) -----
 
     class TrackResult(
         @JvmField val resultType: String,
         @JvmField val contentId: String,
-        @JvmField val title: String,
-        @JvmField val subtitle: String,
+        rawTitle: String,
+        rawSubtitle: String,
         @JvmField val thumbnailUrl: String
     ) {
+        @JvmField val title: String = androidx.core.text.HtmlCompat.fromHtml(rawTitle, androidx.core.text.HtmlCompat.FROM_HTML_MODE_LEGACY).toString()
+        @JvmField val subtitle: String = androidx.core.text.HtmlCompat.fromHtml(rawSubtitle, androidx.core.text.HtmlCompat.FROM_HTML_MODE_LEGACY).toString()
         @JvmField
         val videoId: String = if ("video" == resultType) contentId else ""
 
@@ -98,11 +105,14 @@ class YouTubeMusicService @JvmOverloads constructor(
 
     class PlaylistTrackResult(
         @JvmField val videoId: String,
-        @JvmField val title: String,
-        @JvmField val artist: String,
+        rawTitle: String,
+        rawArtist: String,
         @JvmField val duration: String,
         @JvmField val thumbnailUrl: String
-    )
+    ) {
+        @JvmField val title: String = androidx.core.text.HtmlCompat.fromHtml(rawTitle, androidx.core.text.HtmlCompat.FROM_HTML_MODE_LEGACY).toString()
+        @JvmField val artist: String = androidx.core.text.HtmlCompat.fromHtml(rawArtist, androidx.core.text.HtmlCompat.FROM_HTML_MODE_LEGACY).toString()
+    }
 
     // ----- Private data holders -----
 
@@ -263,6 +273,39 @@ class YouTubeMusicService @JvmOverloads constructor(
     }
 
     fun getYoutubeReadonlyScope(): String = YT_SCOPE_READONLY
+
+    /**
+     * Fetches durations for a list of video IDs using OAuth token.
+     * Returns a map of videoId -> formatted duration (e.g. "3:45").
+     */
+    fun fetchVideoDurations(
+        accessToken: String,
+        videoIds: List<String>,
+        callback: VideoDurationCallback
+    ) {
+        val token = accessToken.trim()
+        if (token.isEmpty() || videoIds.isEmpty()) {
+            callback.onSuccess(emptyMap())
+            return
+        }
+
+        executor.execute {
+            try {
+                val infoMap = fetchVideoPlaybackInfoByIdsInBatches(token, videoIds)
+                val result = HashMap<String, String>()
+                for ((id, info) in infoMap) {
+                    val formatted = formatYoutubeDuration(info.rawDuration)
+                    if (formatted.isNotEmpty() && formatted != "--:--") {
+                        result[id] = formatted
+                    }
+                }
+                mainHandler.post { callback.onSuccess(result) }
+            } catch (e: Exception) {
+                val error = e.message ?: "No se pudo obtener duraciones."
+                mainHandler.post { callback.onError(error) }
+            }
+        }
+    }
 
     // ----- HTTP helper -----
 
