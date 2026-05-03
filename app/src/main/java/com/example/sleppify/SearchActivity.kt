@@ -14,13 +14,16 @@ import android.text.TextUtils
 import android.text.TextWatcher
 import android.util.Log
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
+import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.content.res.ResourcesCompat
@@ -28,7 +31,7 @@ import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.activity.OnBackPressedCallback
+import androidx.fragment.app.FragmentContainerView
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -70,6 +73,7 @@ class SearchActivity : AppCompatActivity() {
         private const val SEARCH_PAGE_SIZE = 20
         private const val SEARCH_SUGGESTION_RECENT_LIMIT = 6
         private const val SEARCH_SCROLL_LOAD_MORE_THRESHOLD = 4
+        private const val TAG_SONG_PLAYER = "search_song_player"
         
         private val DEFAULT_SEARCH_SUGGESTIONS = arrayOf(
             "Lofi Chill",
@@ -95,9 +99,24 @@ class SearchActivity : AppCompatActivity() {
     private lateinit var ivFeaturedThumb: ShapeableImageView
     private lateinit var tvFeaturedTitle: TextView
     private lateinit var tvFeaturedSubtitle: TextView
+    
+    // Mini Player components
+    private lateinit var llMiniPlayer: LinearLayout
+    private lateinit var ivMiniPlayerArt: ShapeableImageView
+    private lateinit var tvMiniPlayerTitle: TextView
+    private lateinit var tvMiniPlayerSubtitle: TextView
+    private lateinit var btnMiniPlayPause: ImageButton
+    private lateinit var sbMiniPlayerProgress: android.widget.SeekBar
     private lateinit var tvModuleTitle: TextView
     private lateinit var btnSettings: View
     private lateinit var moduleLoadingOverlay: View
+    private lateinit var searchPlayerContainer: FragmentContainerView
+
+    private lateinit var llSearchRoot: View
+    private lateinit var bottomNavigation: com.google.android.material.bottomnavigation.BottomNavigationView
+    private var isPlayerVisible = false
+    // private lateinit var searchBottomSheetAdapter: SearchBottomSheetAdapter
+    // private var sheetBottomSheetBehavior: BottomSheetBehavior<View>? = null
 
     private var adapter: SearchResultsAdapter? = null
     private var featuredTrack: YouTubeMusicService.TrackResult? = null
@@ -134,8 +153,13 @@ class SearchActivity : AppCompatActivity() {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                val resultsContainer = findViewById<View>(R.id.flResultsContainer)
-                val hasResults = resultsContainer.visibility == View.VISIBLE
+                // If full player is visible, collapse it back to mini
+                if (isPlayerVisible) {
+                    collapsePlayerToMini()
+                    return
+                }
+                
+                val hasResults = rvSearchResults.visibility == View.VISIBLE
                 
                 if (hasResults) {
                     // Back from results → show suggestions
@@ -167,7 +191,27 @@ class SearchActivity : AppCompatActivity() {
         ivFeaturedThumb = findViewById(R.id.ivFeaturedThumb)
         tvFeaturedTitle = findViewById(R.id.tvFeaturedTitle)
         tvFeaturedSubtitle = findViewById(R.id.tvFeaturedSubtitle)
+        bottomNavigation = findViewById(R.id.bottomNavigation)
+        bottomNavigation.setOnItemSelectedListener {
+            finish()
+            true
+        }
+        
+        llMiniPlayer = findViewById(R.id.llMiniPlayer)
+        ivMiniPlayerArt = findViewById(R.id.ivMiniPlayerArt)
+        tvMiniPlayerTitle = findViewById(R.id.tvMiniPlayerTitle)
+        tvMiniPlayerSubtitle = findViewById(R.id.tvMiniPlayerSubtitle)
+        btnMiniPlayPause = findViewById(R.id.btnMiniPlayPause)
+        sbMiniPlayerProgress = findViewById(R.id.sbMiniPlayerProgress)
+        
+        llMiniPlayer.setOnClickListener {
+            openCurrentPlayerFromMiniBar()
+        }
+        btnMiniPlayPause.setOnClickListener {
+            toggleCurrentMiniPlayback()
+        }
         moduleLoadingOverlay = findViewById(R.id.moduleLoadingOverlay)
+        searchPlayerContainer = findViewById(R.id.searchPlayerContainer)
 
         if (SystemType.isTv(this)) {
             moduleLoadingOverlay.setBackgroundColor(Color.TRANSPARENT)
@@ -179,8 +223,21 @@ class SearchActivity : AppCompatActivity() {
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             val extraPadding = (8 * resources.displayMetrics.density).toInt()
             topAppBar.setPadding(topAppBar.paddingLeft, systemBars.top + extraPadding, topAppBar.paddingRight, topAppBar.paddingBottom)
+            // NO aplicar padding bottom al mini player - el footer ya tiene su propio padding
+            bottomNavigation.setPadding(systemBars.left, 0, systemBars.right, systemBars.bottom)
             insets
         }
+
+        llSearchRoot = findViewById(R.id.llSearchRoot) // or whatever the id is, wait let me look at the file
+        val rootTouchListener = View.OnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_DOWN) {
+                // Hide keyboard if touch is outside of EditText
+                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                imm?.hideSoftInputFromWindow(etSearchQuery.windowToken, 0)
+            }
+            false
+        }
+        root.setOnTouchListener(rootTouchListener)
     }
 
     private fun setupRecyclerView() {
@@ -262,9 +319,17 @@ class SearchActivity : AppCompatActivity() {
         val query = etSearchQuery.text?.toString()?.trim() ?: ""
         refreshSearchSuggestions(query)
         rvSearchSuggestions.visibility = View.VISIBLE
-        
-        findViewById<View>(R.id.flResultsContainer).visibility = View.GONE
+
+        rvSearchResults.visibility = View.GONE
+        llFeaturedResult.visibility = View.GONE
         findViewById<View>(R.id.llSearchState).visibility = View.GONE
+        
+        // Ocultar minireproductor y footer en sugerencias
+        llMiniPlayer.visibility = View.GONE
+        bottomNavigation.visibility = View.GONE
+
+        // Forzar recálculo del layout
+        llSearchRoot.requestLayout()
     }
 
     private fun clearResults() {
@@ -312,7 +377,8 @@ class SearchActivity : AppCompatActivity() {
     private fun performSearch() {
         if (searching) return
         val query = etSearchQuery.text?.toString()?.trim() ?: ""
-        if (query.isNotEmpty()) startPagedSearch(query)
+        if (query.isNotEmpty()) startPagedSearch(query
+        )
     }
 
     private fun startPagedSearch(query: String) {
@@ -329,8 +395,16 @@ class SearchActivity : AppCompatActivity() {
         rememberRecentSearchQuery(query)
         refreshSearchSuggestions(query)
         rvSearchSuggestions.visibility = View.GONE
-        findViewById<View>(R.id.flResultsContainer).visibility = View.VISIBLE
         rvSearchResults.visibility = View.VISIBLE
+        bottomNavigation.visibility = View.VISIBLE
+        updateMiniPlayerUi(forceVisibleInResults = true)
+
+        // Forzar recálculo del layout del ConstraintLayout raíz
+        llSearchRoot.post {
+            llSearchRoot.invalidate()
+            llSearchRoot.requestLayout()
+        }
+
         requestPagedSearchResults(query, "", false)
     }
 
@@ -495,7 +569,8 @@ class SearchActivity : AppCompatActivity() {
         val filtered = allTracks.toMutableList()
 
         if (normalizedQuery.isNotEmpty() && filtered.size > 1) {
-            sortResults(filtered, normalizedQuery)
+            // Do not sort results locally. Preserve the API's natural relevance ranking.
+            // sortResults(filtered, normalizedQuery)
         }
 
         tracks.clear()
@@ -508,6 +583,13 @@ class SearchActivity : AppCompatActivity() {
             if (filtered.size > 1) tracks.addAll(filtered.subList(1, filtered.size))
         }
         adapter?.submitResults(tracks.toList())
+
+        // Forzar recálculo del layout después de actualizar visibilidad del featured result
+        val rootLayout = findViewById<androidx.constraintlayout.widget.ConstraintLayout>(R.id.llSearchRoot)
+        rootLayout.post {
+            rootLayout.invalidate()
+            rootLayout.requestLayout()
+        }
     }
 
     private fun sortResults(list: MutableList<YouTubeMusicService.TrackResult>, query: String) {
@@ -538,43 +620,122 @@ class SearchActivity : AppCompatActivity() {
 
     private fun bindFeaturedTrack(track: YouTubeMusicService.TrackResult) {
         tvFeaturedTitle.text = track.title
-        val type = searchTypeLabel(track)
-        tvFeaturedSubtitle.text = track.subtitle ?: searchTypeLabel(track)
+        val typeLabel = searchTypeLabel(track)
+        if (typeLabel.isEmpty()) {
+            tvFeaturedSubtitle.text = track.subtitle
+        } else {
+            tvFeaturedSubtitle.text = if (track.subtitle.isEmpty()) typeLabel else "$typeLabel • ${track.subtitle}"
+        }
         loadArtworkInto(ivFeaturedThumb, track.thumbnailUrl)
         llFeaturedResult.setOnClickListener { onTrackClicked(track) }
         findViewById<View>(R.id.btnFeaturedPlay).setOnClickListener { onTrackClicked(track) }
     }
 
-    private fun onTrackClicked(track: YouTubeMusicService.TrackResult) {
-        // Build the queue JSON from all results
-        val queueJson = JSONArray().apply {
-            (listOfNotNull(featuredTrack) + tracks).forEach { t ->
-                put(JSONObject().apply {
-                    put("videoId", t.videoId ?: "")
-                    put("title", t.title ?: "")
-                    put("subtitle", t.subtitle ?: "")
-                    put("thumbnailUrl", t.thumbnailUrl ?: "")
-                    put("resultType", t.resultType ?: "")
-                    put("contentId", t.contentId ?: "")
-                })
+    private val playbackListener = object : PlaybackEventBus.Listener {
+        override fun onPlaybackSnapshotUpdated() {
+            // Solo actualizar si estamos en la vista de resultados (no en sugerencias)
+            val showingResults = rvSearchResults.visibility == View.VISIBLE
+            if (showingResults) {
+                runOnUiThread {   updateMiniPlayerUi(forceVisibleInResults = true)
+                }
             }
         }
+    }
 
-        // Send the intent to MainActivity but DON'T bring it to the front.
-        // FLAG_ACTIVITY_SINGLE_TOP ensures onNewIntent() fires on the existing instance.
-        // We intentionally omit FLAG_ACTIVITY_REORDER_TO_FRONT so the user stays here.
-        Intent(this, MainActivity::class.java).apply {
-            action = MainActivity.ACTION_PLAY_FROM_SEARCH
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
-            putExtra(EXTRA_RESULT_TYPE, track.resultType ?: "")
-            putExtra(EXTRA_RESULT_VIDEO_ID, track.videoId ?: "")
-            putExtra(EXTRA_RESULT_CONTENT_ID, track.contentId ?: "")
-            putExtra(EXTRA_RESULT_TITLE, track.title ?: "")
-            putExtra(EXTRA_RESULT_SUBTITLE, track.subtitle ?: "")
-            putExtra(EXTRA_RESULT_THUMBNAIL, track.thumbnailUrl ?: "")
-            putExtra(EXTRA_RESULT_TRACKS_JSON, queueJson.toString())
-            startActivity(this)
+    private fun onTrackClicked(track: YouTubeMusicService.TrackResult) {
+        if ("playlist".equals(track.resultType, ignoreCase = true)) {
+            // For playlists, delegate to MainActivity
+            val playbackIntent = Intent(this, MainActivity::class.java).apply {
+                action = MainActivity.ACTION_PLAY_FROM_SEARCH
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+                putExtra(MainActivity.EXTRA_OPENED_FROM_SEARCH_ACTIVITY, true)
+                putExtra(EXTRA_RESULT_TYPE, track.resultType ?: "")
+                putExtra(EXTRA_RESULT_CONTENT_ID, track.contentId ?: "")
+                putExtra(EXTRA_RESULT_TITLE, track.title ?: "")
+                putExtra(EXTRA_RESULT_SUBTITLE, track.subtitle ?: "")
+                putExtra(EXTRA_RESULT_THUMBNAIL, track.thumbnailUrl ?: "")
+            }
+            startActivity(playbackIntent)
+            return
         }
+
+        // Build queue from all video results
+        val allResults = listOfNotNull(featuredTrack) + tracks
+        val videoResults = allResults.filter { it.videoId?.isNotEmpty() == true }
+        if (videoResults.isEmpty()) return
+
+        val ids = ArrayList(videoResults.map { it.videoId ?: "" })
+        val titles = ArrayList(videoResults.map { it.title ?: "Tema" })
+        val artists = ArrayList(videoResults.map { it.subtitle ?: "" })
+        val durations = ArrayList(videoResults.map { "--:--" })
+        val images = ArrayList(videoResults.map { it.thumbnailUrl ?: "" })
+
+        var selectedIndex = videoResults.indexOfFirst { it.videoId == track.videoId }
+        if (selectedIndex < 0) selectedIndex = 0
+
+        // Stop any existing player in MainActivity first
+        stopMainActivityPlayer()
+
+        // Play locally in this activity
+        playInLocalPlayer(ids, titles, artists, durations, images, selectedIndex)
+    }
+
+    private fun stopMainActivityPlayer() {
+        // Dispatch a pause to MainActivity's player if running
+        try {
+            val intent = Intent().apply {
+                action = MainActivity.ACTION_TOGGLE_CURRENT_PLAYBACK
+                putExtra(MainActivity.EXTRA_OPENED_FROM_SEARCH_ACTIVITY, true)
+            }
+            // Only pause if currently playing
+            val snapshot = PlaybackHistoryStore.load(this)
+            if (snapshot.isPlaying) {
+                MainActivity.dispatchSearchPlayback(intent)
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun playInLocalPlayer(
+        ids: ArrayList<String>,
+        titles: ArrayList<String>,
+        artists: ArrayList<String>,
+        durations: ArrayList<String>,
+        images: ArrayList<String>,
+        selectedIndex: Int
+    ) {
+        val existingPlayer = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER) as? SongPlayerFragment
+        if (existingPlayer != null && existingPlayer.isAdded) {
+            // Reuse existing player - replace queue and start playing
+            existingPlayer.externalReplaceQueueFromStart(ids, titles, artists, durations, images, selectedIndex, true)
+            if (!isPlayerVisible) {
+                // Keep in mini mode - don't show full player
+                existingPlayer.externalTryEnterMiniMode()
+            }
+        } else {
+            // Remove any stale fragment first
+            existingPlayer?.let {
+                supportFragmentManager.beginTransaction().remove(it).commitNowAllowingStateLoss()
+            }
+
+            // Create new player in mini mode (hidden)
+            val playerFragment = SongPlayerFragment.newInstance(ids, titles, artists, durations, images, selectedIndex, true)
+            searchPlayerContainer.visibility = View.VISIBLE
+            supportFragmentManager.beginTransaction()
+                .setReorderingAllowed(true)
+                .add(R.id.searchPlayerContainer, playerFragment, TAG_SONG_PLAYER)
+                .hide(playerFragment)
+                .commitNowAllowingStateLoss()
+
+            // Let it start in mini mode
+            searchPlayerContainer.postDelayed({
+                searchPlayerContainer.visibility = View.GONE
+            }, 100)
+        }
+
+        // Update mini player after a short delay to let playback initialize
+        llMiniPlayer.postDelayed({
+            updateMiniPlayerUi(forceVisibleInResults = true)
+        }, 300)
     }
 
     private fun showTrackOptionsBottomSheet(track: YouTubeMusicService.TrackResult, anchor: View) {
@@ -590,7 +751,11 @@ class SearchActivity : AppCompatActivity() {
         
         tvTitle.text = track.title ?: "Tema"
         val typeLabel = searchTypeLabel(track)
-        tvSubtitle.text = track.subtitle ?: searchTypeLabel(track)
+        if (typeLabel.isEmpty()) {
+            tvSubtitle.text = track.subtitle
+        } else {
+            tvSubtitle.text = if (track.subtitle.isEmpty()) typeLabel else "$typeLabel • ${track.subtitle}"
+        }
         loadArtworkInto(ivArt, track.thumbnailUrl)
 
         val isPlaylist = "playlist".equals(track.resultType, ignoreCase = true)
@@ -740,6 +905,162 @@ class SearchActivity : AppCompatActivity() {
             .take(SEARCH_SUGGESTION_RECENT_LIMIT)
     }
 
+    override fun onResume() {
+        super.onResume()
+        PlaybackEventBus.addListener(playbackListener)
+        val showingResults = rvSearchResults.visibility == View.VISIBLE
+        if (showingResults) {
+            updateMiniPlayerUi(forceVisibleInResults = true)
+        } else {
+            llMiniPlayer.visibility = View.GONE
+            bottomNavigation.visibility = View.GONE
+        }
+    }
+
+    override fun onPause() {
+        PlaybackEventBus.removeListener(playbackListener)
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        // Persist player state before destroying
+        val player = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER) as? SongPlayerFragment
+        player?.externalSnapshotForNavigation()
+        super.onDestroy()
+    }
+
+    private fun updateMiniPlayerUi(forceVisibleInResults: Boolean = false) {
+        val snapshot = PlaybackHistoryStore.load(this)
+        bottomNavigation.visibility = View.VISIBLE
+
+        if (snapshot.queue.isEmpty()) {
+            llMiniPlayer.visibility = if (forceVisibleInResults) View.VISIBLE else View.GONE
+            if (forceVisibleInResults) {
+                tvMiniPlayerTitle.text = "Reproduce una canción"
+                tvMiniPlayerSubtitle.text = "Selecciona un resultado"
+                btnMiniPlayPause.setImageResource(R.drawable.ic_mini_play)
+                sbMiniPlayerProgress.progress = 0
+                loadArtworkInto(ivMiniPlayerArt, null)
+            }
+            return
+        }
+
+        llMiniPlayer.visibility = View.VISIBLE
+
+        val current = snapshot.currentTrack()
+        tvMiniPlayerTitle.text = current?.title.orEmpty()
+        tvMiniPlayerSubtitle.text = current?.artist.orEmpty()
+
+        if (snapshot.isPlaying) {
+            btnMiniPlayPause.setImageResource(R.drawable.ic_mini_pause)
+        } else {
+            btnMiniPlayPause.setImageResource(R.drawable.ic_mini_play)
+        }
+
+        val durationMs = snapshot.totalSeconds.toLong().coerceAtLeast(0L) * 1000L
+        val currentPositionMs = snapshot.currentSeconds.toLong().coerceAtLeast(0L) * 1000L
+        if (durationMs > 0) {
+            sbMiniPlayerProgress.max = durationMs.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+            sbMiniPlayerProgress.progress = currentPositionMs.coerceIn(0L, durationMs).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        } else {
+            sbMiniPlayerProgress.progress = 0
+        }
+
+        loadArtworkInto(ivMiniPlayerArt, current?.imageUrl)
+    }
+
+    private fun openCurrentPlayerFromMiniBar() {
+        val existingPlayer = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER) as? SongPlayerFragment
+        if (existingPlayer != null && existingPlayer.isAdded) {
+            // Show existing player full screen
+            showPlayerFullScreen(existingPlayer)
+        } else {
+            // Create player from persisted state
+            val snapshot = PlaybackHistoryStore.load(this)
+            if (snapshot.queue.isEmpty()) return
+
+            stopMainActivityPlayer()
+
+            val ids = ArrayList(snapshot.queue.map { it.videoId })
+            val titles = ArrayList(snapshot.queue.map { it.title })
+            val artists = ArrayList(snapshot.queue.map { it.artist })
+            val durations = ArrayList(snapshot.queue.map { it.duration })
+            val images = ArrayList(snapshot.queue.map { it.imageUrl })
+            val selectedIndex = snapshot.currentIndex.coerceIn(0, ids.size - 1)
+
+            val playerFragment = SongPlayerFragment.newInstance(ids, titles, artists, durations, images, selectedIndex, snapshot.isPlaying)
+            searchPlayerContainer.visibility = View.VISIBLE
+            isPlayerVisible = true
+            llMiniPlayer.visibility = View.GONE
+            supportFragmentManager.beginTransaction()
+                .setReorderingAllowed(true)
+                .add(R.id.searchPlayerContainer, playerFragment, TAG_SONG_PLAYER)
+                .commitNowAllowingStateLoss()
+        }
+    }
+
+    private fun showPlayerFullScreen(player: SongPlayerFragment) {
+        searchPlayerContainer.visibility = View.VISIBLE
+        isPlayerVisible = true
+        llMiniPlayer.visibility = View.GONE
+        supportFragmentManager.beginTransaction()
+            .setReorderingAllowed(true)
+            .show(player)
+            .commitNowAllowingStateLoss()
+    }
+
+    private fun collapsePlayerToMini() {
+        val player = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER) as? SongPlayerFragment
+        if (player != null && player.isAdded) {
+            player.externalSnapshotForNavigation()
+            supportFragmentManager.beginTransaction()
+                .setReorderingAllowed(true)
+                .hide(player)
+                .commitNowAllowingStateLoss()
+        }
+        isPlayerVisible = false
+        searchPlayerContainer.visibility = View.GONE
+        updateMiniPlayerUi(forceVisibleInResults = true)
+    }
+
+    private fun toggleCurrentMiniPlayback() {
+        val localPlayer = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER) as? SongPlayerFragment
+        if (localPlayer != null && localPlayer.isAdded) {
+            // Toggle local player directly
+            localPlayer.externalTogglePlayback()
+            // Update mini player UI immediately
+            llMiniPlayer.postDelayed({
+                updateMiniPlayerUi(forceVisibleInResults = true)
+            }, 150)
+        } else {
+            // No local player - create one from snapshot and toggle
+            val snapshot = PlaybackHistoryStore.load(this)
+            if (snapshot.queue.isEmpty()) return
+
+            stopMainActivityPlayer()
+
+            val ids = ArrayList(snapshot.queue.map { it.videoId })
+            val titles = ArrayList(snapshot.queue.map { it.title })
+            val artists = ArrayList(snapshot.queue.map { it.artist })
+            val durations = ArrayList(snapshot.queue.map { it.duration })
+            val images = ArrayList(snapshot.queue.map { it.imageUrl })
+            val selectedIndex = snapshot.currentIndex.coerceIn(0, ids.size - 1)
+            val shouldPlay = !snapshot.isPlaying
+
+            val playerFragment = SongPlayerFragment.newInstance(ids, titles, artists, durations, images, selectedIndex, shouldPlay)
+            searchPlayerContainer.visibility = View.VISIBLE
+            supportFragmentManager.beginTransaction()
+                .setReorderingAllowed(true)
+                .add(R.id.searchPlayerContainer, playerFragment, TAG_SONG_PLAYER)
+                .hide(playerFragment)
+                .commitNowAllowingStateLoss()
+            searchPlayerContainer.postDelayed({
+                searchPlayerContainer.visibility = View.GONE
+                updateMiniPlayerUi(forceVisibleInResults = true)
+            }, 300)
+        }
+    }
+
     private fun loadArtworkInto(target: ImageView, url: String?) {
         if (url.isNullOrEmpty()) {
             target.setImageResource(R.drawable.ic_music)
@@ -757,7 +1078,7 @@ class SearchActivity : AppCompatActivity() {
     }
 
     private fun searchTypeLabel(track: YouTubeMusicService.TrackResult) = when (track.resultType?.lowercase(Locale.US)) {
-        "video" -> "Canción"
+        "video" -> ""
         "channel" -> "Artista"
         "playlist" -> "Playlist"
         else -> "Resultado"
@@ -817,8 +1138,12 @@ class SearchActivity : AppCompatActivity() {
         override fun onBindViewHolder(holder: TrackViewHolder, position: Int) {
             val item = data[position]
             holder.title.text = item.title ?: "Resultado"
-            val type = searchTypeLabel(item)
-            holder.subtitle.text = item.subtitle ?: searchTypeLabel(item)
+            val typeLabel = searchTypeLabel(item)
+            if (typeLabel.isEmpty()) {
+                holder.subtitle.text = item.subtitle
+            } else {
+                holder.subtitle.text = if (item.subtitle.isEmpty()) typeLabel else "$typeLabel • ${item.subtitle}"
+            }
             loadArtworkInto(holder.thumb, item.thumbnailUrl)
             holder.divider.visibility = if (position == data.size - 1) View.GONE else View.VISIBLE
             holder.itemView.setOnClickListener { onClick(item) }

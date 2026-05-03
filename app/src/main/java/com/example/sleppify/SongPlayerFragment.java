@@ -18,6 +18,7 @@ import android.graphics.RenderEffect;
 import android.graphics.Shader;
 import android.graphics.drawable.Drawable;
 import android.media.AudioAttributes;
+import android.media.AudioDeviceCallback;
 import android.media.AudioManager;
 import android.media.AudioDeviceInfo;
 import android.net.Uri;
@@ -38,6 +39,7 @@ import java.util.concurrent.Executors;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.ViewParent;
 import android.widget.ImageButton;
@@ -52,6 +54,7 @@ import com.bumptech.glide.request.target.CustomTarget;
 import com.bumptech.glide.request.transition.Transition;
 import android.widget.TextView;
 import android.widget.FrameLayout;
+import android.widget.ProgressBar;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -178,6 +181,9 @@ public class SongPlayerFragment extends Fragment {
     private TextView tvTotalTime;
     private TextView tvDeviceName;
     private ImageView ivDeviceIcon;
+    @Nullable
+    private AudioDeviceCallback audioDeviceCallback;
+    private boolean audioDeviceCallbackRegistered = false;
     private View llQueueTrigger;
     private SeekBar sbPlaybackProgress;
     private NestedScrollView svSongPlayerContent;
@@ -225,12 +231,18 @@ public class SongPlayerFragment extends Fragment {
     private int lastSeekTargetSeconds = -1;
     private boolean pauseRequestedByUser = false;
     private boolean appInBackground = false;
+    private boolean swipeDismissGestureActive = false;
+    private boolean swipeDismissAnimationRunning = false;
+    private boolean playerEnterAnimationRunning = false;
+    private int swipeDismissTouchSlopPx = 12;
+    private int swipeDismissMinDistancePx = 120;
     private long lastBackgroundResumeAttemptMs = 0L;
     @Nullable
     private ActivityResultLauncher<String> notificationPermissionLauncher;
     private boolean notificationPermissionRequested;
     private boolean shuffleEnabled = false;
     private int repeatMode = REPEAT_MODE_ALL;
+    private int pendingTrackChangeDirection = 1;
     private boolean collapsingToMiniMode;
     private long lastHandledEndedAtMs = 0L;
     @NonNull
@@ -258,6 +270,7 @@ public class SongPlayerFragment extends Fragment {
     private final ExecutorService streamResolverExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService socialStatsExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService persistenceExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService imageProcessingExecutor = Executors.newSingleThreadExecutor();
     private final Map<String, SocialStats> socialStatsCache = new HashMap<>();
 
     // Direct streaming & pre-fetching
@@ -320,6 +333,15 @@ public class SongPlayerFragment extends Fragment {
     private Bitmap mediaSessionArtwork;
     @NonNull
     private String mediaSessionArtworkVideoId = "";
+    
+    private final PlaybackStateCompat.Builder playbackStateBuilder = new PlaybackStateCompat.Builder()
+            .setActions(PlaybackStateCompat.ACTION_PLAY
+                    | PlaybackStateCompat.ACTION_PAUSE
+                    | PlaybackStateCompat.ACTION_PLAY_PAUSE
+                    | PlaybackStateCompat.ACTION_SKIP_TO_NEXT
+                    | PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
+                    | PlaybackStateCompat.ACTION_SEEK_TO);
+
     private final Runnable localProgressTicker = new Runnable() {
         @Override
         public void run() {
@@ -478,6 +500,7 @@ public class SongPlayerFragment extends Fragment {
 
         tvDeviceName = view.findViewById(R.id.tvDeviceName);
         ivDeviceIcon = view.findViewById(R.id.ivDeviceIcon);
+        setupAudioDeviceCallback();
         // Defer non-critical setup to post-inflation to speed up fragment entry
         view.post(() -> {
             if (!isAdded()) return;
@@ -586,12 +609,17 @@ public class SongPlayerFragment extends Fragment {
         super.onHiddenChanged(hidden);
         updateBackPressedCallbackEnabled(hidden);
         if (hidden) {
+            swipeDismissGestureActive = false;
+            swipeDismissAnimationRunning = false;
             if (!(usingOfflineSource && localExoMediaPlayer != null && isPlaying)) {
                 stopLocalProgressTicker();
             }
         } else {
             if (getView() != null) {
-                getView().setTranslationY(0f);
+                if (!playerEnterAnimationRunning) {
+                    getView().animate().cancel();
+                    getView().setTranslationY(0f);
+                }
                 getView().setVisibility(View.VISIBLE);
             }
             resetPlayerScrollToTop();
@@ -602,8 +630,13 @@ public class SongPlayerFragment extends Fragment {
     @Override
     public void onResume() {
         super.onResume();
+        swipeDismissGestureActive = false;
+        swipeDismissAnimationRunning = false;
         if (getView() != null && !isHidden()) {
-            getView().setTranslationY(0f);
+            if (!playerEnterAnimationRunning) {
+                getView().animate().cancel();
+                getView().setTranslationY(0f);
+            }
             getView().setVisibility(View.VISIBLE);
         }
         appInBackground = false;
@@ -682,6 +715,7 @@ public class SongPlayerFragment extends Fragment {
 
     @Override
     public void onDestroyView() {
+        cleanupAudioDeviceCallback();
         persistPositionForLoadedTrack();
         persistPlaybackSnapshot(true);
         cancelAutoplayRecovery();
@@ -820,6 +854,8 @@ public class SongPlayerFragment extends Fragment {
         if (tracks.isEmpty()) {
             return;
         }
+
+        pendingTrackChangeDirection = fromCompletion ? 1 : (delta >= 0 ? 1 : -1);
 
         if (!fromCompletion) {
             cancelOfflineCrossfade();
@@ -2159,6 +2195,124 @@ public class SongPlayerFragment extends Fragment {
         return seconds * 1000;
     }
 
+    private void handleManualTrackChangeCrossfade() {
+        if (!isAdded() || localExoMediaPlayer == null || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) {
+            playCurrentTrack();
+            return;
+        }
+
+        int crossfadeDurationMs = getOfflineCrossfadeDurationMs();
+        if (crossfadeDurationMs <= 0) {
+            playCurrentTrack();
+            return;
+        }
+
+        ExoMediaPlayer outgoing = localExoMediaPlayer;
+        int nextIndex = currentIndex;
+        if (nextIndex < 0 || nextIndex >= tracks.size()) {
+            playCurrentTrack();
+            return;
+        }
+
+        PlayerTrack nextTrack = tracks.get(nextIndex);
+        if (nextTrack == null || TextUtils.isEmpty(nextTrack.videoId)) {
+            playCurrentTrack();
+            return;
+        }
+
+        String nextUrl = null;
+        boolean nextIsNetwork = false;
+
+        // Try offline first
+        if (isAdded() && OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), nextTrack.videoId, nextTrack.duration)) {
+            File nextFile = OfflineAudioStore.getExistingOfflineAudioFile(requireContext(), nextTrack.videoId);
+            if (nextFile != null && nextFile.isFile() && nextFile.length() > 0L) {
+                nextUrl = nextFile.getAbsolutePath();
+            }
+        }
+
+        // Try prefetched online
+        if (nextUrl == null && TextUtils.equals(nextTrack.videoId, prefetchedNextVideoId) && !TextUtils.isEmpty(prefetchedNextUrl)) {
+            nextUrl = prefetchedNextUrl;
+            nextIsNetwork = true;
+        }
+
+        if (nextUrl == null) {
+            // No direct source ready for crossfade, start regular playback
+            playCurrentTrack();
+            return;
+        }
+
+        ExoMediaPlayer incoming = new ExoMediaPlayer(requireContext().getApplicationContext());
+        try {
+            incoming.setAudioAttributes(new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build());
+            
+            if (nextIsNetwork) {
+                Map<String, String> headers = new HashMap<>();
+                headers.put("User-Agent", STREAM_HTTP_USER_AGENT);
+                headers.put("Accept", "*/*");
+                incoming.setDataSource(requireContext().getApplicationContext(), Uri.parse(nextUrl), headers);
+            } else {
+                incoming.setDataSource(nextUrl);
+            }
+
+            incoming.prepare();
+            incoming.setVolume(0f, 0f);
+            incoming.start();
+        } catch (Exception e) {
+            Log.e(TAG, "ManualCrossfade: failed to prepare incoming player", e);
+            releaseSingleExoMediaPlayer(incoming);
+            playCurrentTrack();
+            return;
+        }
+
+        localCrossfadeIncomingPlayer = incoming;
+        localCrossfadeInProgress = true;
+        localCrossfadeTargetIndex = nextIndex;
+        localCrossfadeStartedAtMs = SystemClock.elapsedRealtime();
+        outgoing.setOnCompletionListener(null);
+
+        localCrossfadeTicker = new Runnable() {
+            @Override
+            public void run() {
+                if (!localCrossfadeInProgress || localExoMediaPlayer != outgoing) {
+                    return;
+                }
+
+                float progress = Math.min(
+                        1f,
+                        Math.max(0f, (SystemClock.elapsedRealtime() - localCrossfadeStartedAtMs)
+                        / (float) crossfadeDurationMs)
+                );
+                float outVolume = Math.max(0f, 1f - progress);
+                float inVolume = Math.max(0f, progress);
+
+                try {
+                    outgoing.setVolume(outVolume, outVolume);
+                } catch (Exception ignored) {
+                }
+                if (localCrossfadeIncomingPlayer != null) {
+                    try {
+                        localCrossfadeIncomingPlayer.setVolume(inVolume, inVolume);
+                    } catch (Exception ignored) {
+                    }
+                }
+
+                if (progress >= 1f) {
+                    finalizeOfflineCrossfade(outgoing);
+                    return;
+                }
+
+                localProgressHandler.postDelayed(this, OFFLINE_CROSSFADE_STEP_MS);
+            }
+        };
+
+        localProgressHandler.post(localCrossfadeTicker);
+    }
+
     private void startOfflineCrossfadeTransition(int crossfadeDurationMs) {
         if (!isAdded() || localExoMediaPlayer == null || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) {
             return;
@@ -2448,7 +2602,7 @@ public class SongPlayerFragment extends Fragment {
         notificationArtworkTarget = null;
     }
 
-    private void loadPlayerCover(@NonNull PlayerTrack track, boolean bootstrapArtwork) {
+    private void loadPlayerCover(@NonNull PlayerTrack track, boolean bootstrapArtwork, int animationDirection) {
         loadMediaNotificationArtwork(track);
         String requestVideoId = track.videoId == null ? "" : track.videoId.trim();
         String fallbackImageUrl = track.imageUrl == null ? "" : track.imageUrl.trim();
@@ -2470,12 +2624,10 @@ public class SongPlayerFragment extends Fragment {
         activeCoverVideoId = requestVideoId;
         clearPlayerCoverRequest();
 
-        if (!bootstrapArtwork && ivPlayerCover != null) {
+        if (!bootstrapArtwork) {
             ivPlayerCover.animate().cancel();
-            ivPlayerCover.animate()
-                    .alpha(0f)
-                    .setDuration(120L)
-                    .start();
+            ivPlayerCover.setAlpha(0f);
+            ivPlayerCover.setImageDrawable(null);
         }
 
         playerCoverTarget = new CustomTarget<Bitmap>() {
@@ -2486,7 +2638,7 @@ public class SongPlayerFragment extends Fragment {
                 }
 
                 // Move smartCrop to background thread to avoid UI lag
-                streamResolverExecutor.execute(() -> {
+                imageProcessingExecutor.execute(() -> {
                     Bitmap processedResource = YouTubeImageProcessor.smartCrop(resource);
                     
                     localProgressHandler.post(() -> {
@@ -2495,11 +2647,19 @@ public class SongPlayerFragment extends Fragment {
                         }
                         ivPlayerCover.setImageBitmap(processedResource);
                         ivPlayerCover.animate().cancel();
+                        ivPlayerCover.setTranslationX(0f);
                         ivPlayerCover.setAlpha(0f);
-                        ivPlayerCover.animate()
+                        if (!bootstrapArtwork) {
+                            ivPlayerCover.animate()
                                 .alpha(1f)
-                                .setDuration(240L)
+                                .setDuration(500L)
                                 .start();
+                        } else {
+                            ivPlayerCover.animate()
+                                .alpha(1f)
+                                .setDuration(500L)
+                                .start();
+                        }
                         adjustPlayerHeroForCover(processedResource);
                         cacheMediaNotificationArtwork(requestVideoId, processedResource);
                         updateMediaSessionMetadata();
@@ -2712,15 +2872,19 @@ public class SongPlayerFragment extends Fragment {
         updatePlayPauseIcon();
 
         boolean bootstrapArtwork = playerArtworkBootstrapPending;
+        int coverAnimationDirection = pendingTrackChangeDirection == 0 ? 1 : pendingTrackChangeDirection;
+        pendingTrackChangeDirection = 1;
         if (bootstrapArtwork) {
             showPlayerArtworkLoadingState();
             if (!isAdded()) return;
-            loadPlayerCover(track, bootstrapArtwork);
-            scheduleBackdropLoad(track, bootstrapArtwork);
         } else {
-            loadPlayerCover(track, bootstrapArtwork);
-            scheduleBackdropLoad(track, bootstrapArtwork);
+            if (ivPlayerCover != null) {
+                ivPlayerCover.animate().cancel();
+                ivPlayerCover.animate().alpha(0f).setDuration(180).start();
+            }
         }
+        loadPlayerCover(track, bootstrapArtwork, coverAnimationDirection);
+        scheduleBackdropLoad(track, bootstrapArtwork);
 
         updateMediaSessionMetadata();
         updateMediaSessionState();
@@ -3174,22 +3338,35 @@ public class SongPlayerFragment extends Fragment {
         if (root == null) {
             return;
         }
+
         root.post(() -> {
             View v = getView();
             if (v == null) {
+                playerEnterAnimationRunning = false;
                 return;
             }
+
             int distance = v.getHeight();
             if (distance <= 0) {
                 distance = v.getResources().getDisplayMetrics().heightPixels;
             }
+
+            playerEnterAnimationRunning = true;
             v.animate().cancel();
+            v.setVisibility(View.VISIBLE);
             v.setTranslationY(distance);
             v.setAlpha(1f);
             v.animate()
                     .translationY(0f)
-                    .setDuration(280L)
+                    .setDuration(300L)
                     .setInterpolator(new android.view.animation.PathInterpolator(0.4f, 0f, 0.2f, 1f))
+                    .withEndAction(() -> {
+                        playerEnterAnimationRunning = false;
+                        View currentView = getView();
+                        if (currentView != null) {
+                            currentView.setTranslationY(0f);
+                        }
+                    })
                     .start();
         });
     }
@@ -3527,6 +3704,9 @@ public class SongPlayerFragment extends Fragment {
         if (!isAdded()) {
             return false;
         }
+        if (swipeDismissGestureActive || swipeDismissAnimationRunning) {
+            return true;
+        }
         if (collapsingToMiniMode) {
             return true;
         }
@@ -3553,16 +3733,21 @@ public class SongPlayerFragment extends Fragment {
                     )
                     .hide(this)
                     .show(target);
+            transaction.commit();
         } else {
-            transaction
-                    .setCustomAnimations(
-                            R.anim.hold,
-                            R.anim.player_screen_exit
-                    )
-                    .remove(this);
+            if (getActivity() instanceof SearchActivity) {
+                requireActivity().onBackPressed();
+            } else {
+                transaction
+                        .setCustomAnimations(
+                                R.anim.hold,
+                                R.anim.player_screen_exit
+                        )
+                        .remove(this);
+                transaction.commit();
+            }
         }
 
-        transaction.commit();
         collapsingToMiniMode = false;
         return true;
     }
@@ -3808,21 +3993,11 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
-        long actions = PlaybackStateCompat.ACTION_PLAY
-                | PlaybackStateCompat.ACTION_PAUSE
-                | PlaybackStateCompat.ACTION_PLAY_PAUSE
-                | PlaybackStateCompat.ACTION_SKIP_TO_NEXT
-                | PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
-                | PlaybackStateCompat.ACTION_SEEK_TO;
-
         int state = isPlaying ? PlaybackStateCompat.STATE_PLAYING : PlaybackStateCompat.STATE_PAUSED;
         float speed = isPlaying ? 1f : 0f;
-        PlaybackStateCompat playbackState = new PlaybackStateCompat.Builder()
-                .setActions(actions)
-                .setState(state, Math.max(0, currentSeconds) * 1000L, speed)
-                .build();
-
-        mediaSession.setPlaybackState(playbackState);
+        
+        playbackStateBuilder.setState(state, Math.max(0, currentSeconds) * 1000L, speed);
+        mediaSession.setPlaybackState(playbackStateBuilder.build());
         mediaSession.setActive(true);
     }
 
@@ -4077,6 +4252,11 @@ public class SongPlayerFragment extends Fragment {
                             .putBoolean("stream_last_is_playing", effectivelyPlaying)
                             .putInt("yt_pos_" + currentTrack.videoId, Math.max(0, current))
                             .commit();
+                }
+                // Notify listeners that the playback snapshot was persisted
+                try {
+                    PlaybackEventBus.notifyPlaybackSnapshotUpdated();
+                } catch (Exception ignored) {
                 }
             } catch (Exception ignored) {
             }
@@ -4358,6 +4538,9 @@ public class SongPlayerFragment extends Fragment {
     private void updateDeviceInfo() {
         if (!isAdded()) return;
         AudioManager audioManager = (AudioManager) requireContext().getSystemService(Context.AUDIO_SERVICE);
+        if (audioManager == null) {
+            return;
+        }
         String deviceName = "Este dispositivo";
         int iconRes = R.drawable.ic_output_speaker;
 
@@ -4382,38 +4565,73 @@ public class SongPlayerFragment extends Fragment {
         if (ivDeviceIcon != null) ivDeviceIcon.setImageResource(iconRes);
     }
 
+    private void setupAudioDeviceCallback() {
+        if (!isAdded() || Build.VERSION.SDK_INT < Build.VERSION_CODES.M || audioDeviceCallbackRegistered) {
+            return;
+        }
+        AudioManager audioManager = (AudioManager) requireContext().getSystemService(Context.AUDIO_SERVICE);
+        if (audioManager == null) {
+            return;
+        }
+        if (audioDeviceCallback == null) {
+            audioDeviceCallback = new AudioDeviceCallback() {
+                @Override
+                public void onAudioDevicesAdded(AudioDeviceInfo[] addedDevices) {
+                    localProgressHandler.post(() -> {
+                        if (isAdded()) {
+                            updateDeviceInfo();
+                        }
+                    });
+                }
+
+                @Override
+                public void onAudioDevicesRemoved(AudioDeviceInfo[] removedDevices) {
+                    localProgressHandler.post(() -> {
+                        if (isAdded()) {
+                            updateDeviceInfo();
+                        }
+                    });
+                }
+            };
+        }
+        audioManager.registerAudioDeviceCallback(audioDeviceCallback, localProgressHandler);
+        audioDeviceCallbackRegistered = true;
+    }
+
+    private void cleanupAudioDeviceCallback() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || !audioDeviceCallbackRegistered) {
+            return;
+        }
+        Context context = getContext();
+        if (context == null) {
+            return;
+        }
+        AudioManager audioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
+        if (audioManager != null && audioDeviceCallback != null) {
+            audioManager.unregisterAudioDeviceCallback(audioDeviceCallback);
+        }
+        audioDeviceCallbackRegistered = false;
+    }
+
     private void showQueueBottomSheet() {
         if (!isAdded()) return;
-        
-        Log.d(TAG, "showQueueBottomSheet: tracks.size=" + tracks.size() + ", currentIndex=" + currentIndex);
-        
+
         BottomSheetDialog bottomSheetDialog = new BottomSheetDialog(requireContext());
         View bsv = getLayoutInflater().inflate(R.layout.bottom_sheet_player_queue, null);
         bottomSheetDialog.setContentView(bsv);
 
         RecyclerView rvQueue = bsv.findViewById(R.id.rvQueue);
+        TextView tvEmptyQueue = bsv.findViewById(R.id.tvEmptyQueue);
+        ProgressBar pbQueueLoading = bsv.findViewById(R.id.pbQueueLoading);
         LinearLayoutManager layoutManager = new LinearLayoutManager(requireContext());
         rvQueue.setLayoutManager(layoutManager);
         rvQueue.setHasFixedSize(false);
-        
-        nextUpTracks.clear();
-        // Include current track at position 0, then the rest
-        if (!tracks.isEmpty() && currentIndex >= 0 && currentIndex < tracks.size()) {
-            nextUpTracks.add(tracks.get(currentIndex)); // Now playing
-        }
-        for (int i = 1; i < tracks.size(); i++) {
-            int idx = (currentIndex + i) % tracks.size();
-            nextUpTracks.add(tracks.get(idx));
-        }
-        
-        Log.d(TAG, "showQueueBottomSheet: nextUpTracks.size=" + nextUpTracks.size());
-        for (int i = 0; i < Math.min(5, nextUpTracks.size()); i++) {
-            Log.d(TAG, "  item[" + i + "]=" + nextUpTracks.get(i).title);
-        }
-        
+
+        pbQueueLoading.setVisibility(View.VISIBLE);
+        rvQueue.setVisibility(View.GONE);
+        tvEmptyQueue.setVisibility(View.GONE);
+
         nextUpAdapter = new NextUpAdapter(nextUpTracks, position -> {
-            Log.d(TAG, "Queue item tapped: position=" + position);
-            // Position 0 is the currently playing track - ignore clicks on it
             if (position == 0) {
                 return;
             }
@@ -4428,7 +4646,8 @@ public class SongPlayerFragment extends Fragment {
                 }
                 
                 if (realIdx != -1) {
-                    Log.d(TAG, "Switching to track from queue: realIdx=" + realIdx);
+                    int previousIndex = currentIndex;
+                    pendingTrackChangeDirection = realIdx >= previousIndex ? 1 : -1;
                     if (!TextUtils.equals(tapped.videoId, loadedVideoId)) {
                         persistPositionForLoadedTrack();
                     }
@@ -4448,29 +4667,14 @@ public class SongPlayerFragment extends Fragment {
         });
         
         rvQueue.setAdapter(nextUpAdapter);
-        nextUpAdapter.notifyDataSetChanged();
-        Log.d(TAG, "showQueueBottomSheet: adapter set, count=" + nextUpAdapter.getItemCount());
-        
-        // Handle empty state
-        TextView tvEmptyQueue = bsv.findViewById(R.id.tvEmptyQueue);
-        if (nextUpTracks.isEmpty()) {
-            Log.d(TAG, "showQueueBottomSheet: nextUpTracks is EMPTY, showing empty view");
-            rvQueue.setVisibility(View.GONE);
-            tvEmptyQueue.setVisibility(View.VISIBLE);
-        } else {
-            Log.d(TAG, "showQueueBottomSheet: nextUpTracks is NOT empty (" + nextUpTracks.size() + "), showing RecyclerView");
-            rvQueue.setVisibility(View.VISIBLE);
-            tvEmptyQueue.setVisibility(View.GONE);
-        }
 
         bottomSheetDialog.setOnShowListener(dialog -> {
             BottomSheetDialog d = (BottomSheetDialog) dialog;
             View bottomSheet = d.findViewById(com.google.android.material.R.id.design_bottom_sheet);
             if (bottomSheet != null) {
                 bottomSheet.setBackgroundResource(android.R.color.transparent);
-                // Set minimum height for the bottom sheet
                 BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(bottomSheet);
-                behavior.setPeekHeight(400); // Minimum height when collapsed
+                behavior.setSkipCollapsed(true);
                 behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
             }
         });
@@ -4500,38 +4704,97 @@ public class SongPlayerFragment extends Fragment {
         nextUpItemTouchHelper.attachToRecyclerView(rvQueue);
         
         bottomSheetDialog.show();
+
+        streamResolverExecutor.execute(() -> {
+            List<PlayerTrack> computedQueue = new ArrayList<>();
+            if (!tracks.isEmpty() && currentIndex >= 0 && currentIndex < tracks.size()) {
+                computedQueue.add(tracks.get(currentIndex));
+            }
+            for (int i = 1; i < tracks.size(); i++) {
+                int idx = (currentIndex + i) % tracks.size();
+                computedQueue.add(tracks.get(idx));
+            }
+
+            localProgressHandler.post(() -> {
+                if (!isAdded() || !bottomSheetDialog.isShowing()) {
+                    return;
+                }
+
+                nextUpTracks.clear();
+                nextUpTracks.addAll(computedQueue);
+                nextUpAdapter.notifyDataSetChanged();
+
+                pbQueueLoading.setVisibility(View.GONE);
+                if (nextUpTracks.isEmpty()) {
+                    rvQueue.setVisibility(View.GONE);
+                    tvEmptyQueue.setVisibility(View.VISIBLE);
+                } else {
+                    rvQueue.setVisibility(View.VISIBLE);
+                    tvEmptyQueue.setVisibility(View.GONE);
+                }
+            });
+        });
     }
     private void setupSwipeToDismiss(View root) {
         NestedScrollView scrollView = root.findViewById(R.id.svSongPlayerContent);
         if (scrollView == null) return;
+        swipeDismissGestureActive = false;
+        swipeDismissAnimationRunning = false;
+        swipeDismissTouchSlopPx = ViewConfiguration.get(requireContext()).getScaledTouchSlop();
+        swipeDismissMinDistancePx = Math.max(dpToPx(96), Math.round(root.getResources().getDisplayMetrics().heightPixels * 0.12f));
 
         View.OnTouchListener swipeListener = new View.OnTouchListener() {
             private float initialTouchY;
             private float dragStartY;
+            private float lastTouchY;
+            private long initialTouchTimeMs;
             private boolean isDragging = false;
+            private boolean canStartFromThisGesture = false;
 
             @Override
             public boolean onTouch(View v, MotionEvent event) {
-                switch (event.getAction()) {
+                switch (event.getActionMasked()) {
                     case MotionEvent.ACTION_DOWN:
+                        if (swipeDismissAnimationRunning) {
+                            return true;
+                        }
+                        playerEnterAnimationRunning = false;
+                        root.animate().cancel();
                         initialTouchY = event.getRawY();
+                        dragStartY = initialTouchY;
+                        lastTouchY = initialTouchY;
+                        initialTouchTimeMs = event.getEventTime();
                         isDragging = false;
+                        swipeDismissGestureActive = false;
+                        canStartFromThisGesture = scrollView.getScrollY() <= swipeDismissTouchSlopPx;
+                        root.setTranslationY(0f);
                         break;
 
                     case MotionEvent.ACTION_MOVE:
+                        if (swipeDismissAnimationRunning) {
+                            return true;
+                        }
                         float currentY = event.getRawY();
                         float totalDeltaY = currentY - initialTouchY;
+                        lastTouchY = currentY;
+
+                        if (!canStartFromThisGesture && scrollView.getScrollY() <= swipeDismissTouchSlopPx && totalDeltaY > 0f) {
+                            canStartFromThisGesture = true;
+                            dragStartY = currentY;
+                            totalDeltaY = 0f;
+                        }
 
                         // Start dragging if we are at the top and moving down
-                        if (!isDragging && totalDeltaY > 10 && scrollView.getScrollY() <= 10) {
+                        if (!isDragging && canStartFromThisGesture && totalDeltaY > swipeDismissTouchSlopPx) {
                             isDragging = true;
-                            dragStartY = currentY; 
+                            swipeDismissGestureActive = true;
+                            dragStartY = currentY - swipeDismissTouchSlopPx;
                             scrollView.requestDisallowInterceptTouchEvent(true);
                         }
 
                         if (isDragging) {
                             float dragDeltaY = currentY - dragStartY;
-                            root.setTranslationY(Math.max(0, dragDeltaY));
+                            root.setTranslationY(Math.max(0f, dragDeltaY * 0.92f));
                             return true;
                         }
                         break;
@@ -4539,14 +4802,24 @@ public class SongPlayerFragment extends Fragment {
                     case MotionEvent.ACTION_UP:
                     case MotionEvent.ACTION_CANCEL:
                         if (isDragging) {
-                            float finalDragDeltaY = event.getRawY() - dragStartY;
-                            if (finalDragDeltaY > root.getHeight() / 6 || finalDragDeltaY > 300) {
+                            float finalDragDeltaY = Math.max(0f, lastTouchY - dragStartY);
+                            long elapsedMs = Math.max(1L, event.getEventTime() - initialTouchTimeMs);
+                            float velocityY = finalDragDeltaY / elapsedMs * 1000f;
+                            boolean shouldDismiss = finalDragDeltaY >= swipeDismissMinDistancePx
+                                    || finalDragDeltaY > root.getHeight() * 0.18f
+                                    || (finalDragDeltaY > dpToPx(48) && velocityY > dpToPx(900));
+
+                            if (shouldDismiss && event.getActionMasked() == MotionEvent.ACTION_UP) {
+                                swipeDismissAnimationRunning = true;
+                                swipeDismissGestureActive = false;
                                 // Dismiss
+                                root.animate().cancel();
                                 root.animate()
                                         .translationY(root.getHeight())
                                         .setDuration(250)
                                         .withEndAction(() -> {
                                             isDragging = false;
+                                            swipeDismissAnimationRunning = false;
                                             if (isAdded() && getActivity() instanceof MainActivity) {
                                                 ((MainActivity) getActivity()).externalClosePlayerImmediately();
                                             }
@@ -4554,9 +4827,14 @@ public class SongPlayerFragment extends Fragment {
                                         .start();
                             } else {
                                 // Restore
+                                root.animate().cancel();
                                 root.animate()
                                         .translationY(0)
                                         .setDuration(200)
+                                        .withEndAction(() -> {
+                                            swipeDismissGestureActive = false;
+                                            swipeDismissAnimationRunning = false;
+                                        })
                                         .start();
                             }
                             isDragging = false;
@@ -4570,8 +4848,35 @@ public class SongPlayerFragment extends Fragment {
         };
 
         // Attach to both to ensure we catch the gesture
-        scrollView.setOnTouchListener(swipeListener);
-        root.setOnTouchListener(swipeListener);
+        attachSwipeDismissListener(root, swipeListener);
+        attachSwipeDismissListener(scrollView, swipeListener);
+        attachSwipeDismissListener(root.findViewById(R.id.clPlayerContent), swipeListener);
+        attachSwipeDismissListener(root.findViewById(R.id.ivPlayerBackdrop), swipeListener);
+        attachSwipeDismissListener(root.findViewById(R.id.flPlayerHero), swipeListener);
+        attachSwipeDismissListener(root.findViewById(R.id.ivPlayerCover), swipeListener);
+        attachSwipeDismissListener(root.findViewById(R.id.llPlayerInfo), swipeListener);
+        attachSwipeDismissListener(root.findViewById(R.id.hsSocialActions), swipeListener);
+        attachSwipeDismissListener(root.findViewById(R.id.actionLike), swipeListener);
+        attachSwipeDismissListener(root.findViewById(R.id.actionDislike), swipeListener);
+        attachSwipeDismissListener(root.findViewById(R.id.actionComments), swipeListener);
+        attachSwipeDismissListener(root.findViewById(R.id.actionFavorite), swipeListener);
+        attachSwipeDismissListener(root.findViewById(R.id.sbPlaybackProgress), swipeListener);
+        attachSwipeDismissListener(root.findViewById(R.id.llPlayerControls), swipeListener);
+        attachSwipeDismissListener(root.findViewById(R.id.btnShuffle), swipeListener);
+        attachSwipeDismissListener(root.findViewById(R.id.btnPrev), swipeListener);
+        attachSwipeDismissListener(root.findViewById(R.id.btnPlayPause), swipeListener);
+        attachSwipeDismissListener(root.findViewById(R.id.btnNext), swipeListener);
+        attachSwipeDismissListener(root.findViewById(R.id.btnRepeat), swipeListener);
+        attachSwipeDismissListener(root.findViewById(R.id.llPlayerFooter), swipeListener);
+        attachSwipeDismissListener(root.findViewById(R.id.llDeviceInfo), swipeListener);
+        attachSwipeDismissListener(root.findViewById(R.id.llQueueTrigger), swipeListener);
+    }
+
+    private void attachSwipeDismissListener(@Nullable View view, @NonNull View.OnTouchListener listener) {
+        if (view == null) {
+            return;
+        }
+        view.setOnTouchListener(listener);
     }
 
     private void releaseLocalExoMediaPlayer() {
@@ -4654,11 +4959,13 @@ public class SongPlayerFragment extends Fragment {
 
         ivPlayerBackdrop.animate().cancel();
         applyPlayerBackdropBlur();
-        float targetAlpha = ivPlayerBackdrop.getAlpha();
-        if (targetAlpha <= 0f) {
-            targetAlpha = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? 0.68f : 0.35f;
-        }
-        ivPlayerBackdrop.setAlpha(targetAlpha);
+        float targetAlpha = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? 0.68f : 0.35f;
+        
+        ivPlayerBackdrop.setAlpha(0f);
+        ivPlayerBackdrop.animate()
+            .alpha(targetAlpha)
+            .setDuration(PLAYER_BACKDROP_FADE_IN_DURATION_MS)
+            .start();
     }
 
     private void clearMediaNotificationArtwork() {
@@ -4803,10 +5110,8 @@ public class SongPlayerFragment extends Fragment {
     private void fadeOutBackdropToBlack() {
         if (ivPlayerBackdrop == null) return;
         ivPlayerBackdrop.animate().cancel();
-        ivPlayerBackdrop.animate()
-                .alpha(0f)
-                .setDuration(220)
-                .start();
+        ivPlayerBackdrop.setAlpha(0f);
+        ivPlayerBackdrop.setImageDrawable(null);
     }
 }
     
