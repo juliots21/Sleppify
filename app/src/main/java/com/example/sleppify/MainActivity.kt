@@ -17,9 +17,13 @@ import android.os.Build
 import android.os.Bundle
 import android.text.TextUtils
 import android.view.View
+import android.view.KeyEvent
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
+import android.provider.Settings
+import android.transition.TransitionManager
+import android.util.Log
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
@@ -41,6 +45,7 @@ import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.google.android.material.button.MaterialButton
 import com.google.firebase.auth.FirebaseUser
 import kotlinx.coroutines.*
+import java.lang.ref.WeakReference
 import java.util.ArrayList
 
 /**
@@ -76,7 +81,26 @@ class MainActivity : AppCompatActivity() {
         const val ACTION_PLAY_FROM_SEARCH = "com.example.sleppify.ACTION_PLAY_FROM_SEARCH"
         const val ACTION_PLAY_NEXT = "com.example.sleppify.ACTION_PLAY_NEXT"
         const val ACTION_ADD_TO_QUEUE = "com.example.sleppify.ACTION_ADD_TO_QUEUE"
+        const val ACTION_OPEN_CURRENT_PLAYER = "com.example.sleppify.ACTION_OPEN_CURRENT_PLAYER"
+        const val ACTION_TOGGLE_CURRENT_PLAYBACK = "com.example.sleppify.ACTION_TOGGLE_CURRENT_PLAYBACK"
+        const val EXTRA_OPENED_FROM_SEARCH_ACTIVITY = "com.example.sleppify.EXTRA_OPENED_FROM_SEARCH_ACTIVITY"
         private const val REQUEST_CODE_RECORD_AUDIO = 4107
+        private const val AMOLED_APPLY_DEBOUNCE_MS = 1500L
+
+        @Volatile
+        private var activeInstance: WeakReference<MainActivity>? = null
+
+        @JvmStatic
+        fun dispatchSearchPlayback(intent: Intent): Boolean {
+            val activity = activeInstance?.get() ?: return false
+            if (!activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                return false
+            }
+            activity.runOnUiThread {
+                activity.handlePlayFromSearchIntent(intent)
+            }
+            return true
+        }
     }
 
     private lateinit var bottomNav: BottomNavigationView
@@ -94,7 +118,8 @@ class MainActivity : AppCompatActivity() {
     private var forceInitialOauthGate = false
     private var loginGateAuthInProgress = false
     private var isNavigating = false
-    
+    private var openedFromSearchActivity = false
+
     private val authManagerLazy: AuthManager by lazy { AuthManager.getInstance(this) }
 
     /** Exposed for Java callers (e.g. [WeeklySchedulerFragment]). */
@@ -129,6 +154,11 @@ class MainActivity : AppCompatActivity() {
     private var headerSettingsTypeface: Typeface? = null
     private var audioManager: AudioManager? = null
 
+    // AMOLED theme change optimization - debouncing state
+    private var lastAmoledApplyTimeMs = 0L
+    private var lastAmoledEnabledState = false
+    private var amoledApplyPending = false
+
     private val outputDeviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>?) {
             syncAudioProfile(true)
@@ -161,6 +191,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        activeInstance = WeakReference(this)
         applyThemeModeFromSettings()
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(R.layout.activity_main)
@@ -225,6 +256,13 @@ class MainActivity : AppCompatActivity() {
 
         if (intent?.getBooleanExtra("SHOW_SETTINGS", false) == true) {
             enterSettings()
+        }
+        if (intent?.action == ACTION_PLAY_FROM_SEARCH
+            || intent?.action == ACTION_PLAY_NEXT
+            || intent?.action == ACTION_ADD_TO_QUEUE
+            || intent?.action == ACTION_OPEN_CURRENT_PLAYER
+            || intent?.action == ACTION_TOGGLE_CURRENT_PLAYBACK) {
+            bottomNav.post { handlePlayFromSearchIntent(intent) }
         }
     }
 
@@ -356,6 +394,8 @@ class MainActivity : AppCompatActivity() {
         setIntent(intent)
         if (intent.action == ACTION_PLAY_FROM_SEARCH || intent.action == ACTION_PLAY_NEXT || intent.action == ACTION_ADD_TO_QUEUE) {
             handlePlayFromSearchIntent(intent)
+        } else if (intent.action == ACTION_OPEN_CURRENT_PLAYER || intent.action == ACTION_TOGGLE_CURRENT_PLAYBACK) {
+            handlePlayFromSearchIntent(intent)
         }
         if (intent.getBooleanExtra("SHOW_SETTINGS", false)) {
             enterSettings()
@@ -378,22 +418,56 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handlePlayFromSearchIntent(intent: Intent) {
+        openedFromSearchActivity = intent.getBooleanExtra(EXTRA_OPENED_FROM_SEARCH_ACTIVITY, false)
+
+        if (currentMainNavItemId != R.id.nav_music) {
+            bottomNav.selectedItemId = R.id.nav_music
+            switchToMainModule(R.id.nav_music)
+        }
+
+        val invokedNow = invokeSearchActionOnMusicFragment(intent)
+        if (!invokedNow) {
+            bottomNav.postDelayed({ invokeSearchActionOnMusicFragment(intent) }, 220L)
+        }
+    }
+
+    private fun invokeSearchActionOnMusicFragment(intent: Intent): Boolean {
         val music = supportFragmentManager.findFragmentByTag(TAG_MODULE_MUSIC)
-        if (music != null && music.javaClass.simpleName == "MusicPlayerFragment") {
-            try {
-                val methodName = when (intent.action) {
-                    ACTION_PLAY_NEXT -> "playNextFromSearch"
-                    ACTION_ADD_TO_QUEUE -> "addToQueueFromSearch"
-                    else -> "playTrackFromSearch"
-                }
-                val method = music.javaClass.getMethod(methodName, Intent::class.java)
-                method.invoke(music, intent)
-                if (currentMainNavItemId != R.id.nav_music) {
-                    bottomNav.selectedItemId = R.id.nav_music
-                }
-            } catch (e: Exception) {
-                // Method not found or invocation failed
+        Log.d("MainActivity", "invokeSearchActionOnMusicFragment: musicFragment=$music")
+        if (music == null || music.javaClass.simpleName != "MusicPlayerFragment") {
+            return false
+        }
+        return try {
+            val methodName = when (intent.action) {
+                ACTION_PLAY_NEXT -> "playNextFromSearch"
+                ACTION_ADD_TO_QUEUE -> "addToQueueFromSearch"
+                ACTION_OPEN_CURRENT_PLAYER -> "openPlayerFromMiniBar"
+                ACTION_TOGGLE_CURRENT_PLAYBACK -> "toggleMiniPlayback"
+                else -> "playTrackFromSearch"
             }
+
+            // Try method with Intent parameter first (common for play actions)
+            try {
+                val methodWithIntent = music.javaClass.getDeclaredMethod(methodName, Intent::class.java)
+                methodWithIntent.isAccessible = true
+                methodWithIntent.invoke(music, intent)
+                return true
+            } catch (noIntent: NoSuchMethodException) {
+                // Fall through and try no-arg method
+            }
+
+            try {
+                val methodNoArg = music.javaClass.getDeclaredMethod(methodName)
+                methodNoArg.isAccessible = true
+                methodNoArg.invoke(music)
+                return true
+            } catch (noArgEx: NoSuchMethodException) {
+                Log.e("MainActivity", "Method $methodName not found on MusicPlayerFragment", noArgEx)
+                return false
+            }
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Error invoking search playback method: ${e.message}", e)
+            false
         }
     }
 
@@ -443,9 +517,66 @@ class MainActivity : AppCompatActivity() {
     private fun applyThemeModeFromSettings() {
         val settingsPrefs = getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, MODE_PRIVATE)
         val amoledEnabled = settingsPrefs.getBoolean(CloudSyncManager.KEY_AMOLED_MODE_ENABLED, false)
+        
+        // Debouncing: avoid redundant theme changes
+        val now = System.currentTimeMillis()
+        
+        // No change needed if the state is identical and we applied recently
+        if (amoledEnabled == lastAmoledEnabledState && (now - lastAmoledApplyTimeMs) < AMOLED_APPLY_DEBOUNCE_MS) {
+            Log.d("MainActivity", "AMOLED: Skipping redundant change (state unchanged, within debounce window)")
+            return
+        }
+        
+        // If we're already pending, don't queue another change
+        if (amoledApplyPending && amoledEnabled == lastAmoledEnabledState) {
+            Log.d("MainActivity", "AMOLED: Skipping - apply already pending")
+            return
+        }
+        
+        // Check if we actually need to change the theme
         val targetMode = if (amoledEnabled) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO
-        if (AppCompatDelegate.getDefaultNightMode() != targetMode) {
+        if (AppCompatDelegate.getDefaultNightMode() == targetMode) {
+            Log.d("MainActivity", "AMOLED: No change needed (mode already $targetMode)")
+            lastAmoledEnabledState = amoledEnabled
+            lastAmoledApplyTimeMs = now
+            amoledApplyPending = false
+            return
+        }
+        
+        // Mark as pending to avoid multiple rapid changes
+        amoledApplyPending = true
+        lastAmoledEnabledState = amoledEnabled
+        lastAmoledApplyTimeMs = now
+        
+        val applyStartTime = System.currentTimeMillis()
+        Log.d("MainActivity", "AMOLED: Starting theme change to ${if (amoledEnabled) "DARK" else "LIGHT"}")
+        
+        // Move theme change to background thread to avoid blocking UI
+        lifecycleScope.launch(Dispatchers.Main) {
+            // Small delay to allow UI to render first
+            delay(50)
+            
+            // Execute on IO thread to prevent UI blocking
+            withContext(Dispatchers.IO) {
+                Thread.sleep(10) // Minimal IO marker
+            }
+            
+            // Apply the theme change back on Main thread (required by AppCompat)
+            val applyMid = System.currentTimeMillis()
             AppCompatDelegate.setDefaultNightMode(targetMode)
+            val applyEnd = System.currentTimeMillis()
+            
+            amoledApplyPending = false
+            
+            // Log performance metrics
+            val totalTime = applyEnd - applyStartTime
+            val applyTime = applyEnd - applyMid
+            Log.d("MainActivity", "AMOLED: Theme applied in ${totalTime}ms (actual apply: ${applyTime}ms) - enabled=$amoledEnabled")
+            
+            // Warn if took too long
+            if (totalTime > 200) {
+                Log.w("MainActivity", "AMOLED: Theme change took longer than expected: ${totalTime}ms")
+            }
         }
     }
 
@@ -466,6 +597,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        if (activeInstance?.get() === this) {
+            activeInstance = null
+        }
         cloudSyncManager.setSyncStateListener(null)
         super.onDestroy()
     }
@@ -651,6 +785,11 @@ class MainActivity : AppCompatActivity() {
     private fun applyHydratedUserState(onSuccess: Runnable?) {
         tvLoginStatus?.text = "Sincronizando ajustes..."
         val previousNightMode = AppCompatDelegate.getDefaultNightMode()
+        
+        // Take a snapshot of current fragment states before theme change
+        val playingFragmentTag = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER)?.takeIf { it.isAdded && !it.isHidden }?.let { TAG_SONG_PLAYER }
+        val activeModuleId = currentMainNavItemId
+        
         applyThemeModeFromSettings()
         val amoledChanged = previousNightMode != AppCompatDelegate.getDefaultNightMode()
 
@@ -660,13 +799,28 @@ class MainActivity : AppCompatActivity() {
             if (!isFinishing && !isDestroyed) {
                 notifyHydrationCompleted()
                 syncAudioEffectsServiceFromPreferences(true)
+                
+                // Restore fragment visibility if needed
+                if (!playingFragmentTag.isNullOrEmpty()) {
+                    supportFragmentManager.findFragmentByTag(playingFragmentTag)?.let {
+                        if (!it.isAdded) {
+                            Log.d("MainActivity", "Re-attaching $playingFragmentTag after theme change")
+                            supportFragmentManager.beginTransaction()
+                                .setReorderingAllowed(true)
+                                .show(it)
+                                .commit()
+                        }
+                    }
+                }
+                
                 // AI prefetch intentionally removed here to avoid burning quota on sync.
                 onSuccess?.run()
             }
         }
 
         if (amoledChanged) {
-            lifecycleScope.launch { delay(120L); finalize() }
+            // Longer delay for theme change to complete smoothly
+            lifecycleScope.launch { delay(250L); finalize() }
         } else {
             finalize()
         }
@@ -951,6 +1105,10 @@ class MainActivity : AppCompatActivity() {
     private fun handleSongPlayerBackPressed(): Boolean {
         val player = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER) as? SongPlayerFragment ?: return false
         if (!player.isAdded || player.isHidden) return false
+        if (openedFromSearchActivity) {
+            finish()
+            return true
+        }
         if (player.externalTryEnterMiniMode()) return true
 
         snapshotStreamingScreenBeforeNavigation()
@@ -975,7 +1133,12 @@ class MainActivity : AppCompatActivity() {
     fun externalClosePlayerImmediately() {
         val player = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER) as? SongPlayerFragment ?: return
         if (!player.isAdded || player.isHidden) return
-        
+
+        if (openedFromSearchActivity) {
+            finish()
+            return
+        }
+
         val fallback = resolveSongPlayerReturnTarget(player.externalGetReturnTargetTag())
         supportFragmentManager.beginTransaction().apply {
             setReorderingAllowed(true)

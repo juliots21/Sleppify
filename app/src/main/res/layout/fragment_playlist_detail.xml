@@ -1,118 +1,152 @@
-<?xml version="1.0" encoding="utf-8"?>
-<androidx.swiperefreshlayout.widget.SwipeRefreshLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
-    android:id="@+id/swipePlaylistRefresh"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="@color/surface_dark">
-
-    <androidx.constraintlayout.widget.ConstraintLayout
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/surface_dark"
     tools:context=".PlaylistDetailFragment">
 
-    <!-- Header row with Biblioteca title and search -->
-    <LinearLayout
-        android:id="@+id/llLibraryHeaderRow"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:background="@color/surface_dark"
-        android:elevation="4dp"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingTop="4dp"
-        android:paddingBottom="4dp"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent">
-
-        <TextView
-            android:id="@+id/tvLibraryTitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Biblioteca"
-            android:textColor="@color/text_primary"
-            android:textSize="22sp"
-            android:textStyle="bold" />
-
-        <LinearLayout
-            android:id="@+id/llLibraryInlineSearch"
-            android:layout_width="0dp"
-            android:layout_height="40dp"
-            android:layout_marginStart="12dp"
-            android:layout_weight="1"
-            android:background="@drawable/bg_music_chip_inactive"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingStart="10dp"
-            android:paddingEnd="6dp">
-
-            <ImageView
-                android:layout_width="16dp"
-                android:layout_height="16dp"
-                android:src="@android:drawable/ic_menu_search"
-                app:tint="@color/text_secondary" />
-
-            <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/etLibraryQuickSearch"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1"
-                android:background="@android:color/transparent"
-                android:hint="Buscar canciones"
-                android:imeOptions="actionSearch"
-                android:inputType="text"
-                android:paddingStart="8dp"
-                android:paddingEnd="4dp"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="13sp" />
-
-            <ImageView
-                android:id="@+id/ivLibraryQuickClear"
-                android:layout_width="28dp"
-                android:layout_height="28dp"
-                android:layout_marginStart="4dp"
-                android:alpha="0.88"
-                android:background="@drawable/bg_library_inline_clear"
-                android:clickable="true"
-                android:contentDescription="Limpiar búsqueda"
-                android:focusable="true"
-                android:padding="6dp"
-                android:src="@android:drawable/ic_menu_close_clear_cancel"
-                android:visibility="gone"
-                app:tint="@color/text_secondary" />
-        </LinearLayout>
-    </LinearLayout>
-
-    <LinearLayout
-        android:id="@+id/llPlaylistBody"
+    <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+        android:id="@+id/swipePlaylistRefresh"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:orientation="horizontal"
+        app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toTopOf="@id/llMiniPlayer"
-        app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/llLibraryHeaderRow">
+        app:layout_constraintEnd_toEndOf="parent">
 
-        <include layout="@layout/layout_tv_split_player" />
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent">
 
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/rvPlaylistContent"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1.8"
-            android:clipToPadding="false"
-            android:paddingBottom="102dp"
-            android:nextFocusLeft="@id/btnTvPlayPause"
-            android:focusable="true"
-            android:focusableInTouchMode="true"
-            android:descendantFocusability="afterDescendants"
-            tools:itemCount="8"
-            tools:listitem="@layout/item_playlist_track" />
-    </LinearLayout>
+            <!-- Header row with Biblioteca title and search -->
+            <LinearLayout
+                android:id="@+id/llLibraryHeaderRow"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:background="@color/surface_dark"
+                android:elevation="4dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent">
+
+                <TextView
+                    android:id="@+id/tvLibraryTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Biblioteca"
+                    android:textColor="@color/text_primary"
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:id="@+id/llLibraryInlineSearch"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="12dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_music_chip_inactive"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="6dp">
+
+                    <ImageView
+                        android:layout_width="16dp"
+                        android:layout_height="16dp"
+                        android:src="@android:drawable/ic_menu_search"
+                        app:tint="@color/text_secondary" />
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etLibraryQuickSearch"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:background="@android:color/transparent"
+                        android:hint="Buscar canciones"
+                        android:imeOptions="actionSearch"
+                        android:inputType="text"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="4dp"
+                        android:textColor="@color/text_primary"
+                        android:textColorHint="@color/text_secondary"
+                        android:textSize="13sp" />
+
+                    <ImageView
+                        android:id="@+id/ivLibraryQuickClear"
+                        android:layout_width="28dp"
+                        android:layout_height="28dp"
+                        android:layout_marginStart="4dp"
+                        android:alpha="0.88"
+                        android:background="@drawable/bg_library_inline_clear"
+                        android:clickable="true"
+                        android:contentDescription="Limpiar búsqueda"
+                        android:focusable="true"
+                        android:padding="6dp"
+                        android:src="@android:drawable/ic_menu_close_clear_cancel"
+                        android:visibility="gone"
+                        app:tint="@color/text_secondary" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/llPlaylistBody"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:orientation="horizontal"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/llLibraryHeaderRow">
+
+                <include layout="@layout/layout_tv_split_player" />
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/rvPlaylistContent"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1.8"
+                    android:clipToPadding="false"
+                    android:paddingBottom="18dp"
+                    android:nextFocusLeft="@id/btnTvPlayPause"
+                    android:focusable="true"
+                    android:focusableInTouchMode="true"
+                    android:descendantFocusability="afterDescendants"
+                    tools:itemCount="8"
+                    tools:listitem="@layout/item_playlist_track" />
+            </LinearLayout>
+
+            <androidx.constraintlayout.widget.ConstraintLayout
+                android:id="@+id/flPlaylistLoadingOverlay"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:background="@color/surface_dark"
+                android:clickable="true"
+                android:focusable="true"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent">
+
+                <ProgressBar
+                    android:id="@+id/pbPlaylistLoading"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:indeterminate="true"
+                    android:indeterminateTint="@android:color/white"
+                    app:layout_constraintBottom_toBottomOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintTop_toTopOf="parent"
+                    app:layout_constraintVertical_bias="0.5" />
+            </androidx.constraintlayout.widget.ConstraintLayout>
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
+    </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
 
     <LinearLayout
         android:id="@+id/llMiniPlayer"
@@ -206,31 +240,4 @@
             android:thumbTint="@android:color/transparent" />
     </LinearLayout>
 
-    <androidx.constraintlayout.widget.ConstraintLayout
-        android:id="@+id/flPlaylistLoadingOverlay"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:background="@color/surface_dark"
-        android:clickable="true"
-        android:focusable="true"
-        app:layout_constraintBottom_toTopOf="@id/llMiniPlayer"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent">
-
-        <ProgressBar
-            android:id="@+id/pbPlaylistLoading"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:indeterminate="true"
-            android:indeterminateTint="@android:color/white"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintVertical_bias="0.5" />
-    </androidx.constraintlayout.widget.ConstraintLayout>
-
-    </androidx.constraintlayout.widget.ConstraintLayout>
-
-</androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+</androidx.constraintlayout.widget.ConstraintLayout>

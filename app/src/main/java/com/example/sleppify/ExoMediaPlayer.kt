@@ -67,7 +67,15 @@ class ExoMediaPlayer {
 
     constructor(context: Context) {
         this.appContext = context.applicationContext
-        val player = ExoPlayer.Builder(appContext).build()
+        val audioAttributes = androidx.media3.common.AudioAttributes.Builder()
+            .setUsage(C.USAGE_MEDIA)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+            .build()
+
+        val player = ExoPlayer.Builder(appContext)
+            .setAudioAttributes(audioAttributes, true)
+            .setHandleAudioBecomingNoisy(true)
+            .build()
         this.exoPlayer = player
         this.ownsPlayer = true
         this.audioSessionId = player.audioSessionId
@@ -272,8 +280,10 @@ class ExoMediaPlayer {
         exoPlayer?.let { player ->
             try {
                 player.removeListener(playerListener)
+                // SIEMPRE detener la reproducción para evitar sonido duplicado
+                player.stop()
+                player.clearMediaItems()
                 if (ownsPlayer) {
-                    player.stop()
                     player.release()
                 }
             } catch (e: Exception) {

@@ -140,7 +140,7 @@ public class PlaylistDetailFragment extends Fragment {
     private static final String TAG_PLAYLIST_DETAIL = "playlist_detail";
     private static final String TAG_MODULE_MUSIC = "module_music";
     private static final String TAG_OFFLINE_DOWNLOAD = "OfflinePlaylistDl";
-    private static final int ARTWORK_PREFETCH_MAX_ITEMS = 96;
+    private static final int ARTWORK_PREFETCH_MAX_ITEMS = PLAYLIST_TRACKS_FETCH_MAX_LIMIT;
     private static final int ARTWORK_PREFETCH_BATCH_SIZE = 8;
     private static final long ARTWORK_PREFETCH_BATCH_DELAY_MS = 90L;
     private static final long ARTWORK_PREFETCH_INITIAL_DELAY_MS = 650L;
@@ -193,6 +193,8 @@ public class PlaylistDetailFragment extends Fragment {
     private boolean miniPlaying;
     private boolean shuffleModeEnabled;
     private final Random random = new Random();
+    private int lastPlaybackQueueSize = -1;
+    private boolean lastPlaybackQueueShuffleState = false;
     private PlaylistMeta currentMeta = new PlaylistMeta("", 0, "", "", "");
     @NonNull
     private String currentPlaylistId = "";
@@ -1118,6 +1120,15 @@ public class PlaylistDetailFragment extends Fragment {
                 break;
             }
         }
+
+        if (pendingUrls.isEmpty()) {
+            return;
+        }
+
+        miniProgressHandler.postDelayed(
+                () -> scheduleArtworkPrefetchBatch(pendingUrls, 0, generation),
+                ARTWORK_PREFETCH_INITIAL_DELAY_MS
+        );
     }
 
     private void prefetchStreamUrlsForTracks(@NonNull List<PlaylistTrack> tracks, int limit) {
@@ -1469,6 +1480,7 @@ public class PlaylistDetailFragment extends Fragment {
                         && requestedLimit < PLAYLIST_TRACKS_FETCH_MAX_LIMIT;
 
                 List<PlaylistTrack> mapped = sanitizeTracksForPlaylist(playlistId, mapTracks(tracks));
+                mapped = mergeTrackMetadataFromCache(playlistId, mapped);
                 cacheTracks(playlistId, mapped, isFetchResultComplete(tracks.size(), requestedLimit));
                 renderTracks(mapped, playlistId, false);
                 if (forceRefresh) {
@@ -2279,15 +2291,71 @@ public class PlaylistDetailFragment extends Fragment {
     private List<PlaylistTrack> mapTracks(@NonNull List<YouTubeMusicService.PlaylistTrackResult> tracks) {
         List<PlaylistTrack> mapped = new ArrayList<>();
         for (YouTubeMusicService.PlaylistTrackResult track : tracks) {
+            String duration = normalizeDurationLabel(track.duration);
             mapped.add(new PlaylistTrack(
                     track.videoId,
                     track.title,
                     track.artist,
-                    track.duration,
+                    duration,
                     track.thumbnailUrl
             ));
         }
         return mapped;
+    }
+
+    @NonNull
+    private List<PlaylistTrack> mergeTrackMetadataFromCache(
+            @NonNull String playlistId,
+            @NonNull List<PlaylistTrack> source
+    ) {
+        if (!isAdded() || source.isEmpty() || playlistId.isEmpty()) {
+            return source;
+        }
+
+        List<PlaylistTrack> cached = loadCachedTracksInternal(playlistId, true);
+        if (cached.isEmpty()) {
+            return source;
+        }
+
+        Map<String, PlaylistTrack> cachedById = new HashMap<>();
+        for (PlaylistTrack track : cached) {
+            if (track == null || TextUtils.isEmpty(track.videoId)) {
+                continue;
+            }
+            cachedById.put(track.videoId, track);
+        }
+
+        if (cachedById.isEmpty()) {
+            return source;
+        }
+
+        List<PlaylistTrack> merged = new ArrayList<>(source.size());
+        for (PlaylistTrack track : source) {
+            if (track == null || TextUtils.isEmpty(track.videoId)) {
+                continue;
+            }
+
+            PlaylistTrack cachedTrack = cachedById.get(track.videoId);
+            String mergedDuration = normalizeDurationLabel(track.duration);
+            if (mergedDuration.isEmpty() && cachedTrack != null) {
+                mergedDuration = normalizeDurationLabel(cachedTrack.duration);
+            }
+
+            String mergedImageUrl = track.imageUrl == null ? "" : track.imageUrl.trim();
+            if (mergedImageUrl.isEmpty() && cachedTrack != null && !TextUtils.isEmpty(cachedTrack.imageUrl)) {
+                mergedImageUrl = cachedTrack.imageUrl.trim();
+            }
+
+            merged.add(new PlaylistTrack(
+                    track.videoId,
+                    track.title,
+                    track.artist,
+                    mergedDuration,
+                    mergedImageUrl
+            ));
+        }
+
+        return merged;
     }
 
     @NonNull
@@ -2592,10 +2660,27 @@ public class PlaylistDetailFragment extends Fragment {
         }
         playbackQueueTracks.clear();
         playbackQueueTracks.addAll(base);
+        lastPlaybackQueueSize = currentTracks.size();
+        lastPlaybackQueueShuffleState = shuffleModeEnabled;
     }
 
     private void ensurePlaybackQueue() {
-        if (playbackQueueTracks.isEmpty() || playbackQueueTracks.size() != currentTracks.size()) {
+        boolean needsRebuild = false;
+        
+        // Rebuild if queue is empty
+        if (playbackQueueTracks.isEmpty()) {
+            needsRebuild = true;
+        }
+        // Rebuild only if the actual size of tracks changed (not on every call)
+        else if (lastPlaybackQueueSize != currentTracks.size()) {
+            needsRebuild = true;
+        }
+        // Rebuild if shuffle mode was toggled
+        else if (lastPlaybackQueueShuffleState != shuffleModeEnabled) {
+            needsRebuild = true;
+        }
+        
+        if (needsRebuild) {
             rebuildPlaybackQueue();
         }
     }
@@ -2691,7 +2776,7 @@ public class PlaylistDetailFragment extends Fragment {
                 String videoId = obj.optString("videoId", "").trim();
                 String title = obj.optString("title", "").trim();
                 String artist = obj.optString("artist", "").trim();
-                String duration = obj.optString("duration", "").trim();
+                String duration = normalizeDurationLabel(obj.optString("duration", ""));
                 String imageUrl = obj.optString("imageUrl", "").trim();
                 if (videoId.isEmpty() || title.isEmpty()) {
                     continue;
@@ -2734,7 +2819,7 @@ public class PlaylistDetailFragment extends Fragment {
                 obj.put("videoId", track.videoId);
                 obj.put("title", track.title);
                 obj.put("artist", track.artist);
-                obj.put("duration", track.duration);
+                obj.put("duration", normalizeDurationLabel(track.duration));
                 obj.put("imageUrl", track.imageUrl);
                 array.put(obj);
             }
@@ -3380,12 +3465,7 @@ public class PlaylistDetailFragment extends Fragment {
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
         if (existingPlayer != null && existingPlayer.isAdded()) {
             existingPlayer.externalSetReturnTargetTag(TAG_PLAYLIST_DETAIL);
-            getParentFragmentManager()
-                    .beginTransaction()
-                    .setReorderingAllowed(true)
-                    .show(existingPlayer)
-                    .runOnCommit(existingPlayer::externalAnimateEnterSlide)
-                    .commit();
+            showSongPlayerWithEnterAnimation(existingPlayer);
             return;
         }
 
@@ -3462,12 +3542,7 @@ public class PlaylistDetailFragment extends Fragment {
                 }
             }
 
-            getParentFragmentManager()
-                    .beginTransaction()
-                    .setReorderingAllowed(true)
-                    .show(existingPlayer)
-                    .runOnCommit(existingPlayer::externalAnimateEnterSlide)
-                    .commit();
+                showSongPlayerWithEnterAnimation(existingPlayer);
 
             currentTrackIndex = position;
             miniPlaying = true;
@@ -3496,14 +3571,7 @@ public class PlaylistDetailFragment extends Fragment {
                 true
         );
         playerFragment.externalSetReturnTargetTag(TAG_PLAYLIST_DETAIL);
-
-        final SongPlayerFragment newPlayerForAnim = playerFragment;
-        getParentFragmentManager()
-                .beginTransaction()
-                .setReorderingAllowed(true)
-                .add(R.id.playerContainer, playerFragment, "song_player")
-                .runOnCommit(newPlayerForAnim::externalAnimateEnterSlide)
-                .commit();
+        addSongPlayerWithEnterAnimation(playerFragment);
         // Don't update mini-player UI - keep it hidden while full player is visible
     }
 
@@ -3543,13 +3611,7 @@ public class PlaylistDetailFragment extends Fragment {
         if (existingPlayer != null && existingPlayer.isAdded()) {
             existingPlayer.externalSetReturnTargetTag(TAG_PLAYLIST_DETAIL);
             existingPlayer.externalReplaceQueue(ids, titles, artists, durations, images, snapshotIndex, startPlaying);
-
-            getParentFragmentManager()
-                    .beginTransaction()
-                    .setReorderingAllowed(true)
-                    .show(existingPlayer)
-                    .runOnCommit(existingPlayer::externalAnimateEnterSlide)
-                    .commit();
+            showSongPlayerWithEnterAnimation(existingPlayer);
         } else {
             SongPlayerFragment playerFragment = SongPlayerFragment.newInstance(
                     ids,
@@ -3561,14 +3623,7 @@ public class PlaylistDetailFragment extends Fragment {
                     startPlaying
             );
             playerFragment.externalSetReturnTargetTag(TAG_PLAYLIST_DETAIL);
-
-            final SongPlayerFragment newPlayerForAnim = playerFragment;
-            getParentFragmentManager()
-                    .beginTransaction()
-                    .setReorderingAllowed(true)
-                    .add(R.id.playerContainer, playerFragment, "song_player")
-                    .runOnCommit(newPlayerForAnim::externalAnimateEnterSlide)
-                    .commit();
+                addSongPlayerWithEnterAnimation(playerFragment);
         }
 
         int displayIndex = findTrackIndexFromSnapshot(currentTracks, snapshot);
@@ -3739,12 +3794,7 @@ public class PlaylistDetailFragment extends Fragment {
             existingPlayer.externalReplaceQueue(ids, titles, artists, durations, images, 0, startPlaying);
 
             if (showPlayer) {
-                getParentFragmentManager()
-                        .beginTransaction()
-                        .setReorderingAllowed(true)
-                        .show(existingPlayer)
-                        .runOnCommit(existingPlayer::externalAnimateEnterSlide)
-                        .commit();
+                showSongPlayerWithEnterAnimation(existingPlayer);
             }
 
             currentTrackIndex = findTrackIndexByVideoId(currentTracks, videoId);
@@ -3770,22 +3820,16 @@ public class PlaylistDetailFragment extends Fragment {
                 startPlaying
         );
         playerFragment.externalSetReturnTargetTag(TAG_PLAYLIST_DETAIL);
-
-        final SongPlayerFragment newPlayerForAnim = playerFragment;
-        androidx.fragment.app.FragmentTransaction transaction = getParentFragmentManager()
-                .beginTransaction()
-                .setReorderingAllowed(true)
-                .add(R.id.playerContainer, playerFragment, "song_player");
-
-        if (showPlayer) {
-            transaction
-                    .runOnCommit(newPlayerForAnim::externalAnimateEnterSlide)
-                    .commit();
-        } else {
-            transaction
+            if (showPlayer) {
+                addSongPlayerWithEnterAnimation(playerFragment);
+            } else {
+                getParentFragmentManager()
+                    .beginTransaction()
+                    .setReorderingAllowed(true)
+                    .add(R.id.playerContainer, playerFragment, "song_player")
                     .hide(playerFragment)
                     .commit();
-        }
+            }
 
         currentTrackIndex = findTrackIndexByVideoId(currentTracks, videoId);
         miniPlaying = startPlaying;
@@ -3794,6 +3838,24 @@ public class PlaylistDetailFragment extends Fragment {
         }
         updateMiniPlayerUi();
         return true;
+    }
+
+    private void showSongPlayerWithEnterAnimation(@NonNull SongPlayerFragment player) {
+        getParentFragmentManager()
+                .beginTransaction()
+                .setReorderingAllowed(true)
+                .show(player)
+                .runOnCommit(player::externalAnimateEnterSlide)
+                .commit();
+    }
+
+    private void addSongPlayerWithEnterAnimation(@NonNull SongPlayerFragment player) {
+        getParentFragmentManager()
+                .beginTransaction()
+                .setReorderingAllowed(true)
+                .add(R.id.playerContainer, player, "song_player")
+                .runOnCommit(player::externalAnimateEnterSlide)
+                .commit();
     }
 
     private boolean startHiddenPlayerFromSnapshot(
@@ -4414,6 +4476,20 @@ public class PlaylistDetailFragment extends Fragment {
         return 0;
     }
 
+    @NonNull
+    private String normalizeDurationLabel(@Nullable String rawDuration) {
+        if (rawDuration == null) {
+            return "";
+        }
+
+        String normalized = rawDuration.trim();
+        if (normalized.isEmpty() || normalized.contains("--")) {
+            return "";
+        }
+
+        return parseDurationSeconds(normalized) > 0 ? normalized : "";
+    }
+
     private boolean isLikelyShort(@Nullable PlaylistTrack track) {
         if (track == null) return false;
         String lowerTitle = track.title.toLowerCase(Locale.US);
@@ -4883,7 +4959,8 @@ public class PlaylistDetailFragment extends Fragment {
         private boolean isOfflineAvailable(
                 @NonNull Context context,
                 @Nullable String trackId,
-                @Nullable String expectedDuration
+                @Nullable String expectedDuration,
+                int position
         ) {
             if (TextUtils.isEmpty(trackId)) {
                 return false;
@@ -4893,12 +4970,22 @@ public class PlaylistDetailFragment extends Fragment {
             if (cached != null) {
                 return cached;
             }
-            boolean available = OfflineAudioStore.hasValidatedOfflineAudio(context, normalized, expectedDuration);
-            offlineAvailabilityCache.put(normalized, available);
-            return available;
+            
+            offlineAvailabilityCache.put(normalized, false); // Prevent duplicate checks
+            android.os.AsyncTask.THREAD_POOL_EXECUTOR.execute(() -> {
+                boolean available = OfflineAudioStore.hasValidatedOfflineAudio(context, normalized, expectedDuration);
+                new Handler(Looper.getMainLooper()).post(() -> {
+                    Boolean current = offlineAvailabilityCache.get(normalized);
+                    if (current == null || current != available) {
+                        offlineAvailabilityCache.put(normalized, available);
+                        notifyItemChanged(position);
+                    }
+                });
+            });
+            return false;
         }
 
-        private boolean isRestricted(@NonNull Context context, @Nullable String trackId) {
+        private boolean isRestricted(@NonNull Context context, @Nullable String trackId, int position) {
             if (TextUtils.isEmpty(trackId)) {
                 return false;
             }
@@ -4907,9 +4994,19 @@ public class PlaylistDetailFragment extends Fragment {
             if (cached != null) {
                 return cached;
             }
-            boolean restricted = OfflineRestrictionStore.isRestricted(context, normalized);
-            restrictedTrackCache.put(normalized, restricted);
-            return restricted;
+            
+            restrictedTrackCache.put(normalized, false); // Prevent duplicate checks
+            android.os.AsyncTask.THREAD_POOL_EXECUTOR.execute(() -> {
+                boolean restricted = OfflineRestrictionStore.isRestricted(context, normalized);
+                new Handler(Looper.getMainLooper()).post(() -> {
+                    Boolean current = restrictedTrackCache.get(normalized);
+                    if (current == null || current != restricted) {
+                        restrictedTrackCache.put(normalized, restricted);
+                        notifyItemChanged(position);
+                    }
+                });
+            });
+            return false;
         }
 
         @Override
@@ -4942,14 +5039,14 @@ public class PlaylistDetailFragment extends Fragment {
             }
             holder.tvTrackTitle.setText(track.title);
             String subtitle = track.artist == null ? "" : track.artist.trim();
-            String duration = track.duration == null ? "" : track.duration.trim();
-            if (!duration.isEmpty() && !"--:--".equals(duration)) {
+            String duration = normalizeDurationLabel(track.duration);
+            if (!duration.isEmpty()) {
                 subtitle = subtitle.isEmpty() ? duration : subtitle + " • " + duration;
             }
 
                 Context context = holder.itemView.getContext();
-                boolean isOfflineAvailable = isOfflineAvailable(context, track.videoId, track.duration);
-                boolean isRestrictedTrack = isRestricted(context, track.videoId);
+                boolean isOfflineAvailable = isOfflineAvailable(context, track.videoId, track.duration, position);
+                boolean isRestrictedTrack = isRestricted(context, track.videoId, position);
             boolean isCurrentlyDownloading = offlineDownloadRunning
                     && !TextUtils.isEmpty(track.videoId)
                         && downloadingTrackIds.contains(track.videoId)

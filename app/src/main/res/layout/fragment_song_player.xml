@@ -41,14 +41,14 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:paddingHorizontal="24dp"
-            android:paddingTop="64dp"
+            android:paddingTop="40dp"
             android:paddingBottom="40dp">
 
             <FrameLayout
                 android:id="@+id/flPlayerHero"
                 android:layout_width="0dp"
                 android:layout_height="320dp"
-                android:layout_marginTop="40dp"
+                android:layout_marginTop="20dp"
                 android:layout_marginHorizontal="20dp"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
@@ -100,7 +100,7 @@
                     android:textColor="@color/text_primary"
                     android:textSize="26sp"
                     android:textStyle="bold"
-                    android:textFontWeight="800" />
+                    android:textFontWeight="900" />
 
                 <TextView
                     android:id="@+id/tvPlayerArtist"
@@ -161,7 +161,7 @@
                         android:foreground="?attr/selectableItemBackground"
                         android:gravity="center_vertical"
                         android:orientation="horizontal"
-                        android:paddingHorizontal="10dp">
+                        android:paddingHorizontal="14dp">
                         <ImageView android:layout_width="16dp" android:layout_height="16dp" android:src="@drawable/ic_social_thumb_down" app:tint="@color/text_primary" />
                         <TextView android:id="@+id/tvActionDislikeCount" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="5dp" android:fontFamily="@font/inter_variable" android:text="0" android:textColor="@color/text_primary" android:textSize="13sp" android:textStyle="bold" />
                     </LinearLayout>
@@ -264,14 +264,13 @@
                 </LinearLayout>
             </LinearLayout>
 
-            <!-- Refactored Footer: Device on the left, Queue on the right -->
             <LinearLayout
                 android:id="@+id/llPlayerFooter"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="32dp"
+                android:layout_marginTop="40dp"
                 android:layout_marginStart="14dp"
-                android:layout_marginEnd="0dp"
+                android:layout_marginEnd="14dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
                 app:layout_constraintEnd_toEndOf="parent"
@@ -283,7 +282,8 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:gravity="center_vertical"
-                    android:orientation="horizontal">
+                    android:orientation="horizontal"
+                    android:paddingEnd="14dp">
 
                     <ImageView
                         android:id="@+id/ivDeviceIcon"
@@ -319,7 +319,10 @@
                     android:focusable="true"
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
-                    android:paddingVertical="4dp">
+                    android:paddingVertical="4dp"
+                    android:paddingStart="0dp"
+                    android:paddingEnd="4dp"
+                    android:layout_marginEnd="12dp">
 
                     <TextView
                         android:layout_width="wrap_content"
@@ -329,12 +332,12 @@
                         android:textColor="@color/text_primary"
                         android:textSize="14sp"
                         android:textStyle="bold"
-                        android:textFontWeight="800" />
+                        android:textFontWeight="900" />
 
                     <ImageView
                         android:layout_width="18dp"
                         android:layout_height="18dp"
-                        android:layout_marginStart="6dp"
+                        android:layout_marginStart="3dp"
                         android:src="@drawable/ic_stream_queue_add"
                         app:tint="@color/text_primary" />
                 </LinearLayout>

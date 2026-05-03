@@ -1,5 +1,4 @@
 package com.example.sleppify;
-
 import android.accounts.Account;
 import android.app.Activity;
 import android.content.Context;
@@ -38,7 +37,6 @@ import android.widget.TextView;
 import android.widget.LinearLayout;
 import android.content.res.ColorStateList;
 import androidx.core.content.ContextCompat;
-
 import androidx.activity.OnBackPressedCallback;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -58,11 +56,9 @@ import androidx.work.Constraints;
 import androidx.work.NetworkType;
 import androidx.work.WorkInfo;
 import androidx.work.WorkManager;
-
 import com.bumptech.glide.Glide;
 import com.bumptech.glide.RequestBuilder;
 import com.bumptech.glide.load.engine.DiskCacheStrategy;
-
 import android.graphics.drawable.Drawable;
 import com.google.android.gms.auth.GoogleAuthException;
 import com.google.android.gms.auth.GoogleAuthUtil;
@@ -83,10 +79,8 @@ import com.google.android.material.chip.ChipGroup;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.google.android.material.imageview.ShapeableImageView;
 import com.google.android.material.textfield.TextInputEditText;
-
 import org.json.JSONArray;
 import org.json.JSONObject;
-
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -101,9 +95,7 @@ import java.util.Set;
 import java.text.Normalizer;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-
 public class MusicPlayerFragment extends Fragment {
-
     private static final long LIBRARY_CACHE_TTL_MS = 20 * 60 * 1000L;
     private static final long LIBRARY_REFRESH_MIN_INTERVAL_MS = 90 * 1000L;
     private static final long TOKEN_CACHE_TTL_MS = 45 * 60 * 1000L;
@@ -171,35 +163,29 @@ public class MusicPlayerFragment extends Fragment {
     private static long tokenCacheUpdatedAtMs;
     private static long lastLibrarySyncAtMs;
     private static boolean streamingWarmupInFlight;
-
     static void prewarmStreamingAfterAppSignIn(@NonNull Context context, @Nullable String primaryAppEmail) {
         String accountKey = normalizeAccountEmail(primaryAppEmail);
         if (TextUtils.isEmpty(accountKey)) {
             return;
         }
-
         Context appContext = context.getApplicationContext();
         GoogleSignInAccount account = GoogleSignIn.getLastSignedInAccount(appContext);
         if (account == null) {
             return;
         }
-
         String signedEmail = normalizeAccountEmail(account.getEmail());
         if (TextUtils.isEmpty(signedEmail) || !accountKey.equals(signedEmail)) {
             return;
         }
-
         YouTubeMusicService warmupService = new YouTubeMusicService();
         Scope ytScope = new Scope(warmupService.getYoutubeReadonlyScope());
         if (!GoogleSignIn.hasPermissions(account, ytScope)) {
             return;
         }
-
         synchronized (MusicPlayerFragment.class) {
             if (streamingWarmupInFlight) {
                 return;
             }
-
             boolean tokenReady = !TextUtils.isEmpty(cachedYoutubeAccessToken)
                     && accountKey.equals(tokenCacheAccountKey)
                     && (System.currentTimeMillis() - tokenCacheUpdatedAtMs) < TOKEN_CACHE_TTL_MS;
@@ -209,17 +195,13 @@ public class MusicPlayerFragment extends Fragment {
             if (tokenReady && libraryReady) {
                 return;
             }
-
             streamingWarmupInFlight = true;
         }
-
         Account accountRef = account.getAccount();
         if (accountRef == null) {
             accountRef = new Account(accountKey, "com.google");
         }
-
         final Account resolvedAccount = accountRef;
-
         STREAMING_WARMUP_EXECUTOR.execute(() -> {
             try {
                 String scope = "oauth2:" + warmupService.getYoutubeReadonlyScope();
@@ -228,29 +210,24 @@ public class MusicPlayerFragment extends Fragment {
                     finishStreamingWarmup();
                     return;
                 }
-
                 synchronized (MusicPlayerFragment.class) {
                     tokenCacheAccountKey = accountKey;
                     cachedYoutubeAccessToken = token;
                     tokenCacheUpdatedAtMs = System.currentTimeMillis();
                 }
-
                 appContext
                         .getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE)
                         .edit()
                         .putString(PREF_LAST_YOUTUBE_ACCESS_TOKEN, token)
                     .putLong(PREF_LAST_YOUTUBE_ACCESS_TOKEN_UPDATED_AT, System.currentTimeMillis())
                         .apply();
-
                 SharedPreferences cachePrefs = appContext.getSharedPreferences(PREFS_STREAMING_CACHE, Activity.MODE_PRIVATE);
                 cachePrefs.edit().putString(PREF_LAST_STREAMING_ACCOUNT_KEY, accountKey).apply();
-
                 String warmToken = token;
                 warmupService.fetchMyPlaylists(warmToken, 25, new YouTubeMusicService.PlaylistsCallback() {
                     @Override
                     public void onSuccess(@NonNull List<YouTubeMusicService.PlaylistResult> playlists) {
                         List<YouTubeMusicService.TrackResult> mapped = mapPlaylistsToLibraryTracks(playlists);
-
                         long updatedAt = System.currentTimeMillis();
                         synchronized (MusicPlayerFragment.class) {
                             LIBRARY_CACHE.clear();
@@ -258,7 +235,6 @@ public class MusicPlayerFragment extends Fragment {
                             libraryCacheAccountKey = accountKey;
                             libraryCacheUpdatedAtMs = updatedAt;
                         }
-
                         try {
                             JSONArray array = new JSONArray();
                             for (YouTubeMusicService.TrackResult item : mapped) {
@@ -270,7 +246,6 @@ public class MusicPlayerFragment extends Fragment {
                                 obj.put("thumbnailUrl", item.thumbnailUrl);
                                 array.put(obj);
                             }
-
                             cachePrefs.edit()
                                     .putLong(PREF_LIBRARY_UPDATED_AT_PREFIX + accountKey, updatedAt)
                                     .putString(PREF_LIBRARY_DATA_PREFIX + accountKey, array.toString())
@@ -278,10 +253,8 @@ public class MusicPlayerFragment extends Fragment {
                                     .apply();
                         } catch (Exception ignored) {
                         }
-
                         finishStreamingWarmup();
                     }
-
                     @Override
                     public void onError(@NonNull String error) {
                         finishStreamingWarmup();
@@ -295,13 +268,11 @@ public class MusicPlayerFragment extends Fragment {
             }
         });
     }
-
     private static void finishStreamingWarmup() {
         synchronized (MusicPlayerFragment.class) {
             streamingWarmupInFlight = false;
         }
     }
-
     @NonNull
     private static String normalizeAccountEmail(@Nullable String value) {
         if (TextUtils.isEmpty(value)) {
@@ -309,7 +280,6 @@ public class MusicPlayerFragment extends Fragment {
         }
         return value.trim().toLowerCase(Locale.US);
     }
-
     @NonNull
     private static List<YouTubeMusicService.TrackResult> mapPlaylistsToLibraryTracks(
             @NonNull List<YouTubeMusicService.PlaylistResult> playlists
@@ -325,18 +295,16 @@ public class MusicPlayerFragment extends Fragment {
             String playlistContentId = isLikedCollection
                     ? YouTubeMusicService.SPECIAL_LIKED_VIDEOS_ID
                     : playlist.playlistId;
-
             if (isLikedCollection) {
                 title = "Musica que te gusto";
                 subtitle = playlist.itemCount > 0
-                        ? "Playlist autogenerada • " + playlist.itemCount + " canciones"
+                        ? "Playlist autogenerada Ã¢â‚¬Â¢ " + playlist.itemCount + " canciones"
                         : "Playlist autogenerada";
             } else if (playlist.itemCount > 0) {
-                subtitle = "Playlist • " + playlist.itemCount + " canciones";
+                subtitle = "Playlist Ã¢â‚¬Â¢ " + playlist.itemCount + " canciones";
             } else {
                 subtitle = "Playlist";
             }
-
             mapped.add(new YouTubeMusicService.TrackResult(
                     "playlist",
                     playlistContentId,
@@ -347,12 +315,10 @@ public class MusicPlayerFragment extends Fragment {
         }
         return mapped;
     }
-
     private void ensureFavoritesPlaylistInLibraryTracks() {
         if (!isAdded()) {
             return;
         }
-
         List<FavoritesPlaylistStore.FavoriteTrack> favorites = FavoritesPlaylistStore.loadFavorites(requireContext());
         int count = favorites.size();
         String subtitle = FavoritesPlaylistStore.buildSubtitle(count);
@@ -364,7 +330,6 @@ public class MusicPlayerFragment extends Fragment {
             coverUrl = favorite.imageUrl;
             break;
         }
-
         int existingIndex = -1;
         for (int i = 0; i < libraryTracks.size(); i++) {
             YouTubeMusicService.TrackResult item = libraryTracks.get(i);
@@ -376,7 +341,6 @@ public class MusicPlayerFragment extends Fragment {
                 break;
             }
         }
-
         YouTubeMusicService.TrackResult favoritesTrack = new YouTubeMusicService.TrackResult(
                 "playlist",
                 FavoritesPlaylistStore.PLAYLIST_ID,
@@ -384,19 +348,16 @@ public class MusicPlayerFragment extends Fragment {
                 subtitle,
             coverUrl
         );
-
         if (existingIndex >= 0) {
             libraryTracks.remove(existingIndex);
         }
         libraryTracks.add(0, favoritesTrack);
-
         List<String> customPlaylists = CustomPlaylistsStore.INSTANCE.getAllPlaylistNames(requireContext());
         int injectionIndex = 1;
-
         for (String customName : customPlaylists) {
             List<FavoritesPlaylistStore.FavoriteTrack> customTracks = CustomPlaylistsStore.INSTANCE.getTracksFromPlaylist(requireContext(), customName);
             int countCustom = customTracks.size();
-            String customSubtitle = countCustom == 1 ? "1 canción" : countCustom + " canciones";
+            String customSubtitle = countCustom == 1 ? "1 canciÃƒÂ³n" : countCustom + " canciones";
             String customThumb = "";
             for (FavoritesPlaylistStore.FavoriteTrack t : customTracks) {
                 if (!TextUtils.isEmpty(t.imageUrl)) {
@@ -411,7 +372,6 @@ public class MusicPlayerFragment extends Fragment {
                 customSubtitle,
                 customThumb
             );
-
             // remove previous version if exists
             int eIdx = -1;
             for (int i=0; i<libraryTracks.size(); i++) {
@@ -420,11 +380,8 @@ public class MusicPlayerFragment extends Fragment {
                 }
             }
             if (eIdx >= 0) libraryTracks.remove(eIdx);
-
             libraryTracks.add(injectionIndex++, customTrackResult);
         }
-
-
         // Fetch Cloud Playlists if signed in
         if (AuthManager.getInstance(requireContext()).isSignedIn()) {
             final int finalInjectionIdx = injectionIndex;
@@ -435,7 +392,6 @@ public class MusicPlayerFragment extends Fragment {
                     for (Map.Entry<String, List<FavoritesPlaylistStore.FavoriteTrack>> entry : cloudMap.entrySet()) {
                         String name = entry.getKey();
                         String contentId = CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX + name;
-                        
                         // Check if already in library
                         boolean alreadyHandled = false;
                         for (YouTubeMusicService.TrackResult r : libraryTracks) {
@@ -445,14 +401,12 @@ public class MusicPlayerFragment extends Fragment {
                             }
                         }
                         if (alreadyHandled) continue;
-
                         List<FavoritesPlaylistStore.FavoriteTrack> tracks = entry.getValue();
-                        String sub = tracks.size() == 1 ? "1 canción (Nube)" : tracks.size() + " canciones (Nube)";
+                        String sub = tracks.size() == 1 ? "1 canciÃƒÂ³n (Nube)" : tracks.size() + " canciones (Nube)";
                         String thumb = "";
                         for (FavoritesPlaylistStore.FavoriteTrack t : tracks) {
                             if (!TextUtils.isEmpty(t.imageUrl)) { thumb = t.imageUrl; break; }
                         }
-
                         YouTubeMusicService.TrackResult cloudTr = new YouTubeMusicService.TrackResult(
                             "playlist", contentId, name, sub, thumb
                         );
@@ -463,15 +417,12 @@ public class MusicPlayerFragment extends Fragment {
             });
         }
     }
-
     private void refreshCurrentPlayingPlaylistState() {
         if (!isAdded()) {
             return;
         }
-
         boolean previousActive = currentPlayingPlaylistActive;
         String previousPlaylistId = currentPlayingPlaylistId;
-
         SharedPreferences prefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
         boolean isPlaying = prefs.getBoolean(PREF_LAST_IS_PLAYING, false);
         String playlistId = prefs.getString(PREF_LAST_PLAYLIST_ID, "");
@@ -479,12 +430,10 @@ public class MusicPlayerFragment extends Fragment {
         if (!isPlaying || TextUtils.isEmpty(normalizedPlaylistId)) {
             normalizedPlaylistId = "";
         }
-
         boolean changed = currentPlayingPlaylistActive != isPlaying
                 || !TextUtils.equals(currentPlayingPlaylistId, normalizedPlaylistId);
         currentPlayingPlaylistActive = isPlaying;
         currentPlayingPlaylistId = normalizedPlaylistId;
-
         if (changed && adapter != null) {
             adapter.notifyPlayingPlaylistChanged(
                     previousActive ? previousPlaylistId : "",
@@ -492,14 +441,12 @@ public class MusicPlayerFragment extends Fragment {
             );
         }
     }
-
     private boolean isPlaylistCurrentlyPlaying(@Nullable String playlistId) {
         if (!currentPlayingPlaylistActive || TextUtils.isEmpty(playlistId)) {
             return false;
         }
         return TextUtils.equals(currentPlayingPlaylistId, playlistId == null ? "" : playlistId.trim());
     }
-
     private LinearLayout llSearchRow;
     private View llLibraryHeaderRow;
     private View llLibraryInlineSearch;
@@ -536,7 +483,6 @@ public class MusicPlayerFragment extends Fragment {
     private SeekBar sbMiniPlayerProgress;
     private ImageButton btnMiniPlayPause;
     private SwipeRefreshLayout swipeLibraryRefresh;
-
     // TV-specific split player members
     private boolean isTv;
     private View llTvPlayerPane;
@@ -548,7 +494,6 @@ public class MusicPlayerFragment extends Fragment {
     private ImageButton btnTvNext;
     private ImageButton btnTvPrev;
     private ImageView ivTvPlayerBackground;
-
     private final YouTubeMusicService youTubeMusicService = new YouTubeMusicService();
     private final ExecutorService offlinePrefetchExecutor = Executors.newSingleThreadExecutor();
     private final YouTubeMusicService offlinePrefetchService = new YouTubeMusicService(offlinePrefetchExecutor);
@@ -560,13 +505,11 @@ public class MusicPlayerFragment extends Fragment {
             if (!isAdded() || getView() == null || isHidden()) {
                 return;
             }
-            
             // Skip update if the full player is covering the screen
             SongPlayerFragment player = findSongPlayerFragment();
             if (player == null || !player.isVisible()) {
                 updateMiniPlayerUi();
             }
-            
             miniProgressHandler.postDelayed(this, MINI_PROGRESS_TICK_MS);
         }
     };
@@ -642,36 +585,28 @@ public class MusicPlayerFragment extends Fragment {
     private boolean offlineManualQueueHadActiveWork;
     @Nullable
     private OnBackPressedCallback clearSearchBackPressedCallback;
-
     private ActivityResultLauncher<Intent> signInLauncher;
     private ActivityResultLauncher<Intent> recoverAuthLauncher;
     private ActivityResultLauncher<Intent> webSessionLauncher;
     private ActivityResultLauncher<Intent> searchActivityLauncher;
-
     private enum ScreenMode {
         SEARCH,
         LIBRARY
     }
-
     private ScreenMode activeScreen = ScreenMode.LIBRARY;
-
     private enum ChipFilter {
         VIDEOS,
         SONGS,
         ARTISTS,
         PLAYLISTS
     }
-
     private interface OnLibraryTrackClick {
         void onTrackClick(@NonNull YouTubeMusicService.TrackResult track);
     }
-
     private interface OnLibraryTrackMoreClick {
         void onTrackMoreClick(@NonNull YouTubeMusicService.TrackResult track, @NonNull View anchor);
     }
-
     private ChipFilter activeFilter = ChipFilter.SONGS;
-
     private final RecyclerView.OnScrollListener searchPaginationScrollListener = new RecyclerView.OnScrollListener() {
         @Override
         public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
@@ -686,28 +621,23 @@ public class MusicPlayerFragment extends Fragment {
                     || TextUtils.isEmpty(activeSearchQuery)) {
                 return;
             }
-
             int totalItems = musicResultsLayoutManager.getItemCount();
             if (totalItems <= 0) {
                 return;
             }
-
             int lastVisible = musicResultsLayoutManager.findLastVisibleItemPosition();
             if (lastVisible >= (totalItems - SEARCH_SCROLL_LOAD_MORE_THRESHOLD)) {
                 loadMoreSearchResultsIfNeeded();
             }
         }
     };
-
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
         signInLauncher = registerForActivityResult(
                 new ActivityResultContracts.StartActivityForResult(),
                 result -> handleGoogleSignInResult(result.getData())
         );
-
         recoverAuthLauncher = registerForActivityResult(
                 new ActivityResultContracts.StartActivityForResult(),
                 result -> {
@@ -718,7 +648,6 @@ public class MusicPlayerFragment extends Fragment {
                     boolean retryForceRefresh = pendingWebSessionForceRefresh;
                     clearPendingRecoverableAuthState();
                     pendingRecoverableAccount = null;
-
                     if (result.getResultCode() == Activity.RESULT_OK) {
                         if (account != null) {
                             requestYoutubeAccessToken(account, true);
@@ -733,11 +662,9 @@ public class MusicPlayerFragment extends Fragment {
                             return;
                         }
                     }
-
                     setLibraryLoading(false, "Permiso de YouTube no concedido.");
                 }
         );
-
         webSessionLauncher = registerForActivityResult(
                 new ActivityResultContracts.StartActivityForResult(),
                 result -> {
@@ -751,7 +678,6 @@ public class MusicPlayerFragment extends Fragment {
                     handleWebSessionAuthSuccess(result.getData());
                 }
         );
-
         searchActivityLauncher = registerForActivityResult(
                 new ActivityResultContracts.StartActivityForResult(),
                 result -> {
@@ -765,17 +691,14 @@ public class MusicPlayerFragment extends Fragment {
                 }
         );
     }
-
     @Nullable
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
         return inflater.inflate(R.layout.fragment_music_player, container, false);
     }
-
     @Override
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
-        
         llLibraryHeaderRow = view.findViewById(R.id.llLibraryHeaderRow);
         llLibraryInlineSearch = view.findViewById(R.id.llLibraryInlineSearch);
         tvLibraryTitle = view.findViewById(R.id.tvLibraryTitle);
@@ -800,7 +723,6 @@ public class MusicPlayerFragment extends Fragment {
         sbMiniPlayerProgress = view.findViewById(R.id.sbMiniPlayerProgress);
         btnMiniPlayPause = view.findViewById(R.id.btnMiniPlayPause);
         swipeLibraryRefresh = view.findViewById(R.id.swipeLibraryRefresh);
-
         // TV Player initialization
         llTvPlayerPane = view.findViewById(R.id.llTvPlayerPane);
         ivTvPlayerCover = view.findViewById(R.id.ivTvPlayerCover);
@@ -810,7 +732,6 @@ public class MusicPlayerFragment extends Fragment {
         btnTvPlayPause = view.findViewById(R.id.btnTvPlayPause);
         btnTvNext = view.findViewById(R.id.btnTvNext);
         btnTvPrev = view.findViewById(R.id.btnTvPrev);
-        
         isTv = SystemType.INSTANCE.isTv(requireContext());
         if (isTv) {
             if (btnTvNext != null) {
@@ -819,11 +740,9 @@ public class MusicPlayerFragment extends Fragment {
             if (btnTvPrev != null) {
                 btnTvPrev.setNextFocusLeftId(R.id.navigationRail);
             }
-
             if (llTvPlayerPane != null) {
                 llTvPlayerPane.setVisibility(View.VISIBLE);
                 llTvPlayerPane.setNextFocusLeftId(R.id.navigationRail);
-                
                 btnTvPlayPause.setOnClickListener(v -> toggleMiniPlayback());
                 btnTvNext.setOnClickListener(v -> {
                     SongPlayerFragment player = findSongPlayerFragment();
@@ -833,7 +752,6 @@ public class MusicPlayerFragment extends Fragment {
                     SongPlayerFragment player = findSongPlayerFragment();
                     if (player != null) player.externalSkipPrevious();
                 });
-
                 // Apply TV focus highlights
                 View.OnFocusChangeListener tvFocusHighlight = (v, hasFocus) -> {
                     if (hasFocus) {
@@ -846,14 +764,12 @@ public class MusicPlayerFragment extends Fragment {
                 btnTvNext.setOnFocusChangeListener(tvFocusHighlight);
                 btnTvPrev.setOnFocusChangeListener(tvFocusHighlight);
                 if (sbTvProgress != null) sbTvProgress.setOnFocusChangeListener(tvFocusHighlight);
-
                 // TV focus for library header elements
                 if (llLibraryInlineSearch != null) {
                     llLibraryInlineSearch.setOnFocusChangeListener(tvFocusHighlight);
                     llLibraryInlineSearch.setNextFocusLeftId(R.id.navigationRail);
                 }
                 if (llMiniPlayer != null) llMiniPlayer.setOnFocusChangeListener(tvFocusHighlight);
-
                 // Mas margen a la izquierda para el buscador (TV)
                 if (llLibraryHeaderRow != null) {
                     ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) llLibraryHeaderRow.getLayoutParams();
@@ -862,23 +778,20 @@ public class MusicPlayerFragment extends Fragment {
                         llLibraryHeaderRow.setLayoutParams(lp);
                     }
                 }
-
                 // Apply correct background based on Amoled mode
                 if (isAmoledModeEnabled()) {
                     llTvPlayerPane.setBackgroundResource(R.drawable.bg_tv_player_pane_amoled);
                 } else {
                     llTvPlayerPane.setBackgroundResource(R.drawable.bg_tv_player_pane);
                 }
-
                 ivTvPlayerBackground = view.findViewById(R.id.ivTvPlayerBackground);
                 if (ivTvPlayerBackground != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     ivTvPlayerBackground.setRenderEffect(android.graphics.RenderEffect.createBlurEffect(50f, 50f, android.graphics.Shader.TileMode.CLAMP));
                 }
-
                 // Fix D-pad focus navigation
                 if (rvMusicResults != null) {
                     rvMusicResults.setNextFocusLeftId(R.id.btnTvPlayPause);
-                    // Cuando presionas abajo en la lista, ve al navigation rail (módulos)
+                    // Cuando presionas abajo en la lista, ve al navigation rail (mÃƒÂ³dulos)
                     rvMusicResults.setNextFocusDownId(R.id.navigationRail);
                     // Cuando presionas arriba en la lista, ve al buscador
                     rvMusicResults.setNextFocusUpId(R.id.llLibraryInlineSearch);
@@ -896,7 +809,6 @@ public class MusicPlayerFragment extends Fragment {
                 if (sbTvProgress != null) sbTvProgress.setNextFocusRightId(R.id.rvMusicResults);
             }
         }
-        
         if (SystemType.INSTANCE.isTv(requireContext())) {
             View.OnFocusChangeListener tvFocusListener = (v, hasFocus) -> {
                 if (hasFocus) {
@@ -905,18 +817,14 @@ public class MusicPlayerFragment extends Fragment {
                     v.setBackgroundResource(0);
                 }
             };
-            
             llMiniPlayer.setOnFocusChangeListener(tvFocusListener);
             if (llLibraryInlineSearch != null) llLibraryInlineSearch.setOnFocusChangeListener(tvFocusListener);
         }
-
-
         adapter = new MusicResultsAdapter(this::openTrack, this::onMusicResultMoreClicked);
         musicResultsLayoutManager = new LinearLayoutManager(requireContext());
         rvMusicResults.setLayoutManager(musicResultsLayoutManager);
         rvMusicResults.setAdapter(adapter);
         rvMusicResults.addOnScrollListener(searchPaginationScrollListener);
-
         rebuildGoogleSignInClient();
         restoreCachedStreamingSessionState();
         restoreRecentSearchQueries();
@@ -924,33 +832,27 @@ public class MusicPlayerFragment extends Fragment {
         refreshCurrentPlayingPlaylistState();
         setupLibraryPullToRefresh();
         startObservingOfflineQueue();
-
         llFeaturedResult.setVisibility(View.GONE);
         btnYoutubeLogin.setVisibility(View.GONE);
-
         if (btnSearchMusic != null) btnSearchMusic.setOnClickListener(v -> performSearch(true));
         if (btnTabSearch != null) btnTabSearch.setOnClickListener(v -> switchScreen(ScreenMode.SEARCH));
         if (btnTabLibrary != null) btnTabLibrary.setOnClickListener(v -> switchScreen(ScreenMode.LIBRARY));
         btnYoutubeLogin.setOnClickListener(v -> onYoutubeLoginClicked());
-
         if (btnChipVideos != null) btnChipVideos.setOnClickListener(v -> setActiveFilter(ChipFilter.VIDEOS));
         if (btnChipSongs != null) btnChipSongs.setOnClickListener(v -> setActiveFilter(ChipFilter.SONGS));
         if (btnChipArtists != null) btnChipArtists.setOnClickListener(v -> setActiveFilter(ChipFilter.ARTISTS));
         if (btnChipPlaylists != null) btnChipPlaylists.setOnClickListener(v -> setActiveFilter(ChipFilter.PLAYLISTS));
-
         btnFeaturedPlay.setOnClickListener(v -> {
             if (featuredTrack != null) {
                 openTrack(featuredTrack);
             }
         });
-
         btnFeaturedSave.setOnClickListener(v -> {
             if (featuredTrack == null) {
                 return;
             }
             shareTrackResult(featuredTrack);
         });
-
         if (etMusicQuery != null) {
             etMusicQuery.setFocusable(false);
             etMusicQuery.setFocusableInTouchMode(false);
@@ -962,7 +864,6 @@ public class MusicPlayerFragment extends Fragment {
                 return true;
             });
         }
-
         boolean isTv = SystemType.INSTANCE.isTv(requireContext());
         if (etLibraryQuickSearch != null) {
             etLibraryQuickSearch.setFocusable(isTv);
@@ -971,7 +872,6 @@ public class MusicPlayerFragment extends Fragment {
                 launchSearchActivity();
             });
         }
-
         if (ivLibraryQuickClear != null) {
             ivLibraryQuickClear.setOnClickListener(v -> {
                 if (etLibraryQuickSearch == null) {
@@ -984,9 +884,7 @@ public class MusicPlayerFragment extends Fragment {
                 updateClearSearchBackPressedEnabled();
             });
         }
-
         setupBackPressToClearSearchInput();
-
         applyChipStyles();
         applyTopTabStyles();
         updateYoutubeButtonLabel();
@@ -997,7 +895,6 @@ public class MusicPlayerFragment extends Fragment {
         }
         updateClearSearchBackPressedEnabled();
         maybeAutoLaunchWebSessionIfNeeded();
-
         llMiniPlayer.setOnClickListener(v -> openPlayerFromMiniBar());
         btnMiniPlayPause.setOnClickListener(v -> toggleMiniPlayback());
         view.post(() -> {
@@ -1007,7 +904,6 @@ public class MusicPlayerFragment extends Fragment {
         });
         startMiniProgressTicker();
     }
-
     @Override
     public void onResume() {
         super.onResume();
@@ -1026,13 +922,11 @@ public class MusicPlayerFragment extends Fragment {
         maybeRestoreHiddenMiniPlayerFromPausedSnapshot();
         maybeAutoLaunchWebSessionIfNeeded();
         updateMiniPlayerUi();
-        
         if (getActivity() instanceof MainActivity) {
             MainActivity mainActivity = (MainActivity) getActivity();
             mainActivity.revealModuleContent();
         }
     }
-
     @Override
     public void onPause() {
         if (clearSearchBackPressedCallback != null) {
@@ -1041,7 +935,6 @@ public class MusicPlayerFragment extends Fragment {
         stopMiniProgressTicker();
         super.onPause();
     }
-
     @Override
     public void onHiddenChanged(boolean hidden) {
         super.onHiddenChanged(hidden);
@@ -1050,14 +943,12 @@ public class MusicPlayerFragment extends Fragment {
             stopMiniProgressTicker();
             return;
         }
-
         if (llMiniPlayer != null && !isTv) {
             // Ensure MiniPlayer is visible with a smooth fade-in when returning
             llMiniPlayer.setAlpha(0f);
             llMiniPlayer.setVisibility(View.VISIBLE);
             llMiniPlayer.animate().alpha(1f).setDuration(280).start();
         }
-
         startObservingOfflineQueue();
         ensureFavoritesPlaylistInLibraryTracks();
         refreshCurrentPlayingPlaylistState();
@@ -1070,7 +961,6 @@ public class MusicPlayerFragment extends Fragment {
         maybeAutoLaunchWebSessionIfNeeded();
         updateMiniPlayerUi();
     }
-
     private void maybeAutoLaunchWebSessionIfNeeded() {
         if (!isAdded()) {
             return;
@@ -1081,16 +971,13 @@ public class MusicPlayerFragment extends Fragment {
         if (!isNetworkAvailable()) {
             return;
         }
-
         long now = System.currentTimeMillis();
         if ((now - lastAutoWebSessionLaunchAtMs) < 3000L) {
             return;
         }
-
         lastAutoWebSessionLaunchAtMs = now;
         onYoutubeLoginClicked();
     }
-
     private boolean isPlaylistDetailStatePending() {
         if (!isAdded()) {
             return false;
@@ -1099,7 +986,6 @@ public class MusicPlayerFragment extends Fragment {
         String lastScreen = prefs.getString(PREF_LAST_STREAM_SCREEN, STREAM_SCREEN_LIBRARY);
         return TextUtils.equals(STREAM_SCREEN_PLAYLIST_DETAIL, lastScreen);
     }
-
     private void persistStreamingScreen(@NonNull String screen) {
         if (!isAdded()) {
             return;
@@ -1110,36 +996,30 @@ public class MusicPlayerFragment extends Fragment {
                 .putString(PREF_LAST_STREAM_SCREEN, screen)
                 .apply();
     }
-
     public boolean externalRestoreLastPlaylistDetailIfNeeded() {
         if (!isAdded()) {
             return false;
         }
-
         SharedPreferences prefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
         String lastScreen = prefs.getString(PREF_LAST_STREAM_SCREEN, STREAM_SCREEN_LIBRARY);
         if (!TextUtils.equals(STREAM_SCREEN_PLAYLIST_DETAIL, lastScreen)) {
             return false;
         }
-
         androidx.fragment.app.Fragment existing = getParentFragmentManager().findFragmentByTag("playlist_detail");
         if (existing != null && existing.isAdded()) {
             getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
-                    
                     .show(existing)
                     .commit();
             return true;
         }
-
         boolean restored = openLastPlaylistDetailFromPrefs();
         if (!restored) {
             persistStreamingScreen(STREAM_SCREEN_LIBRARY);
         }
         return restored;
     }
-
     private void startMiniProgressTicker() {
         if (!isAdded() || getView() == null || isHidden()) {
             return;
@@ -1147,36 +1027,29 @@ public class MusicPlayerFragment extends Fragment {
         miniProgressHandler.removeCallbacks(miniProgressTicker);
         miniProgressHandler.post(miniProgressTicker);
     }
-
     private void stopMiniProgressTicker() {
         miniProgressHandler.removeCallbacks(miniProgressTicker);
     }
-
     private void maybeRestoreHiddenMiniPlayerFromPausedSnapshot() {
         if (!isAdded() || isHidden() || restoringHiddenMiniPlayerFromSnapshot) {
             return;
         }
-
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
         if (existingPlayer != null && existingPlayer.isAdded()) {
             return;
         }
-
         PlaybackHistoryStore.Snapshot snapshot = loadPlaybackSnapshot();
         if (!snapshot.isValid() || snapshot.queue.isEmpty()) {
             return;
         }
-
         if (getParentFragmentManager().isStateSaved()) {
             return;
         }
-
         ArrayList<String> ids = new ArrayList<>();
         ArrayList<String> titles = new ArrayList<>();
         ArrayList<String> artists = new ArrayList<>();
         ArrayList<String> durations = new ArrayList<>();
         ArrayList<String> images = new ArrayList<>();
-
         for (PlaybackHistoryStore.QueueTrack item : snapshot.queue) {
             ids.add(item.videoId);
             titles.add(item.title);
@@ -1184,14 +1057,11 @@ public class MusicPlayerFragment extends Fragment {
             durations.add(item.duration);
             images.add(item.imageUrl);
         }
-
         if (ids.isEmpty()) {
             return;
         }
-
         int snapshotIndex = Math.max(0, Math.min(snapshot.currentIndex, ids.size() - 1));
         persistSnapshotPositionToPlayerState(snapshot);
-
         SongPlayerFragment playerFragment = SongPlayerFragment.newInstance(
                 ids,
                 titles,
@@ -1202,7 +1072,6 @@ public class MusicPlayerFragment extends Fragment {
                 false
         );
         playerFragment.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
-
         restoringHiddenMiniPlayerFromSnapshot = true;
         getParentFragmentManager()
                 .beginTransaction()
@@ -1216,7 +1085,6 @@ public class MusicPlayerFragment extends Fragment {
                 })
                 .commit();
     }
-
     private void switchScreen(@NonNull ScreenMode mode) {
         activeScreen = mode;
         updateLibraryPullRefreshAvailability();
@@ -1225,7 +1093,6 @@ public class MusicPlayerFragment extends Fragment {
             adapter.setSearchMode(mode == ScreenMode.SEARCH
                     || (mode == ScreenMode.LIBRARY && !TextUtils.isEmpty(getLibraryInlineQuery())));
         }
-
         boolean searchVisible = mode == ScreenMode.SEARCH;
         if (llSearchOverlay != null) llSearchOverlay.setVisibility(searchVisible ? View.VISIBLE : View.GONE);
         if (llSearchRow != null) llSearchRow.setVisibility(searchVisible ? View.VISIBLE : View.GONE);
@@ -1236,10 +1103,8 @@ public class MusicPlayerFragment extends Fragment {
             llLibraryInlineSearch.setVisibility(searchVisible ? View.GONE : View.VISIBLE);
         }
         updateLibraryInlineClearButton();
-
         applyTopTabStyles();
         updateYoutubeButtonLabel();
-
         if (searchVisible) {
             String query = etMusicQuery.getText() != null ? etMusicQuery.getText().toString().trim() : "";
             refreshSearchSuggestions(query);
@@ -1252,7 +1117,6 @@ public class MusicPlayerFragment extends Fragment {
             }
             return;
         }
-
         llFeaturedResult.setVisibility(View.GONE);
         String inlineQuery = getLibraryInlineQuery();
         if (!TextUtils.isEmpty(inlineQuery)) {
@@ -1268,10 +1132,8 @@ public class MusicPlayerFragment extends Fragment {
             tvMusicState.setText("");
             showLibraryEmptyState();
         }
-
         maybeSyncLibraryIfAuthorized();
     }
-
     private void maybeSyncLibraryIfAuthorized() {
         if (!isAdded() || loadingLibrary || !streamingOauthCompleted) {
             return;
@@ -1279,13 +1141,11 @@ public class MusicPlayerFragment extends Fragment {
         if (!isNetworkAvailable()) {
             return;
         }
-
         long now = System.currentTimeMillis();
         boolean hasLocalData = !libraryTracks.isEmpty();
         if (hasLocalData && (now - lastLibrarySyncAtMs) < LIBRARY_REFRESH_MIN_INTERVAL_MS) {
             return;
         }
-
         String accountKey = resolveAccountKey();
         boolean backgroundRefresh = hasLocalData;
         if (hasValidCachedToken(accountKey)) {
@@ -1293,12 +1153,10 @@ public class MusicPlayerFragment extends Fragment {
             fetchLibraryPlaylists(false, backgroundRefresh, false);
             return;
         }
-
         if (!TextUtils.isEmpty(youtubeAccessToken)) {
             fetchLibraryPlaylists(false, backgroundRefresh, false);
         }
     }
-
     private void setupLibraryPullToRefresh() {
         if (swipeLibraryRefresh == null || !isAdded()) {
             return;
@@ -1314,14 +1172,12 @@ public class MusicPlayerFragment extends Fragment {
         swipeLibraryRefresh.setOnRefreshListener(this::triggerLibraryPullRefresh);
         updateLibraryPullRefreshAvailability();
     }
-
     private void updateLibraryPullRefreshAvailability() {
         if (swipeLibraryRefresh == null) {
             return;
         }
         swipeLibraryRefresh.setEnabled(activeScreen == ScreenMode.LIBRARY);
     }
-
     private void setLibraryPullRefreshState(boolean refreshing) {
         if (swipeLibraryRefresh == null) {
             return;
@@ -1331,7 +1187,6 @@ public class MusicPlayerFragment extends Fragment {
         }
         swipeLibraryRefresh.setRefreshing(refreshing);
     }
-
     private void triggerLibraryPullRefresh() {
         if (!isAdded()) {
             setLibraryPullRefreshState(false);
@@ -1341,40 +1196,32 @@ public class MusicPlayerFragment extends Fragment {
             setLibraryPullRefreshState(false);
             return;
         }
-
         setLibraryPullRefreshState(true);
         lastLibrarySyncAtMs = 0L;
-
         if (!isNetworkAvailable()) {
             setLibraryLoading(false, "Sin internet. No se pudo refrescar la biblioteca.");
             return;
         }
-
         if (!streamingOauthCompleted) {
             onYoutubeLoginClicked();
             return;
         }
-
         if (!TextUtils.isEmpty(youtubeAccessToken)) {
             fetchLibraryPlaylists(true, false, true);
             return;
         }
-
         String accountKey = resolveAccountKey();
         if (hasValidCachedToken(accountKey)) {
             youtubeAccessToken = cachedYoutubeAccessToken;
             fetchLibraryPlaylists(true, false, true);
             return;
         }
-
         requestYoutubeAccessTokenFromPrimaryAccountAfterWebSession(true, false, true);
     }
-
     private void setupBackPressToClearSearchInput() {
         if (!isAdded()) {
             return;
         }
-
         clearSearchBackPressedCallback = new OnBackPressedCallback(false) {
             @Override
             public void handleOnBackPressed() {
@@ -1382,19 +1229,16 @@ public class MusicPlayerFragment extends Fragment {
                     updateClearSearchBackPressedEnabled();
                     return;
                 }
-
                 setEnabled(false);
                 requireActivity().getOnBackPressedDispatcher().onBackPressed();
                 setEnabled(true);
             }
         };
-
         requireActivity().getOnBackPressedDispatcher().addCallback(
                 getViewLifecycleOwner(),
                 clearSearchBackPressedCallback
         );
     }
-
     private void updateClearSearchBackPressedEnabled() {
         if (clearSearchBackPressedCallback == null) {
             return;
@@ -1404,14 +1248,12 @@ public class MusicPlayerFragment extends Fragment {
                 && (hasAnySearchInputText() || isLibraryInlineAwaitingSubmitState());
         clearSearchBackPressedCallback.setEnabled(shouldEnable);
     }
-
     private boolean isLibraryInlineAwaitingSubmitState() {
         return activeScreen == ScreenMode.LIBRARY
                 && libraryInlineManualModeActive
                 && etLibraryQuickSearch != null
                 && etLibraryQuickSearch.hasFocus();
     }
-
     private boolean hasAnySearchInputText() {
         boolean hasLibraryQuery = etLibraryQuickSearch != null
                 && etLibraryQuickSearch.getText() != null
@@ -1421,10 +1263,8 @@ public class MusicPlayerFragment extends Fragment {
                 && !TextUtils.isEmpty(etMusicQuery.getText().toString().trim());
         return hasLibraryQuery || hasSearchQuery;
     }
-
     private boolean clearSearchInputsIfAny() {
         boolean cleared = false;
-
         if (etLibraryQuickSearch != null
                 && etLibraryQuickSearch.getText() != null
                 && !TextUtils.isEmpty(etLibraryQuickSearch.getText().toString().trim())) {
@@ -1434,7 +1274,6 @@ public class MusicPlayerFragment extends Fragment {
             applyLibraryInlineSongSearch();
             cleared = true;
         }
-
         if (etMusicQuery != null
                 && etMusicQuery.getText() != null
                 && !TextUtils.isEmpty(etMusicQuery.getText().toString().trim())) {
@@ -1454,7 +1293,6 @@ public class MusicPlayerFragment extends Fragment {
             }
             cleared = true;
         }
-
         if (!cleared && activeScreen == ScreenMode.LIBRARY && libraryInlineManualModeActive) {
             if (etLibraryQuickSearch != null) {
                 etLibraryQuickSearch.setText("");
@@ -1465,17 +1303,13 @@ public class MusicPlayerFragment extends Fragment {
             renderLibraryResults();
             cleared = true;
         }
-
         return cleared;
     }
-
     private int dpToPx(int dp) {
         return Math.round(dp * getResources().getDisplayMetrics().density);
     }
-
     private void rebuildGoogleSignInClient() {
         Scope ytScope = new Scope(youTubeMusicService.getYoutubeReadonlyScope());
-        
         String serverClientId = "";
         try {
             int resId = requireContext().getResources().getIdentifier(
@@ -1487,24 +1321,19 @@ public class MusicPlayerFragment extends Fragment {
                 serverClientId = getString(resId);
             }
         } catch (Exception ignored) {}
-
         GoogleSignInOptions.Builder optionsBuilder = new GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
                 .requestEmail()
                 .requestScopes(ytScope);
-
         if (!TextUtils.isEmpty(serverClientId)) {
             optionsBuilder.requestIdToken(serverClientId);
             optionsBuilder.requestServerAuthCode(serverClientId);
         }
-
         String preferredEmail = getPrimaryAppGoogleEmail();
         if (!TextUtils.isEmpty(preferredEmail)) {
             optionsBuilder.setAccountName(preferredEmail);
         }
-
         googleSignInClient = GoogleSignIn.getClient(requireContext(), optionsBuilder.build());
     }
-
     @NonNull
     private String getPrimaryAppGoogleEmail() {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
@@ -1513,25 +1342,21 @@ public class MusicPlayerFragment extends Fragment {
         }
         return user.getEmail().trim();
     }
-
     private boolean isMatchingPrimaryAppGoogleAccount(@NonNull GoogleSignInAccount account) {
         String appEmail = getPrimaryAppGoogleEmail();
         if (TextUtils.isEmpty(appEmail)) {
             return true;
         }
-
         String accountEmail = account.getEmail();
         if (TextUtils.isEmpty(accountEmail)) {
             return false;
         }
         return appEmail.equalsIgnoreCase(accountEmail.trim());
     }
-
     private void applyTopTabStyles() {
         styleTopTab(btnTabSearch, activeScreen == ScreenMode.SEARCH);
         styleTopTab(btnTabLibrary, activeScreen == ScreenMode.LIBRARY);
     }
-
     private void styleTopTab(@NonNull MaterialButton tab, boolean selected) {
         if (tab == null) return;
         int bg = selected
@@ -1543,14 +1368,11 @@ public class MusicPlayerFragment extends Fragment {
         tab.setBackgroundTintList(ColorStateList.valueOf(bg));
         tab.setTextColor(fg);
     }
-
     private void onYoutubeLoginClicked() {
         if (!isAdded()) {
             return;
         }
-
         Log.i(TAG_STREAMING, "login:web_session_launch requested");
-
         streamingOauthCompleted = false;
         youtubeAccessToken = "";
         clearCachedToken();
@@ -1563,16 +1385,13 @@ public class MusicPlayerFragment extends Fragment {
         }
         updateYoutubeButtonLabel();
         setLibraryLoading(true, "Abriendo sesion web de YouTube Music...");
-
         if (webSessionLauncher == null) {
             setLibraryLoading(false, "No se pudo abrir el mininavegador de sesion.");
             return;
         }
-
         Intent intent = new Intent(requireContext(), YouTubeMusicWebSessionActivity.class);
         webSessionLauncher.launch(intent);
     }
-
     private void handleWebSessionAuthSuccess(@NonNull Intent data) {
         String cookieHeader = data.getStringExtra(YouTubeMusicWebSessionActivity.EXTRA_SESSION_COOKIE_HEADER);
         String userAgent = data.getStringExtra(YouTubeMusicWebSessionActivity.EXTRA_SESSION_USER_AGENT);
@@ -1581,12 +1400,10 @@ public class MusicPlayerFragment extends Fragment {
             setLibraryLoading(false, "No se detecto sesion web valida.");
             return;
         }
-
         Log.i(
                 TAG_STREAMING,
                 "web_session_result authenticated cookieLength=" + cookieHeader.length()
         );
-
         if (isAdded()) {
             requireContext()
                     .getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE)
@@ -1594,22 +1411,17 @@ public class MusicPlayerFragment extends Fragment {
                     .putString(PREF_LAST_YOUTUBE_WEB_COOKIE, cookieHeader)
                     .apply();
         }
-
         // Activar inmediatamente la cookie en InnertubeResolver para que las
-        // siguientes peticiones de resolución y playback estén autenticadas.
+        // siguientes peticiones de resoluciÃƒÂ³n y playback estÃƒÂ©n autenticadas.
         InnertubeResolver.setAuthCookies(cookieHeader);
-
         streamingOauthCompleted = true;
         updateYoutubeButtonLabel();
-
         // Keep user-agent available for future web-session API extensions.
         if (TextUtils.isEmpty(userAgent)) {
             userAgent = "";
         }
-
         requestYoutubeAccessTokenFromPrimaryAccountAfterWebSession(true, false, true);
     }
-
     private void requestYoutubeAccessTokenFromPrimaryAccountAfterWebSession(
             boolean userTriggered,
             boolean backgroundRefresh,
@@ -1618,7 +1430,6 @@ public class MusicPlayerFragment extends Fragment {
         if (!isAdded()) {
             return;
         }
-
         StreamingAccountCandidate accountCandidate = resolveStreamingOAuthAccountCandidate();
         if (accountCandidate == null || TextUtils.isEmpty(accountCandidate.email)) {
             Log.w(TAG_STREAMING, "oauth_account unresolved; trying account chooser fallback");
@@ -1630,16 +1441,13 @@ public class MusicPlayerFragment extends Fragment {
             setLibraryLoading(false, "No se encontro cuenta Google para validar YouTube.");
             return;
         }
-
         Log.i(
                 TAG_STREAMING,
                 "oauth_account selected email=" + accountCandidate.email + " source=" + accountCandidate.source
         );
-
         if (!backgroundRefresh) {
             setLibraryLoading(true, "Validando sesion web y permisos YouTube...");
         }
-
         Account resolvedAccount = new Account(accountCandidate.email, "com.google");
         android.content.Context appContext = requireContext().getApplicationContext();
         authExecutor.execute(() -> {
@@ -1649,7 +1457,6 @@ public class MusicPlayerFragment extends Fragment {
                 if (TextUtils.isEmpty(token)) {
                     throw new IllegalStateException("No se recibio token OAuth.");
                 }
-
                 String finalToken = token;
                 mainHandler.post(() -> {
                     streamingOauthAccountEmail = accountCandidate.email;
@@ -1689,44 +1496,36 @@ public class MusicPlayerFragment extends Fragment {
                     Log.e(TAG_STREAMING, "oauth_token failed: " + e.getMessage());
                     setLibraryLoading(false, "No se pudo validar YouTube: " + e.getMessage());
                     if (userTriggered && isAdded()) {
-                        
                     }
                 });
             }
         });
     }
-
     private void forcePrimaryAccountReSignIn() {
         if (googleSignInClient == null) {
             setLibraryLoading(false, "No se pudo sincronizar la cuenta de YouTube.");
             return;
         }
-
         setLibraryLoading(true, "Usando la misma cuenta con la que entraste a la app...");
         launchGoogleSignInChooser(true);
     }
-
     private void launchGoogleSignInChooser(boolean forceFreshSelection) {
         if (googleSignInClient == null) {
             setLibraryLoading(false, "No se pudo abrir Google Sign-In.");
             return;
         }
-
         Runnable launchIntent = () -> {
             if (!isAdded()) {
                 return;
             }
             signInLauncher.launch(googleSignInClient.getSignInIntent());
         };
-
         if (!forceFreshSelection) {
             launchIntent.run();
             return;
         }
-
         googleSignInClient.signOut().addOnCompleteListener(task -> launchIntent.run());
     }
-
     private void handleGoogleSignInResult(@Nullable Intent data) {
         try {
             GoogleSignInAccount account = GoogleSignIn.getSignedInAccountFromIntent(data).getResult(ApiException.class);
@@ -1734,26 +1533,21 @@ public class MusicPlayerFragment extends Fragment {
                 setLibraryLoading(false, "No se pudo obtener la cuenta.");
                 return;
             }
-
             if (!isMatchingPrimaryAppGoogleAccount(account)) {
                 if (googleSignInClient != null) {
                     googleSignInClient.signOut();
                 }
                 setLibraryLoading(false, "Selecciona la misma cuenta Google con la que iniciaste sesion en la app.");
-                
                 return;
             }
-
             requestYoutubeAccessToken(account, true);
         } catch (ApiException e) {
             String failureMessage = buildGoogleSignInFailureMessage(e);
             setLibraryLoading(false, failureMessage);
             if (isAdded()) {
-                
             }
         }
     }
-
     @NonNull
     private String buildGoogleSignInFailureMessage(@NonNull ApiException exception) {
         int statusCode = exception.getStatusCode();
@@ -1774,11 +1568,9 @@ public class MusicPlayerFragment extends Fragment {
         }
         return "No se pudo iniciar sesion con Google (codigo " + statusCode + ").";
     }
-
     private void requestYoutubeAccessToken(@NonNull GoogleSignInAccount account, boolean userTriggered) {
         requestYoutubeAccessToken(account, userTriggered, false, false);
     }
-
     private void requestYoutubeAccessToken(
             @NonNull GoogleSignInAccount account,
             boolean userTriggered,
@@ -1786,7 +1578,6 @@ public class MusicPlayerFragment extends Fragment {
     ) {
         requestYoutubeAccessToken(account, userTriggered, backgroundRefresh, false);
     }
-
     private void requestYoutubeAccessToken(
             @NonNull GoogleSignInAccount account,
             boolean userTriggered,
@@ -1796,7 +1587,6 @@ public class MusicPlayerFragment extends Fragment {
         if (!isAdded()) {
             return;
         }
-
         if (!backgroundRefresh) {
             setLibraryLoading(true, "Solicitando permiso de biblioteca...");
         }
@@ -1804,12 +1594,10 @@ public class MusicPlayerFragment extends Fragment {
         if (accountRef == null && !TextUtils.isEmpty(account.getEmail())) {
             accountRef = new Account(account.getEmail(), "com.google");
         }
-
         if (accountRef == null) {
             setLibraryLoading(false, "No se pudo resolver la cuenta de Google.");
             return;
         }
-
         Account resolvedAccount = accountRef;
         android.content.Context appContext = requireContext().getApplicationContext();
         authExecutor.execute(() -> {
@@ -1819,7 +1607,6 @@ public class MusicPlayerFragment extends Fragment {
                 if (TextUtils.isEmpty(token)) {
                     throw new IllegalStateException("No se recibio token OAuth.");
                 }
-
                 String finalToken = token;
                 mainHandler.post(() -> {
                     youtubeAccessToken = finalToken;
@@ -1840,7 +1627,6 @@ public class MusicPlayerFragment extends Fragment {
                     Intent recoverIntent = recoverableException.getIntent();
                     if (recoverIntent == null) {
                         if (isAdded()) {
-                            
                         }
                         launchGoogleSignInChooser(true);
                         return;
@@ -1849,7 +1635,6 @@ public class MusicPlayerFragment extends Fragment {
                         recoverAuthLauncher.launch(recoverIntent);
                     } catch (Exception launchError) {
                         if (isAdded()) {
-                            
                         }
                         launchGoogleSignInChooser(true);
                     }
@@ -1861,28 +1646,23 @@ public class MusicPlayerFragment extends Fragment {
                         setLibraryLoading(false, "No se pudo validar YouTube: " + e.getMessage());
                     }
                     if (userTriggered && isAdded()) {
-                        
                     }
                 });
             }
         });
     }
-
     private void clearPendingRecoverableAuthState() {
         pendingWebSessionAuthRecovery = false;
         pendingWebSessionUserTriggered = false;
         pendingWebSessionBackgroundRefresh = false;
         pendingWebSessionForceRefresh = false;
     }
-
     private void fetchLibraryPlaylists(boolean userTriggered) {
         fetchLibraryPlaylists(userTriggered, false, false);
     }
-
     private void fetchLibraryPlaylists(boolean userTriggered, boolean backgroundRefresh) {
         fetchLibraryPlaylists(userTriggered, backgroundRefresh, false);
     }
-
     private void fetchLibraryPlaylists(boolean userTriggered, boolean backgroundRefresh, boolean forceRefresh) {
         if (TextUtils.isEmpty(youtubeAccessToken)) {
             Log.w(TAG_STREAMING, "playlist_fetch skipped: empty_token");
@@ -1899,7 +1679,6 @@ public class MusicPlayerFragment extends Fragment {
             setLibraryLoading(false, "Conecta YouTube para cargar tu biblioteca.");
             return;
         }
-
         if (!isNetworkAvailable()) {
             Log.w(TAG_STREAMING, "playlist_fetch network_unavailable");
             if (restoreLibraryFromPersistentCache() || !libraryTracks.isEmpty()) {
@@ -1911,11 +1690,9 @@ public class MusicPlayerFragment extends Fragment {
                 }
                 return;
             }
-
             setLibraryLoading(false, "Sin internet y sin cache de biblioteca.");
             return;
         }
-
         if (!backgroundRefresh) {
             setLibraryLoading(true, "Cargando playlists de tu biblioteca...");
         }
@@ -1926,17 +1703,13 @@ public class MusicPlayerFragment extends Fragment {
                 if (!isAdded()) {
                     return;
                 }
-
                 Log.i(TAG_STREAMING, "playlist_fetch success playlists=" + playlists.size());
-
                 libraryTracks.clear();
                 libraryTracks.addAll(mapPlaylistsToLibraryTracks(playlists));
                 ensureFavoritesPlaylistInLibraryTracks();
-
                 cacheLibraryForCurrentAccount(libraryTracks);
                 prefetchLibraryTracksForOffline(libraryTracks, youtubeAccessToken);
                 lastLibrarySyncAtMs = System.currentTimeMillis();
-
                 youtubeAuthRefreshInProgress = false;
                 if (!backgroundRefresh) {
                     setLibraryLoading(false, "");
@@ -1945,15 +1718,12 @@ public class MusicPlayerFragment extends Fragment {
                     renderLibraryResults();
                 }
             }
-
             @Override
             public void onError(@NonNull String error) {
                 if (!isAdded()) {
                     return;
                 }
-
                 Log.e(TAG_STREAMING, "playlist_fetch error: " + error);
-
                 if (isLikelyNetworkError(error)) {
                     boolean restored = restoreLibraryFromPersistentCache();
                     if (restored || !libraryTracks.isEmpty()) {
@@ -1967,7 +1737,6 @@ public class MusicPlayerFragment extends Fragment {
                         return;
                     }
                 }
-
                 if (shouldRetryYouTubeAuth(error) && !youtubeAuthRefreshInProgress) {
                     if (streamingOauthCompleted) {
                         youtubeAuthRefreshInProgress = true;
@@ -1978,7 +1747,6 @@ public class MusicPlayerFragment extends Fragment {
                         return;
                     }
                 }
-
                 youtubeAuthRefreshInProgress = false;
                 if (shouldInvalidateStoredYoutubeToken(error)) {
                     youtubeAccessToken = "";
@@ -1986,12 +1754,10 @@ public class MusicPlayerFragment extends Fragment {
                     clearCachedToken();
                     updateYoutubeButtonLabel();
                 }
-
                 if (!backgroundRefresh || libraryTracks.isEmpty()) {
                     setLibraryLoading(false, "Error al cargar biblioteca: " + error);
                 }
                 if (userTriggered) {
-                    
                 }
                 if (forceRefresh) {
                     setLibraryPullRefreshState(false);
@@ -1999,21 +1765,17 @@ public class MusicPlayerFragment extends Fragment {
             }
         });
     }
-
     private void renderLibraryResults() {
         ensureFavoritesPlaylistInLibraryTracks();
         libraryInlinePendingReveal = false;
-
         String inlineQuery = getLibraryInlineQuery();
         if (!TextUtils.isEmpty(inlineQuery)) {
             showLibraryInlineBlankState();
             return;
         }
-
         if (adapter != null) {
             adapter.setSearchMode(false);
         }
-
         featuredTrack = null;
         llFeaturedResult.setVisibility(View.GONE);
         if (tvLibraryTitle != null) tvLibraryTitle.setVisibility(View.VISIBLE);
@@ -2023,15 +1785,13 @@ public class MusicPlayerFragment extends Fragment {
         llMusicStateVisible(false);
         tracks.clear();
         adapter.submitResults(new ArrayList<>(libraryTracks));
-
         if (libraryTracks.isEmpty()) {
             tvMusicState.setText("");
             showLibraryEmptyState();
         } else {
             tvMusicState.setText("");
         }
-
-        // Controlar la visibilidad del RecyclerView a través de animación para evitar parpadeo
+        // Controlar la visibilidad del RecyclerView a travÃƒÂ©s de animaciÃƒÂ³n para evitar parpadeo
         if (rvMusicResults != null) {
             rvMusicResults.animate().cancel();
             if (rvMusicResults.getVisibility() != View.VISIBLE) {
@@ -2040,26 +1800,19 @@ public class MusicPlayerFragment extends Fragment {
                 rvMusicResults.animate().alpha(1f).setDuration(180L).start();
             }
         }
-
         maybeEnqueueNextOfflineAutoPlaylist();
     }
-
-
-
     private void syncLibraryWithCache() {
         if (!isAdded()) return;
         if (LIBRARY_CACHE.isEmpty()) return;
-
         allTracks.clear();
         allTracks.addAll(LIBRARY_CACHE);
-        
         String query = "";
         if (etLibraryQuickSearch != null && etLibraryQuickSearch.getText() != null) {
             query = etLibraryQuickSearch.getText().toString();
         }
         applyActiveFilter(query);
     }
-
     private void showLibraryEmptyState() {
         if (tvLibraryTitle != null) tvLibraryTitle.setVisibility(View.GONE);
         if (llLibraryInlineSearch != null) llLibraryInlineSearch.setVisibility(View.GONE);
@@ -2069,7 +1822,6 @@ public class MusicPlayerFragment extends Fragment {
         llLibraryEmptyState.setVisibility(View.VISIBLE);
         updateYoutubeButtonLabel();
     }
-
     @NonNull
     private String getLibraryInlineQuery() {
         if (etLibraryQuickSearch == null || etLibraryQuickSearch.getText() == null) {
@@ -2077,12 +1829,10 @@ public class MusicPlayerFragment extends Fragment {
         }
         return etLibraryQuickSearch.getText().toString().trim();
     }
-
     private void applyLibraryInlineSongSearch() {
         if (activeScreen != ScreenMode.LIBRARY) {
             return;
         }
-
         String query = getLibraryInlineQuery();
         if (TextUtils.isEmpty(query)) {
             cancelPendingLibraryInlineSearch();
@@ -2091,102 +1841,82 @@ public class MusicPlayerFragment extends Fragment {
             renderLibraryResults();
             return;
         }
-
         libraryInlineManualModeActive = true;
         showLibraryInlineBlankState();
     }
-
     private void submitLibraryInlineSongSearch() {
         if (activeScreen != ScreenMode.LIBRARY) {
             return;
         }
-
         String query = getLibraryInlineQuery();
         if (TextUtils.isEmpty(query)) {
             libraryInlineManualModeActive = false;
             renderLibraryResults();
             return;
         }
-
         libraryInlineManualModeActive = true;
         showLibraryInlineLoadingState();
         triggerOnlineMusicSearchFromLibrary(query);
     }
-
     private void showLibraryInlineBlankState() {
         if (activeScreen != ScreenMode.LIBRARY) {
             return;
         }
-
         cancelPendingLibraryInlineSearch();
         libraryInlinePendingReveal = false;
-
         if (tvLibraryTitle != null) tvLibraryTitle.setVisibility(View.VISIBLE);
         llLibraryInlineSearch.setVisibility(View.VISIBLE);
         llLibraryEmptyState.setVisibility(View.GONE);
         updateLibraryInlineClearButton();
-
         featuredTrack = null;
         llFeaturedResult.setVisibility(View.GONE);
         tracks.clear();
         allTracks.clear();
-
         if (adapter != null) {
             adapter.setSearchMode(true);
             adapter.submitResults(new ArrayList<>());
         }
-
         if (rvMusicResults != null) {
             rvMusicResults.animate().cancel();
             rvMusicResults.setAlpha(0f);
             rvMusicResults.setVisibility(View.GONE);
         }
-
         llMusicStateVisible(false);
         tvMusicState.setText("");
     }
-
     private void showLibraryInlineLoadingState() {
         if (activeScreen != ScreenMode.LIBRARY) {
             return;
         }
-
         if (tvLibraryTitle != null) tvLibraryTitle.setVisibility(View.VISIBLE);
         if (llLibraryInlineSearch != null) llLibraryInlineSearch.setVisibility(View.VISIBLE);
         llLibraryEmptyState.setVisibility(View.GONE);
         updateLibraryInlineClearButton();
-
         featuredTrack = null;
         llFeaturedResult.setVisibility(View.GONE);
         tracks.clear();
-
         if (adapter != null) {
             adapter.setSearchMode(true);
             adapter.submitResults(new ArrayList<>());
         }
-
         if (rvMusicResults != null) {
             rvMusicResults.animate().cancel();
             rvMusicResults.setAlpha(0f);
             rvMusicResults.setVisibility(View.GONE);
         }
-
         libraryInlinePendingReveal = true;
         llMusicStateVisible(true);
         tvMusicState.setText("Buscando musica en YouTube...");
     }
-
     private void revealLibraryInlineResultsWithFade() {
         if (rvMusicResults == null) {
             return;
         }
-
         if (!libraryInlinePendingReveal) {
             rvMusicResults.setVisibility(View.VISIBLE);
             rvMusicResults.setAlpha(1f);
             return;
         }
-
         libraryInlinePendingReveal = false;
         rvMusicResults.animate().cancel();
         rvMusicResults.setAlpha(0f);
@@ -2196,7 +1926,6 @@ public class MusicPlayerFragment extends Fragment {
                 .setDuration(210L)
                 .start();
     }
-
     private void cancelPendingLibraryInlineSearch() {
         if (pendingLibraryInlineSearchRunnable == null) {
             return;
@@ -2204,7 +1933,6 @@ public class MusicPlayerFragment extends Fragment {
         mainHandler.removeCallbacks(pendingLibraryInlineSearchRunnable);
         pendingLibraryInlineSearchRunnable = null;
     }
-
     private void scheduleLibraryInlineOnlineSearch(@NonNull String query) {
         cancelPendingLibraryInlineSearch();
         pendingLibraryInlineSearchRunnable = () -> {
@@ -2212,41 +1940,34 @@ public class MusicPlayerFragment extends Fragment {
             if (!isAdded() || activeScreen != ScreenMode.LIBRARY) {
                 return;
             }
-
             String latestQuery = getLibraryInlineQuery();
             if (TextUtils.isEmpty(latestQuery)) {
                 lastLibraryInlineDispatchedQuery = "";
                 renderLibraryResults();
                 return;
             }
-
             if (TextUtils.equals(latestQuery, lastLibraryInlineDispatchedQuery) && searching) {
                 return;
             }
-
             if (latestQuery.length() < LIBRARY_INLINE_ONLINE_MIN_QUERY_CHARS) {
                 lastLibraryInlineDispatchedQuery = latestQuery;
                 renderLibrarySongSearchResults(latestQuery);
                 return;
             }
-
             lastLibraryInlineDispatchedQuery = latestQuery;
             triggerOnlineMusicSearchFromLibrary(latestQuery);
         };
         mainHandler.postDelayed(pendingLibraryInlineSearchRunnable, LIBRARY_INLINE_SEARCH_DEBOUNCE_MS);
     }
-
     private void triggerOnlineMusicSearchFromLibrary(@NonNull String query) {
         if (!isAdded()) {
             return;
         }
         lastLibraryInlineDispatchedQuery = query;
-
         if (activeFilter != ChipFilter.SONGS) {
             activeFilter = ChipFilter.SONGS;
             applyChipStyles();
         }
-
         if (etMusicQuery != null) {
             String currentSearchQuery = etMusicQuery.getText() == null
                     ? ""
@@ -2256,7 +1977,6 @@ public class MusicPlayerFragment extends Fragment {
             }
             etMusicQuery.setSelection(etMusicQuery.getText() == null ? 0 : etMusicQuery.getText().length());
         }
-
         if (tvLibraryTitle != null) tvLibraryTitle.setVisibility(View.VISIBLE);
         if (llLibraryInlineSearch != null) llLibraryInlineSearch.setVisibility(View.VISIBLE);
         llLibraryEmptyState.setVisibility(View.GONE);
@@ -2265,26 +1985,20 @@ public class MusicPlayerFragment extends Fragment {
         if (adapter != null) {
             adapter.setSearchMode(true);
         }
-
         performYoutubeMusicSearch(query, false, true);
     }
-
     private void renderLibrarySongSearchResults(@NonNull String query) {
         if (activeScreen != ScreenMode.LIBRARY) {
             return;
         }
-
         if (adapter != null) {
             adapter.setSearchMode(true);
         }
-
         if (libraryTracks.isEmpty()) {
             restoreLibraryFromPersistentCache();
         }
-
         List<YouTubeMusicService.TrackResult> resultTracks = findSongsAcrossCachedPlaylists(query);
         tracks.clear();
-
         if (resultTracks.isEmpty()) {
             featuredTrack = null;
             llFeaturedResult.setVisibility(View.GONE);
@@ -2296,7 +2010,6 @@ public class MusicPlayerFragment extends Fragment {
                 tracks.addAll(resultTracks.subList(1, resultTracks.size()));
             }
         }
-
         if (tvLibraryTitle != null) tvLibraryTitle.setVisibility(View.VISIBLE);
         if (llLibraryInlineSearch != null) llLibraryInlineSearch.setVisibility(View.VISIBLE);
         llLibraryEmptyState.setVisibility(View.GONE);
@@ -2306,7 +2019,6 @@ public class MusicPlayerFragment extends Fragment {
             adapter.submitResults(new ArrayList<>(tracks));
         }
         revealLibraryInlineResultsWithFade();
-
         if (resultTracks.isEmpty()) {
             tvMusicState.setText("Sin coincidencias en playlists guardadas para: " + query);
         } else {
@@ -2317,44 +2029,35 @@ public class MusicPlayerFragment extends Fragment {
             ));
         }
     }
-
     @NonNull
     private List<YouTubeMusicService.TrackResult> findSongsAcrossCachedPlaylists(@NonNull String query) {
         List<YouTubeMusicService.TrackResult> result = new ArrayList<>();
         if (!isAdded()) {
             return result;
         }
-
         ensureFavoritesPlaylistInLibraryTracks();
-
         String[] queryTokens = extractSearchTokens(query);
         if (queryTokens.length == 0) {
             return result;
         }
-
         Set<String> seenVideoIds = new HashSet<>();
-
         for (YouTubeMusicService.TrackResult playlist : libraryTracks) {
             if (playlist == null || !"playlist".equals(playlist.resultType)) {
                 continue;
             }
-
             String playlistId = playlist.contentId == null ? "" : playlist.contentId.trim();
             if (playlistId.isEmpty()) {
                 continue;
             }
-
             String playlistTitle = TextUtils.isEmpty(playlist.title) ? "Playlist" : playlist.title;
             ArrayList<CachedPlaylistTrack> cachedTracks = loadCachedPlaylistTracksForOffline(playlistId);
             if (cachedTracks.isEmpty()) {
                 continue;
             }
-
             for (CachedPlaylistTrack cachedTrack : cachedTracks) {
                 if (cachedTrack == null || TextUtils.isEmpty(cachedTrack.videoId)) {
                     continue;
                 }
-
                 String normalizedTitle = normalizeForFilter(cachedTrack.title);
                 String normalizedArtist = normalizeForFilter(cachedTrack.artist);
                 String normalizedPlaylistTitle = normalizeForFilter(playlistTitle);
@@ -2368,12 +2071,10 @@ public class MusicPlayerFragment extends Fragment {
                 if (!matches || !seenVideoIds.add(cachedTrack.videoId)) {
                     continue;
                 }
-
                 String displayTitle = TextUtils.isEmpty(cachedTrack.title) ? "Cancion" : cachedTrack.title;
                 String subtitle = TextUtils.isEmpty(cachedTrack.artist)
                         ? "Playlist: " + playlistTitle
-                        : cachedTrack.artist + " • " + playlistTitle;
-
+                        : cachedTrack.artist + " Ã¢â‚¬Â¢ " + playlistTitle;
                 result.add(new YouTubeMusicService.TrackResult(
                         "video",
                         cachedTrack.videoId,
@@ -2381,50 +2082,40 @@ public class MusicPlayerFragment extends Fragment {
                         subtitle,
                         cachedTrack.imageUrl
                 ));
-
                 if (result.size() >= LIBRARY_INLINE_SEARCH_MAX_RESULTS) {
                     return result;
                 }
             }
         }
-
         sortSearchResultsByBestMatch(result, query);
-
         return result;
     }
-
     private void updateLibraryInlineClearButton() {
         if (ivLibraryQuickClear == null) {
             return;
         }
-
         boolean visible = activeScreen == ScreenMode.LIBRARY
                 && etLibraryQuickSearch != null
                 && etLibraryQuickSearch.getText() != null
                 && !TextUtils.isEmpty(etLibraryQuickSearch.getText().toString().trim());
         ivLibraryQuickClear.setVisibility(visible ? View.VISIBLE : View.GONE);
     }
-
     private void llMusicStateVisible(boolean visible) {
         if (llMusicState != null) {
             llMusicState.setVisibility(visible ? View.VISIBLE : View.GONE);
         }
     }
-
     private void handleSearchQueryTypingState() {
         if (activeScreen != ScreenMode.SEARCH) {
             return;
         }
-
         String query = etMusicQuery != null && etMusicQuery.getText() != null
                 ? etMusicQuery.getText().toString().trim()
                 : "";
-
         invalidatePendingSearchState();
         resetSearchResultsForTypingState(query);
         refreshSearchSuggestions(query);
     }
-
     private void invalidatePendingSearchState() {
         queuedSearchQuery = null;
         queuedSearchFromUser = false;
@@ -2435,7 +2126,6 @@ public class MusicPlayerFragment extends Fragment {
         setSearchLoadingState(false, "");
         setSearchPaginationLoading(false);
     }
-
     private void resetSearchResultsForTypingState(@Nullable String currentQuery) {
         allTracks.clear();
         tracks.clear();
@@ -2445,7 +2135,6 @@ public class MusicPlayerFragment extends Fragment {
         if (adapter != null) {
             adapter.submitResults(new ArrayList<>());
         }
-
         String query = currentQuery == null ? "" : currentQuery.trim();
         if (TextUtils.isEmpty(query)) {
             tvMusicState.setText("Escribe y presiona Buscar o Enter.");
@@ -2453,21 +2142,18 @@ public class MusicPlayerFragment extends Fragment {
             tvMusicState.setText("Presiona Buscar o Enter para ver resultados.");
         }
     }
-
     private void startPagedSearch(@NonNull String query, boolean fromUserAction) {
         String normalizedQuery = query.trim();
         if (normalizedQuery.isEmpty()) {
             resetSearchResultsForTypingState("");
             return;
         }
-
         invalidatePendingSearchState();
         activeSearchQuery = normalizedQuery;
         rememberRecentSearchQuery(normalizedQuery);
         refreshSearchSuggestions(normalizedQuery);
         requestPagedSearchResults(normalizedQuery, "", false, fromUserAction);
     }
-
     private void requestPagedSearchResults(
             @NonNull String query,
             @NonNull String pageToken,
@@ -2479,19 +2165,16 @@ public class MusicPlayerFragment extends Fragment {
                 setSearchPaginationLoading(false);
                 return;
             }
-
             if (activeFilter != ChipFilter.SONGS) {
                 activeFilter = ChipFilter.SONGS;
                 applyChipStyles();
             }
-
             allTracks.clear();
             allTracks.addAll(findSongsAcrossCachedPlaylists(query));
             applyActiveFilter(query);
             hasMoreSearchPages = false;
             nextSearchPageToken = "";
             activeSearchQuery = query;
-
             if (allTracks.isEmpty()) {
                 tvMusicState.setText("Sin internet. No encontre canciones en tus playlists para: " + query);
             } else {
@@ -2503,7 +2186,6 @@ public class MusicPlayerFragment extends Fragment {
             }
             return;
         }
-
         final long requestId = ++latestSearchRequestId;
         if (append) {
             setSearchPaginationLoading(true);
@@ -2511,7 +2193,6 @@ public class MusicPlayerFragment extends Fragment {
         } else {
             setSearchLoadingState(true, "Buscando musica en YouTube...");
         }
-
         youTubeMusicService.searchTracksPaged(
                 query,
                 SEARCH_PAGE_SIZE,
@@ -2525,30 +2206,24 @@ public class MusicPlayerFragment extends Fragment {
                         if (requestId != latestSearchRequestId) {
                             return;
                         }
-
                         if (append) {
                             setSearchPaginationLoading(false);
                         } else {
                             setSearchLoadingState(false, "");
                         }
-
                         List<YouTubeMusicService.TrackResult> incoming = filterTracksByOrderedQuery(pageResult.tracks, query);
                         if (!append) {
                             allTracks.clear();
                         }
                         appendUniqueTracks(incoming);
-
                         activeSearchQuery = query;
                         nextSearchPageToken = pageResult.nextPageToken;
                         hasMoreSearchPages = !TextUtils.isEmpty(nextSearchPageToken);
-
                         applyActiveFilter(query);
-
                         if (allTracks.isEmpty()) {
                             tvMusicState.setText("No encontre resultados para: " + query);
                         }
                     }
-
                     @Override
                     public void onError(@NonNull String error) {
                         if (!isAdded()) {
@@ -2557,15 +2232,12 @@ public class MusicPlayerFragment extends Fragment {
                         if (requestId != latestSearchRequestId) {
                             return;
                         }
-
                         if (append) {
                             setSearchPaginationLoading(false);
                             tvMusicState.setText("No se pudieron cargar mas resultados.");
                             return;
                         }
-
                         setSearchLoadingState(false, "");
-
                         if (!isNetworkAvailable()) {
                             if (activeFilter != ChipFilter.SONGS) {
                                 activeFilter = ChipFilter.SONGS;
@@ -2588,18 +2260,15 @@ public class MusicPlayerFragment extends Fragment {
                             }
                             return;
                         }
-
                         hasMoreSearchPages = false;
                         nextSearchPageToken = "";
                         setSearchLoadingState(false, "Error: " + error);
                         if (fromUserAction) {
-
                         }
                     }
                 }
         );
     }
-
     private void appendUniqueTracks(@NonNull List<YouTubeMusicService.TrackResult> incoming) {
         Set<String> seen = new HashSet<>();
         for (YouTubeMusicService.TrackResult existing : allTracks) {
@@ -2611,7 +2280,6 @@ public class MusicPlayerFragment extends Fragment {
                     + (existing.contentId == null ? "" : existing.contentId);
             seen.add(key);
         }
-
         for (YouTubeMusicService.TrackResult candidate : incoming) {
             if (candidate == null) {
                 continue;
@@ -2625,7 +2293,6 @@ public class MusicPlayerFragment extends Fragment {
             allTracks.add(candidate);
         }
     }
-
     private void loadMoreSearchResultsIfNeeded() {
         if (activeScreen != ScreenMode.SEARCH
                 || searching
@@ -2634,15 +2301,12 @@ public class MusicPlayerFragment extends Fragment {
                 || TextUtils.isEmpty(activeSearchQuery)) {
             return;
         }
-
         requestPagedSearchResults(activeSearchQuery, nextSearchPageToken, true, false);
     }
-
     private void performSearch(boolean fromUserAction) {
         if (activeScreen != ScreenMode.SEARCH || searching) {
             return;
         }
-
         String query = etMusicQuery.getText() != null ? etMusicQuery.getText().toString().trim() : "";
         if (TextUtils.isEmpty(query)) {
             if (fromUserAction) {
@@ -2650,15 +2314,12 @@ public class MusicPlayerFragment extends Fragment {
             }
             return;
         }
-
         if (activeFilter != ChipFilter.SONGS) {
             activeFilter = ChipFilter.SONGS;
             applyChipStyles();
         }
-
         startPagedSearch(query, fromUserAction);
     }
-
     private void performYoutubeMusicSearch(
             @NonNull String query,
             boolean fromUserAction,
@@ -2670,23 +2331,19 @@ public class MusicPlayerFragment extends Fragment {
             queuedSearchKeepLibraryLayout = keepLibraryLayout;
             return;
         }
-
         if (!isNetworkAvailable()) {
             if (keepLibraryLayout && activeScreen == ScreenMode.LIBRARY) {
                 renderLibrarySongSearchResults(query);
                 tvMusicState.setText("Sin internet. Mostrando canciones de tus playlists.");
                 return;
             }
-
             if (activeFilter != ChipFilter.SONGS) {
                 activeFilter = ChipFilter.SONGS;
                 applyChipStyles();
             }
-
             allTracks.clear();
             allTracks.addAll(findSongsAcrossCachedPlaylists(query));
             applyActiveFilter(query);
-
             if (allTracks.isEmpty()) {
                 tvMusicState.setText("Sin internet. No encontre canciones en tus playlists para: " + query);
             } else {
@@ -2698,7 +2355,6 @@ public class MusicPlayerFragment extends Fragment {
             }
             return;
         }
-
         final long requestId = ++latestSearchRequestId;
         setSearchLoadingState(true, "Buscando musica en YouTube...");
         youTubeMusicService.searchTracks(query, 20, new YouTubeMusicService.SearchCallback() {
@@ -2712,24 +2368,18 @@ public class MusicPlayerFragment extends Fragment {
                     return;
                 }
                 setSearchLoadingState(false, "");
-
                 allTracks.clear();
                 allTracks.addAll(filterTracksByOrderedQuery(resultTracks, query));
-
                 if (keepLibraryLayout && activeScreen == ScreenMode.LIBRARY) {
                     renderOnlineSearchResultsInLibrary(query, allTracks);
                     return;
                 }
-
                 applyActiveFilter(query);
-
                 if (allTracks.isEmpty()) {
                     tvMusicState.setText("No encontre resultados para: " + query);
                 }
-
                 dispatchQueuedSearchIfAny();
             }
-
             @Override
             public void onError(@NonNull String error) {
                 if (!isAdded()) {
@@ -2750,7 +2400,6 @@ public class MusicPlayerFragment extends Fragment {
                     dispatchQueuedSearchIfAny();
                     return;
                 }
-
                 if (!isNetworkAvailable()) {
                     if (activeFilter != ChipFilter.SONGS) {
                         activeFilter = ChipFilter.SONGS;
@@ -2771,17 +2420,13 @@ public class MusicPlayerFragment extends Fragment {
                     dispatchQueuedSearchIfAny();
                     return;
                 }
-
                 setSearchLoadingState(false, "Error: " + error);
                 if (fromUserAction) {
-                    
                 }
-
                 dispatchQueuedSearchIfAny();
             }
         });
     }
-
     private void dispatchQueuedSearchIfAny() {
         if (TextUtils.isEmpty(queuedSearchQuery)) {
             return;
@@ -2790,15 +2435,12 @@ public class MusicPlayerFragment extends Fragment {
             queuedSearchQuery = null;
             return;
         }
-
         String nextQuery = queuedSearchQuery;
         boolean nextFromUser = queuedSearchFromUser;
         boolean nextKeepLibraryLayout = queuedSearchKeepLibraryLayout;
         queuedSearchQuery = null;
-
         mainHandler.post(() -> performYoutubeMusicSearch(nextQuery, nextFromUser, nextKeepLibraryLayout));
     }
-
     private void renderOnlineSearchResultsInLibrary(
             @NonNull String query,
             @NonNull List<YouTubeMusicService.TrackResult> resultTracks
@@ -2809,9 +2451,7 @@ public class MusicPlayerFragment extends Fragment {
                 onlineSongs.add(track);
             }
         }
-
         List<YouTubeMusicService.TrackResult> filtered = mergeSongResultsWithCachedPlaylists(onlineSongs, query);
-
         tracks.clear();
         if (filtered.isEmpty()) {
             featuredTrack = null;
@@ -2824,13 +2464,11 @@ public class MusicPlayerFragment extends Fragment {
                 tracks.addAll(filtered.subList(1, filtered.size()));
             }
         }
-
         if (adapter != null) {
             adapter.setSearchMode(true);
             adapter.submitResults(new ArrayList<>(tracks));
         }
         revealLibraryInlineResultsWithFade();
-
         if (filtered.isEmpty()) {
             tvMusicState.setText("No encontre canciones para: " + query);
         } else {
@@ -2841,7 +2479,6 @@ public class MusicPlayerFragment extends Fragment {
             ));
         }
     }
-
     private void setSearchLoadingState(boolean loading, @NonNull String stateMessage) {
         searching = loading;
         if (btnSearchMusic != null) {
@@ -2855,12 +2492,10 @@ public class MusicPlayerFragment extends Fragment {
             tvMusicState.setText(stateMessage);
         }
     }
-
     private void setSearchPaginationLoading(boolean loading) {
         searchPaginationInFlight = loading;
         refreshGlobalLoadingIndicator();
     }
-
     private void setLibraryLoading(boolean loading, @NonNull String stateMessage) {
         loadingLibrary = loading;
         if (btnYoutubeLogin != null) {
@@ -2874,12 +2509,10 @@ public class MusicPlayerFragment extends Fragment {
             tvMusicState.setText(stateMessage);
         }
     }
-
     private void refreshGlobalLoadingIndicator() {
         if (progressMusic == null) {
             return;
         }
-
         boolean visible = searching || searchPaginationInFlight || loadingLibrary;
         progressMusic.animate().cancel();
         if (visible) {
@@ -2893,11 +2526,9 @@ public class MusicPlayerFragment extends Fragment {
                     .start();
             return;
         }
-
         if (progressMusic.getVisibility() != View.VISIBLE) {
             return;
         }
-
         progressMusic.animate()
                 .alpha(0f)
                 .setDuration(140L)
@@ -2908,27 +2539,22 @@ public class MusicPlayerFragment extends Fragment {
                 })
                 .start();
     }
-
     private void rememberRecentSearchQuery(@Nullable String query) {
         String normalized = query == null ? "" : query.trim();
         if (normalized.isEmpty()) {
             return;
         }
-
         for (int i = recentSearchQueries.size() - 1; i >= 0; i--) {
             if (normalized.equalsIgnoreCase(recentSearchQueries.get(i))) {
                 recentSearchQueries.remove(i);
             }
         }
-
         recentSearchQueries.add(0, normalized);
         while (recentSearchQueries.size() > SEARCH_SUGGESTION_RECENT_LIMIT) {
             recentSearchQueries.remove(recentSearchQueries.size() - 1);
         }
-        
         saveRecentSearchQueries();
     }
-
     private void restoreRecentSearchQueries() {
         if (!isAdded()) return;
         SharedPreferences prefs = requireContext().getSharedPreferences(PREFS_STREAMING_CACHE, Activity.MODE_PRIVATE);
@@ -2942,7 +2568,6 @@ public class MusicPlayerFragment extends Fragment {
         } catch (Exception ignored) {
         }
     }
-
     private void saveRecentSearchQueries() {
         if (!isAdded()) return;
         JSONArray array = new JSONArray();
@@ -2955,16 +2580,13 @@ public class MusicPlayerFragment extends Fragment {
                 .putString(PREF_RECENT_SEARCH_QUERIES, array.toString())
                 .apply();
     }
-
     private void refreshSearchSuggestions(@Nullable String queryDraft) {
         if (!isAdded() || cgSearchSuggestions == null) {
             return;
         }
-
         String draft = queryDraft == null ? "" : queryDraft.trim();
         List<String> suggestions = buildSearchSuggestions(draft);
         cgSearchSuggestions.removeAllViews();
-
         for (String suggestion : suggestions) {
             Chip chip = new Chip(requireContext());
             chip.setText(suggestion);
@@ -2985,10 +2607,8 @@ public class MusicPlayerFragment extends Fragment {
             });
             cgSearchSuggestions.addView(chip);
         }
-
         if (cgSearchSuggestions != null) cgSearchSuggestions.setVisibility(suggestions.isEmpty() ? View.GONE : View.VISIBLE);
     }
-
     @NonNull
     private List<String> buildSearchSuggestions(@NonNull String queryDraft) {
         LinkedHashSet<String> pool = new LinkedHashSet<>();
@@ -3002,7 +2622,6 @@ public class MusicPlayerFragment extends Fragment {
                 pool.add(fallback);
             }
         }
-
         String normalizedDraft = normalizeForFilter(queryDraft);
         List<String> result = new ArrayList<>();
         for (String candidate : pool) {
@@ -3016,7 +2635,6 @@ public class MusicPlayerFragment extends Fragment {
                     && TextUtils.equals(normalizedCandidate, normalizedDraft)) {
                 continue;
             }
-
             result.add(candidate);
             if (result.size() >= SEARCH_SUGGESTION_RECENT_LIMIT) {
                 break;
@@ -3024,18 +2642,15 @@ public class MusicPlayerFragment extends Fragment {
         }
         return result;
     }
-
     private void updateYoutubeButtonLabel() {
         if (!isAdded() || btnYoutubeLogin == null) {
             return;
         }
         btnYoutubeLogin.setVisibility(View.GONE);
     }
-
     private boolean hasLoggedInStreamingAccount() {
         return streamingOauthCompleted;
     }
-
     private boolean shouldRetryYouTubeAuth(@NonNull String error) {
         String normalized = normalizeForFilter(error);
         if (isYouTubeQuotaOrConfigIssue(normalized)) {
@@ -3050,7 +2665,6 @@ public class MusicPlayerFragment extends Fragment {
                 "youtube.readonly",
                 "authorizationrequired");
     }
-
     private boolean shouldInvalidateStoredYoutubeToken(@NonNull String error) {
         String normalized = normalizeForFilter(error);
         return containsAny(normalized,
@@ -3062,7 +2676,6 @@ public class MusicPlayerFragment extends Fragment {
                 "youtube.readonly",
                 "authorizationrequired");
     }
-
     private boolean isYouTubeQuotaOrConfigIssue(@NonNull String normalizedError) {
         return containsAny(normalizedError,
                 "quota",
@@ -3075,13 +2688,11 @@ public class MusicPlayerFragment extends Fragment {
                 "api is disabled",
                 "service disabled");
     }
-
     private void restoreCachedStreamingSessionState() {
         if (!isAdded()) {
             streamingOauthCompleted = false;
             return;
         }
-
         SharedPreferences playerPrefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
         streamingOauthAccountEmail = normalizeAccountEmail(
                 playerPrefs.getString(PREF_LAST_STREAMING_OAUTH_ACCOUNT_EMAIL, "")
@@ -3089,29 +2700,24 @@ public class MusicPlayerFragment extends Fragment {
         String accountKey = resolveAccountKey();
         String persistedToken = playerPrefs.getString(PREF_LAST_YOUTUBE_ACCESS_TOKEN, "");
         long persistedTokenUpdatedAt = playerPrefs.getLong(PREF_LAST_YOUTUBE_ACCESS_TOKEN_UPDATED_AT, 0L);
-
         if (!TextUtils.isEmpty(accountKey) && !TextUtils.isEmpty(persistedToken)) {
             tokenCacheAccountKey = accountKey;
             cachedYoutubeAccessToken = persistedToken.trim();
             tokenCacheUpdatedAtMs = persistedTokenUpdatedAt > 0L
                     ? persistedTokenUpdatedAt
                     : System.currentTimeMillis();
-
             if (hasValidCachedToken(accountKey)) {
                 youtubeAccessToken = cachedYoutubeAccessToken;
             }
         }
-
         hydrateCachedSessionState();
-
         String webCookie = playerPrefs.getString(PREF_LAST_YOUTUBE_WEB_COOKIE, "");
         boolean hasWebSession = !TextUtils.isEmpty(webCookie == null ? "" : webCookie.trim());
         // Pasar la cookie a InnertubeResolver para autenticar peticiones de
-        // resolución y playback (evita LOGIN_REQUIRED y CDN 403 sin PO Token).
+        // resoluciÃƒÂ³n y playback (evita LOGIN_REQUIRED y CDN 403 sin PO Token).
         InnertubeResolver.setAuthCookies(webCookie);
         boolean hasCachedLibrary = !libraryTracks.isEmpty();
         streamingOauthCompleted = hasWebSession || hasCachedLibrary || !TextUtils.isEmpty(youtubeAccessToken);
-
         Log.i(
             TAG_STREAMING,
             "restore_session web=" + hasWebSession
@@ -3120,20 +2726,17 @@ public class MusicPlayerFragment extends Fragment {
                 + " oauthAccount=" + streamingOauthAccountEmail
         );
     }
-
     private void hydrateCachedSessionState() {
         String accountKey = resolveAccountKey();
         if (hasValidCachedToken(accountKey)) {
             youtubeAccessToken = cachedYoutubeAccessToken;
         }
-
         if (hasValidLibraryCache(accountKey) && libraryTracks.isEmpty()) {
             libraryTracks.clear();
             libraryTracks.addAll(new ArrayList<>(LIBRARY_CACHE));
             ensureFavoritesPlaylistInLibraryTracks();
             return;
         }
-
         List<YouTubeMusicService.TrackResult> persisted = loadPersistedLibrary(accountKey);
         if (!persisted.isEmpty() && libraryTracks.isEmpty()) {
             libraryTracks.clear();
@@ -3145,18 +2748,15 @@ public class MusicPlayerFragment extends Fragment {
             libraryCacheUpdatedAtMs = getPersistedLibraryUpdatedAt(accountKey);
         }
     }
-
     private boolean restoreLibraryFromPersistentCache() {
         String accountKey = resolveAccountKey();
         if (TextUtils.isEmpty(accountKey)) {
             return false;
         }
-
         List<YouTubeMusicService.TrackResult> persisted = loadPersistedLibrary(accountKey);
         if (persisted.isEmpty()) {
             return false;
         }
-
         libraryTracks.clear();
         libraryTracks.addAll(persisted);
         ensureFavoritesPlaylistInLibraryTracks();
@@ -3166,14 +2766,12 @@ public class MusicPlayerFragment extends Fragment {
         libraryCacheUpdatedAtMs = getPersistedLibraryUpdatedAt(accountKey);
         return true;
     }
-
     @NonNull
     private String resolveAccountKey() {
         String appEmail = getPrimaryAppGoogleEmail();
         if (!TextUtils.isEmpty(appEmail)) {
             return appEmail.toLowerCase(Locale.US).trim();
         }
-
         if (!isAdded()) {
             return "";
         }
@@ -3181,23 +2779,19 @@ public class MusicPlayerFragment extends Fragment {
         if (account != null && !TextUtils.isEmpty(account.getEmail())) {
             return account.getEmail().toLowerCase(Locale.US).trim();
         }
-
         String persistedKey = resolvePersistedLibraryAccountKey();
         return persistedKey == null ? "" : persistedKey;
     }
-
     @Nullable
     private StreamingAccountCandidate resolveStreamingOAuthAccountCandidate() {
         LinkedHashMap<String, String> candidates = new LinkedHashMap<>();
         addStreamingAccountCandidate(candidates, streamingOauthAccountEmail, "session_cached_oauth");
         addStreamingAccountCandidate(candidates, getPrimaryAppGoogleEmail(), "firebase_primary");
-
         if (isAdded()) {
             GoogleSignInAccount account = GoogleSignIn.getLastSignedInAccount(requireContext());
             if (account != null) {
                 addStreamingAccountCandidate(candidates, account.getEmail(), "google_signin_last");
             }
-
             SharedPreferences playerPrefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
             addStreamingAccountCandidate(
                     candidates,
@@ -3205,18 +2799,14 @@ public class MusicPlayerFragment extends Fragment {
                     "prefs_oauth"
             );
         }
-
         addStreamingAccountCandidate(candidates, resolvePersistedLibraryAccountKey(), "library_cache_key");
         addStreamingAccountCandidate(candidates, tokenCacheAccountKey, "token_cache_key");
-
         if (candidates.isEmpty()) {
             return null;
         }
-
         Map.Entry<String, String> first = candidates.entrySet().iterator().next();
         return new StreamingAccountCandidate(first.getKey(), first.getValue());
     }
-
     private void addStreamingAccountCandidate(
             @NonNull LinkedHashMap<String, String> candidates,
             @Nullable String email,
@@ -3228,19 +2818,16 @@ public class MusicPlayerFragment extends Fragment {
         }
         candidates.put(normalized, source);
     }
-
     @NonNull
     private String resolvePersistedLibraryAccountKey() {
         if (!isAdded()) {
             return "";
         }
-
         SharedPreferences prefs = getCachePrefs();
         String direct = prefs.getString(PREF_LAST_STREAMING_ACCOUNT_KEY, "");
         if (!TextUtils.isEmpty(direct)) {
             return direct.trim().toLowerCase(Locale.US);
         }
-
         Map<String, ?> all = prefs.getAll();
         long latest = 0L;
         String latestAccountKey = "";
@@ -3249,12 +2836,10 @@ public class MusicPlayerFragment extends Fragment {
             if (TextUtils.isEmpty(key) || !key.startsWith(PREF_LIBRARY_UPDATED_AT_PREFIX)) {
                 continue;
             }
-
             String candidate = key.substring(PREF_LIBRARY_UPDATED_AT_PREFIX.length()).trim();
             if (candidate.isEmpty()) {
                 continue;
             }
-
             Object value = entry.getValue();
             long updatedAt = value instanceof Number ? ((Number) value).longValue() : 0L;
             if (updatedAt >= latest) {
@@ -3262,14 +2847,11 @@ public class MusicPlayerFragment extends Fragment {
                 latestAccountKey = candidate;
             }
         }
-
         if (!latestAccountKey.isEmpty()) {
             prefs.edit().putString(PREF_LAST_STREAMING_ACCOUNT_KEY, latestAccountKey).apply();
         }
-
         return latestAccountKey;
     }
-
     private boolean hasValidCachedToken(@NonNull String accountKey) {
         if (TextUtils.isEmpty(accountKey) || TextUtils.isEmpty(cachedYoutubeAccessToken)) {
             return false;
@@ -3279,7 +2861,6 @@ public class MusicPlayerFragment extends Fragment {
         }
         return (System.currentTimeMillis() - tokenCacheUpdatedAtMs) < TOKEN_CACHE_TTL_MS;
     }
-
     private boolean hasValidLibraryCache(@NonNull String accountKey) {
         if (TextUtils.isEmpty(accountKey) || LIBRARY_CACHE.isEmpty()) {
             return false;
@@ -3289,7 +2870,6 @@ public class MusicPlayerFragment extends Fragment {
         }
         return (System.currentTimeMillis() - libraryCacheUpdatedAtMs) < LIBRARY_CACHE_TTL_MS;
     }
-
     private void cacheTokenForCurrentAccount(@NonNull String token) {
         String accountKey = resolveActiveStreamingAccountKey();
         if (TextUtils.isEmpty(accountKey)) {
@@ -3309,7 +2889,6 @@ public class MusicPlayerFragment extends Fragment {
                     .apply();
         }
     }
-
     private void clearCachedToken() {
         cachedYoutubeAccessToken = "";
         tokenCacheAccountKey = "";
@@ -3323,13 +2902,11 @@ public class MusicPlayerFragment extends Fragment {
                     .apply();
         }
     }
-
     private void cacheLibraryForCurrentAccount(@NonNull List<YouTubeMusicService.TrackResult> source) {
         String accountKey = resolveActiveStreamingAccountKey();
         if (TextUtils.isEmpty(accountKey)) {
             return;
         }
-
         LIBRARY_CACHE.clear();
         LIBRARY_CACHE.addAll(new ArrayList<>(source));
         libraryCacheAccountKey = accountKey;
@@ -3337,7 +2914,6 @@ public class MusicPlayerFragment extends Fragment {
         rememberStreamingAccountKey(accountKey);
         persistLibrary(accountKey, source, libraryCacheUpdatedAtMs);
     }
-
     @NonNull
     private String resolveActiveStreamingAccountKey() {
         String oauthEmail = normalizeAccountEmail(streamingOauthAccountEmail);
@@ -3346,53 +2922,44 @@ public class MusicPlayerFragment extends Fragment {
         }
         return resolveAccountKey();
     }
-
     private void rememberStreamingOauthAccountEmail(@Nullable String email) {
         String normalized = normalizeAccountEmail(email);
         streamingOauthAccountEmail = normalized;
         if (!isAdded()) {
             return;
         }
-
         requireContext()
                 .getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE)
                 .edit()
                 .putString(PREF_LAST_STREAMING_OAUTH_ACCOUNT_EMAIL, normalized)
                 .apply();
     }
-
     private static final class StreamingAccountCandidate {
         @NonNull
         final String email;
         @NonNull
         final String source;
-
         private StreamingAccountCandidate(@NonNull String email, @NonNull String source) {
             this.email = email;
             this.source = source;
         }
     }
-
     private void rememberStreamingAccountKey(@NonNull String accountKey) {
         if (!isAdded() || TextUtils.isEmpty(accountKey)) {
             return;
         }
-
         getCachePrefs().edit()
                 .putString(PREF_LAST_STREAMING_ACCOUNT_KEY, accountKey)
                 .apply();
     }
-
     @NonNull
     private SharedPreferences getCachePrefs() {
         return getCachePrefs(requireContext());
     }
-
     @NonNull
     private SharedPreferences getCachePrefs(@NonNull Context context) {
         return context.getApplicationContext().getSharedPreferences(PREFS_STREAMING_CACHE, Activity.MODE_PRIVATE);
     }
-
     private void persistLibrary(
             @NonNull String accountKey,
             @NonNull List<YouTubeMusicService.TrackResult> data,
@@ -3409,7 +2976,6 @@ public class MusicPlayerFragment extends Fragment {
                 obj.put("thumbnailUrl", item.thumbnailUrl);
                 array.put(obj);
             }
-
             getCachePrefs().edit()
                     .putLong(PREF_LIBRARY_UPDATED_AT_PREFIX + accountKey, updatedAt)
                     .putString(PREF_LIBRARY_DATA_PREFIX + accountKey, array.toString())
@@ -3417,31 +2983,26 @@ public class MusicPlayerFragment extends Fragment {
         } catch (Exception ignored) {
         }
     }
-
     private long getPersistedLibraryUpdatedAt(@NonNull String accountKey) {
         if (TextUtils.isEmpty(accountKey) || !isAdded()) {
             return 0L;
         }
         return getCachePrefs().getLong(PREF_LIBRARY_UPDATED_AT_PREFIX + accountKey, 0L);
     }
-
     @NonNull
     private List<YouTubeMusicService.TrackResult> loadPersistedLibrary(@NonNull String accountKey) {
         List<YouTubeMusicService.TrackResult> result = new ArrayList<>();
         if (TextUtils.isEmpty(accountKey) || !isAdded()) {
             return result;
         }
-
         long updatedAt = getPersistedLibraryUpdatedAt(accountKey);
         if (updatedAt <= 0L) {
             return result;
         }
-
         String raw = getCachePrefs().getString(PREF_LIBRARY_DATA_PREFIX + accountKey, "");
         if (TextUtils.isEmpty(raw)) {
             return result;
         }
-
         try {
             JSONArray array = new JSONArray(raw);
             for (int i = 0; i < array.length(); i++) {
@@ -3449,17 +3010,14 @@ public class MusicPlayerFragment extends Fragment {
                 if (obj == null) {
                     continue;
                 }
-
                 String resultType = obj.optString("resultType", "playlist").trim();
                 String contentId = obj.optString("contentId", "").trim();
                 String title = obj.optString("title", "").trim();
                 String subtitle = obj.optString("subtitle", "").trim();
                 String thumbnailUrl = obj.optString("thumbnailUrl", "").trim();
-
                 if (contentId.isEmpty() || title.isEmpty()) {
                     continue;
                 }
-
                 result.add(new YouTubeMusicService.TrackResult(
                         resultType,
                         contentId,
@@ -3471,10 +3029,8 @@ public class MusicPlayerFragment extends Fragment {
         } catch (Exception ignored) {
             return new ArrayList<>();
         }
-
         return result;
     }
-
     private void prefetchLibraryTracksForOffline(
             @NonNull List<YouTubeMusicService.TrackResult> playlists,
             @NonNull String accessToken
@@ -3482,33 +3038,27 @@ public class MusicPlayerFragment extends Fragment {
         if (!isAdded() || playlists.isEmpty() || TextUtils.isEmpty(accessToken)) {
             return;
         }
-
         long now = System.currentTimeMillis();
         SharedPreferences cachePrefs = getCachePrefs();
         int requested = 0;
-
         for (YouTubeMusicService.TrackResult item : playlists) {
             if (!"playlist".equals(item.resultType)) {
                 continue;
             }
-
             String playlistId = item.contentId == null ? "" : item.contentId.trim();
             if (playlistId.isEmpty()) {
                 continue;
             }
-
             long updatedAt = cachePrefs.getLong(PREF_TRACKS_UPDATED_AT_PREFIX + playlistId, 0L);
             if (updatedAt > 0L && (now - updatedAt) < OFFLINE_TRACKS_PREFETCH_STALE_MS) {
                 continue;
             }
-
             synchronized (offlinePrefetchInFlight) {
                 if (offlinePrefetchInFlight.contains(playlistId)) {
                     continue;
                 }
                 offlinePrefetchInFlight.add(playlistId);
             }
-
             final String targetPlaylistId = playlistId;
             requested++;
                 offlinePrefetchService.fetchPlaylistTracks(
@@ -3523,19 +3073,16 @@ public class MusicPlayerFragment extends Fragment {
                     }
                     markOfflinePrefetchFinished(targetPlaylistId);
                 }
-
                 @Override
                 public void onError(@NonNull String error) {
                     markOfflinePrefetchFinished(targetPlaylistId);
                 }
             });
-
             if (requested >= OFFLINE_TRACKS_PREFETCH_LIMIT) {
                 break;
             }
         }
     }
-
     private void cachePlaylistTracksForOffline(
             @NonNull String playlistId,
             @NonNull List<YouTubeMusicService.PlaylistTrackResult> tracks
@@ -3543,7 +3090,6 @@ public class MusicPlayerFragment extends Fragment {
         if (!isAdded() || playlistId.isEmpty()) {
             return;
         }
-
         try {
             JSONArray array = new JSONArray();
             for (YouTubeMusicService.PlaylistTrackResult track : tracks) {
@@ -3552,7 +3098,6 @@ public class MusicPlayerFragment extends Fragment {
                 if (videoId.isEmpty() || title.isEmpty()) {
                     continue;
                 }
-
                 JSONObject obj = new JSONObject();
                 obj.put("videoId", videoId);
                 obj.put("title", title);
@@ -3561,11 +3106,9 @@ public class MusicPlayerFragment extends Fragment {
                 obj.put("imageUrl", track.thumbnailUrl == null ? "" : track.thumbnailUrl);
                 array.put(obj);
             }
-
             if (array.length() == 0) {
                 return;
             }
-
             getCachePrefs().edit()
                     .putLong(PREF_TRACKS_UPDATED_AT_PREFIX + playlistId, System.currentTimeMillis())
                     .putBoolean(
@@ -3574,7 +3117,6 @@ public class MusicPlayerFragment extends Fragment {
                     )
                     .putString(PREF_TRACKS_DATA_PREFIX + playlistId, array.toString())
                     .apply();
-
             synchronized (cachedPlaylistTracksLock) {
                 cachedPlaylistTracksById.remove(playlistId);
                 cachedPlaylistTracksUpdatedAtById.remove(playlistId);
@@ -3582,35 +3124,28 @@ public class MusicPlayerFragment extends Fragment {
         } catch (Exception ignored) {
         }
     }
-
     private void markOfflinePrefetchFinished(@NonNull String playlistId) {
         synchronized (offlinePrefetchInFlight) {
             offlinePrefetchInFlight.remove(playlistId);
         }
     }
-
     private void setActiveFilter(@NonNull ChipFilter filter) {
         if (activeFilter == filter) {
             return;
         }
         activeFilter = filter;
         applyChipStyles();
-
         if (activeScreen != ScreenMode.SEARCH) {
             return;
         }
-
         String query = etMusicQuery.getText() != null ? etMusicQuery.getText().toString().trim() : "";
         applyActiveFilter(query);
     }
-
     private void applyActiveFilter(@Nullable String query) {
         if (activeScreen != ScreenMode.SEARCH) {
             return;
         }
-
         String normalizedQuery = query == null ? "" : query.trim();
-
         List<YouTubeMusicService.TrackResult> filtered = new ArrayList<>();
         for (YouTubeMusicService.TrackResult track : allTracks) {
             if (!matchesFilter(track, activeFilter)) {
@@ -3621,11 +3156,9 @@ public class MusicPlayerFragment extends Fragment {
             }
             filtered.add(track);
         }
-
         if (!TextUtils.isEmpty(normalizedQuery) && filtered.size() > 1) {
             sortSearchResultsByBestMatch(filtered, normalizedQuery);
         }
-
         tracks.clear();
         if (filtered.isEmpty()) {
             featuredTrack = null;
@@ -3639,12 +3172,10 @@ public class MusicPlayerFragment extends Fragment {
             }
         }
         adapter.submitResults(new ArrayList<>(tracks));
-
         if (!TextUtils.isEmpty(normalizedQuery)) {
             tvMusicState.setText(String.format(Locale.getDefault(), "%d resultados (%s).", filtered.size(), filterLabel(activeFilter)));
         }
     }
-
     @NonNull
     private List<YouTubeMusicService.TrackResult> filterTracksByOrderedQuery(
             @NonNull List<YouTubeMusicService.TrackResult> source,
@@ -3658,7 +3189,6 @@ public class MusicPlayerFragment extends Fragment {
         }
         return filtered;
     }
-
     @NonNull
     private List<YouTubeMusicService.TrackResult> mergeSongResultsWithCachedPlaylists(
             @NonNull List<YouTubeMusicService.TrackResult> onlineSongs,
@@ -3666,7 +3196,6 @@ public class MusicPlayerFragment extends Fragment {
     ) {
         List<YouTubeMusicService.TrackResult> merged = new ArrayList<>();
         Set<String> seenVideoIds = new HashSet<>();
-
         for (YouTubeMusicService.TrackResult track : onlineSongs) {
             if (!matchesFilter(track, ChipFilter.SONGS) || !trackMatchesOrderedQuery(track, query)) {
                 continue;
@@ -3677,7 +3206,6 @@ public class MusicPlayerFragment extends Fragment {
             }
             merged.add(track);
         }
-
         List<YouTubeMusicService.TrackResult> playlistSongs = findSongsAcrossCachedPlaylists(query);
         for (YouTubeMusicService.TrackResult localTrack : playlistSongs) {
             String localVideoId = localTrack.videoId == null ? "" : localTrack.videoId.trim();
@@ -3685,14 +3213,11 @@ public class MusicPlayerFragment extends Fragment {
                 merged.add(localTrack);
             }
         }
-
         if (merged.size() > 1) {
             sortSearchResultsByBestMatch(merged, query);
         }
-
         return merged;
     }
-
     private boolean trackMatchesOrderedQuery(
             @NonNull YouTubeMusicService.TrackResult track,
             @NonNull String query
@@ -3701,24 +3226,20 @@ public class MusicPlayerFragment extends Fragment {
         if (queryTokens.length == 0) {
             return true;
         }
-
         String normalizedTitle = normalizeForFilter(track.title);
         String normalizedSubtitle = normalizeForFilter(track.subtitle);
         if (matchesOrderedTokens(normalizedTitle, queryTokens)
                 || matchesOrderedTokens(normalizedSubtitle, queryTokens)) {
             return true;
         }
-
         return matchesOrderedTokens((normalizedTitle + " " + normalizedSubtitle).trim(), queryTokens);
     }
-
     @NonNull
     private String[] extractSearchTokens(@Nullable String value) {
         String normalized = normalizeForFilter(value);
         if (TextUtils.isEmpty(normalized)) {
             return new String[0];
         }
-
         String[] rawTokens = normalized.split("[^\\p{L}\\p{N}]+");
         List<String> tokens = new ArrayList<>();
         for (String token : rawTokens) {
@@ -3728,7 +3249,6 @@ public class MusicPlayerFragment extends Fragment {
         }
         return tokens.toArray(new String[0]);
     }
-
     private boolean matchesOrderedTokens(
             @NonNull String normalizedSource,
             @NonNull String[] queryTokens
@@ -3739,7 +3259,6 @@ public class MusicPlayerFragment extends Fragment {
         if (TextUtils.isEmpty(normalizedSource)) {
             return false;
         }
-
         String[] sourceTokens = normalizedSource.split("[^\\p{L}\\p{N}]+");
         int queryIndex = 0;
         for (String sourceToken : sourceTokens) {
@@ -3755,12 +3274,10 @@ public class MusicPlayerFragment extends Fragment {
         }
         return false;
     }
-
     private boolean matchesFilter(@NonNull YouTubeMusicService.TrackResult track, @NonNull ChipFilter filter) {
         String title = normalizeForFilter(track.title);
         String type = normalizeForFilter(track.resultType);
         String subtitle = normalizeForFilter(track.subtitle);
-
         boolean looksLikeVideoClip = containsAny(title,
                 "official video",
                 "music video",
@@ -3798,18 +3315,15 @@ public class MusicPlayerFragment extends Fragment {
                 return true;
         }
     }
-
     @NonNull
     private String normalizeForFilter(@Nullable String value) {
         if (TextUtils.isEmpty(value)) {
             return "";
         }
-
         String cached = normalizedFilterCache.get(value);
         if (cached != null) {
             return cached;
         }
-
         String decomposed = Normalizer.normalize(value, Normalizer.Form.NFD);
         StringBuilder builder = new StringBuilder(decomposed.length());
         for (int i = 0; i < decomposed.length(); i++) {
@@ -3818,7 +3332,6 @@ public class MusicPlayerFragment extends Fragment {
                 builder.append(Character.toLowerCase(c));
             }
         }
-
         String normalized = builder.toString().trim();
         if (normalizedFilterCache.size() > 512) {
             normalizedFilterCache.clear();
@@ -3826,7 +3339,6 @@ public class MusicPlayerFragment extends Fragment {
         normalizedFilterCache.put(value, normalized);
         return normalized;
     }
-
     private boolean containsAny(@NonNull String text, @NonNull String... terms) {
         for (String term : terms) {
             if (text.contains(term)) {
@@ -3835,7 +3347,6 @@ public class MusicPlayerFragment extends Fragment {
         }
         return false;
     }
-
     @NonNull
     private String filterLabel(@NonNull ChipFilter filter) {
         switch (filter) {
@@ -3851,14 +3362,12 @@ public class MusicPlayerFragment extends Fragment {
                 return "Todos";
         }
     }
-
     private void applyChipStyles() {
         styleChip(btnChipVideos, activeFilter == ChipFilter.VIDEOS);
         styleChip(btnChipSongs, activeFilter == ChipFilter.SONGS);
         styleChip(btnChipArtists, activeFilter == ChipFilter.ARTISTS);
         styleChip(btnChipPlaylists, activeFilter == ChipFilter.PLAYLISTS);
     }
-
     private void styleChip(@NonNull MaterialButton chip, boolean selected) {
         if (chip == null) return;
         int bg = selected ? ContextCompat.getColor(requireContext(), R.color.stitch_blue) : ContextCompat.getColor(requireContext(), R.color.surface_low);
@@ -3866,12 +3375,10 @@ public class MusicPlayerFragment extends Fragment {
         chip.setBackgroundTintList(ColorStateList.valueOf(bg));
         chip.setTextColor(fg);
     }
-
     private int bucketArtworkDimension(int value) {
         int safe = Math.max(1, value);
         return Math.max(64, ((safe + 63) / 64) * 64);
     }
-
     private int resolveArtworkTargetSize(int measured, int layoutValue) {
         if (measured > 0) {
             return measured;
@@ -3881,26 +3388,21 @@ public class MusicPlayerFragment extends Fragment {
         }
         return 0;
     }
-
     private void loadArtworkInto(@NonNull ImageView target, @Nullable String imageUrl) {
         if (TextUtils.isEmpty(imageUrl)) {
             target.setTag(R.id.tag_artwork_signature, null);
             target.setImageResource(R.drawable.ic_music);
             return;
         }
-
         String safeUrl = imageUrl.trim();
         Context context = target.getContext();
         float density = context.getResources().getDisplayMetrics().density;
-        
         int targetWidth;
         int targetHeight;
-
         ViewGroup.LayoutParams params = target.getLayoutParams();
         int rawWidth = resolveArtworkTargetSize(target.getWidth(), params == null ? 0 : params.width);
         int rawHeight = resolveArtworkTargetSize(target.getHeight(), params == null ? 0 : params.height);
         boolean hasTargetSize = rawWidth > 0 && rawHeight > 0;
-
         if (hasTargetSize) {
             targetWidth = bucketArtworkDimension(rawWidth);
             targetHeight = bucketArtworkDimension(rawHeight);
@@ -3908,22 +3410,18 @@ public class MusicPlayerFragment extends Fragment {
             targetWidth = Math.round(160 * density); 
             targetHeight = targetWidth;
         }
-
         if (YouTubeImageProcessor.shouldProcess(safeUrl)) {
             int side = YouTubeImageProcessor.decodeDimensionForSmartCrop(targetWidth);
             targetWidth = side;
             targetHeight = side;
         }
-
         String signature = safeUrl + "|" + targetWidth + "x" + targetHeight;
         Object previousSignature = target.getTag(R.id.tag_artwork_signature);
         if (previousSignature instanceof String && signature.equals(previousSignature)) {
             return;
         }
         target.setTag(R.id.tag_artwork_signature, signature);
-
         boolean offlineOnly = !isNetworkAvailable();
-
         Glide.with(target)
             .load(safeUrl)
             .transform(new YouTubeCropTransformation())
@@ -3936,19 +3434,15 @@ public class MusicPlayerFragment extends Fragment {
             .dontAnimate()
             .into(target);
     }
-
-
     private void bindFeaturedTrack(@NonNull YouTubeMusicService.TrackResult track) {
         tvFeaturedTitle.setText(track.title);
         String typeLabel = searchTypeLabel(track);
         String subtitle = TextUtils.isEmpty(track.subtitle)
             ? typeLabel
-            : typeLabel + " • " + track.subtitle;
+            : typeLabel + " Ã¢â‚¬Â¢ " + track.subtitle;
         tvFeaturedSubtitle.setText(subtitle);
-
         loadArtworkInto(ivFeaturedThumb, track.thumbnailUrl);
     }
-
     private void sortSearchResultsByBestMatch(
             @NonNull List<YouTubeMusicService.TrackResult> source,
             @NonNull String query
@@ -3958,20 +3452,17 @@ public class MusicPlayerFragment extends Fragment {
             return;
         }
         String[] queryTokens = normalizedQuery.split("\\s+");
-
         source.sort((left, right) -> {
             int leftScore = computeSearchMatchScore(left, normalizedQuery, queryTokens);
             int rightScore = computeSearchMatchScore(right, normalizedQuery, queryTokens);
             if (leftScore != rightScore) {
                 return Integer.compare(rightScore, leftScore);
             }
-
             String leftTitle = normalizeForFilter(left.title);
             String rightTitle = normalizeForFilter(right.title);
             return leftTitle.compareTo(rightTitle);
         });
     }
-
     private int computeSearchMatchScore(
             @NonNull YouTubeMusicService.TrackResult track,
             @NonNull String normalizedQuery,
@@ -3980,7 +3471,6 @@ public class MusicPlayerFragment extends Fragment {
         String title = normalizeForFilter(track.title);
         String subtitle = normalizeForFilter(track.subtitle);
         int score = 0;
-
         if (title.equals(normalizedQuery)) {
             score += 800;
         } else if (title.startsWith(normalizedQuery + " ")) {
@@ -3990,7 +3480,6 @@ public class MusicPlayerFragment extends Fragment {
         } else if (title.contains(normalizedQuery)) {
             score += 340;
         }
-
         if (title.startsWith(normalizedQuery)
                 && title.length() > normalizedQuery.length()) {
             char next = title.charAt(normalizedQuery.length());
@@ -3998,11 +3487,9 @@ public class MusicPlayerFragment extends Fragment {
                 score -= 180;
             }
         }
-
         if (containsWordToken(title, normalizedQuery)) {
             score += 320;
         }
-
         if (subtitle.equals(normalizedQuery)) {
             score += 220;
         } else if (subtitle.startsWith(normalizedQuery)) {
@@ -4010,7 +3497,6 @@ public class MusicPlayerFragment extends Fragment {
         } else if (subtitle.contains(normalizedQuery)) {
             score += 120;
         }
-
         for (String token : queryTokens) {
             if (token == null || token.isEmpty()) {
                 continue;
@@ -4022,87 +3508,71 @@ public class MusicPlayerFragment extends Fragment {
             } else if (title.contains(token)) {
                 score += 45;
             }
-
             if (containsWordToken(title, token)) {
                 score += 58;
             }
-
             if (subtitle.startsWith(token)) {
                 score += 24;
             } else if (subtitle.contains(token)) {
                 score += 14;
             }
         }
-
         if ("video".equals(track.resultType)) {
             score += 12;
         }
         return score;
     }
-
     private boolean containsWordToken(@NonNull String source, @NonNull String token) {
         if (token.isEmpty()) {
             return false;
         }
-
         if (source.equals(token)
                 || source.startsWith(token + " ")
                 || source.contains(" " + token + " ")
                 || source.endsWith(" " + token)) {
             return true;
         }
-
         return source.contains("(" + token + ")")
                 || source.contains("-" + token + " ")
                 || source.contains(" " + token + "-");
     }
-
     @NonNull
     private String searchTypeLabel(@NonNull YouTubeMusicService.TrackResult track) {
         if ("playlist".equals(track.resultType)) {
             return "Playlist";
         }
         if ("album".equals(track.resultType)) {
-            return "Álbum";
+            return "ÃƒÂlbum";
         }
         return "";
     }
-
     private void showSearchTrackOptions(@NonNull YouTubeMusicService.TrackResult track, @NonNull View anchor) {
         if (!isAdded()) return;
-
         anchor.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
         anchor.animate().cancel();
         anchor.animate().alpha(0.85f).setDuration(80L)
             .withEndAction(() -> anchor.animate().alpha(1f).setDuration(120L).start())
             .start();
-
-
         com.google.android.material.bottomsheet.BottomSheetDialog dialog = new com.google.android.material.bottomsheet.BottomSheetDialog(requireContext());
         View view = LayoutInflater.from(requireContext()).inflate(R.layout.bottom_sheet_track_options, null);
         dialog.setContentView(view);
-
         TextView tvTitle = view.findViewById(R.id.tvBsTrackTitle);
         TextView tvSubtitle = view.findViewById(R.id.tvBsTrackSubtitle);
         ImageView ivArt = view.findViewById(R.id.ivBsTrackArt);
-        
         tvTitle.setText(TextUtils.isEmpty(track.title) ? "Tema" : track.title);
         String typeLabel = searchTypeLabel(track);
-        String subtitle = TextUtils.isEmpty(track.subtitle) ? typeLabel : typeLabel + " • " + track.subtitle;
+        String subtitle = TextUtils.isEmpty(track.subtitle) ? typeLabel : typeLabel + " Ã¢â‚¬Â¢ " + track.subtitle;
         tvSubtitle.setText(subtitle);
         loadArtworkInto(ivArt, track.thumbnailUrl);
-
         View btnPlayNext = view.findViewById(R.id.btnBsPlayNext);
         View btnAddPrimary = view.findViewById(R.id.btnBsAddPrimary);
         View btnShare = view.findViewById(R.id.btnBsShare);
-        
         ImageView ivPlayNext = view.findViewById(R.id.ivBsPlayNextIcon);
         TextView tvPlayNext = view.findViewById(R.id.tvBsPlayNextLabel);
         ImageView ivAddPrimary = view.findViewById(R.id.ivBsAddPrimary);
         TextView tvAddPrimary = view.findViewById(R.id.tvBsAddPrimary);
         ImageView ivShare = view.findViewById(R.id.ivBsShareIcon);
         TextView tvShare = view.findViewById(R.id.tvBsShareLabel);
-        
         // For playlists: show Reproducir playlist and Compartir in top buttons
         if ("playlist".equals(track.resultType)) {
             // Slot 1: Reproducir playlist
@@ -4113,10 +3583,8 @@ public class MusicPlayerFragment extends Fragment {
                 dialog.dismiss();
                 openTrack(track);
             });
-
             // Slot 2: (hidden for playlists to keep 2-button layout)
             btnAddPrimary.setVisibility(View.GONE);
-
             // Slot 3: Compartir
             btnShare.setVisibility(View.VISIBLE);
             ivShare.setImageResource(R.drawable.ic_playlist_share);
@@ -4130,7 +3598,7 @@ public class MusicPlayerFragment extends Fragment {
             if (track.isVideo()) {
                 btnPlayNext.setVisibility(View.VISIBLE);
                 ivPlayNext.setImageResource(R.drawable.ic_stream_play_next);
-                tvPlayNext.setText("Reproducir a\ncontinuación");
+                tvPlayNext.setText("Reproducir a\ncontinuaciÃƒÂ³n");
                 btnPlayNext.setOnClickListener(v -> {
                     dialog.dismiss();
                     SongPlayerFragment player = findSongPlayerFragment();
@@ -4141,7 +3609,6 @@ public class MusicPlayerFragment extends Fragment {
             } else {
                 btnPlayNext.setVisibility(View.GONE);
             }
-
             // Slot 2: Add to Queue (if video)
             if (track.isVideo()) {
                 btnAddPrimary.setVisibility(View.VISIBLE);
@@ -4157,7 +3624,6 @@ public class MusicPlayerFragment extends Fragment {
             } else {
                 btnAddPrimary.setVisibility(View.GONE);
             }
-
             // Slot 3: Share (Compartir)
             btnShare.setVisibility(View.VISIBLE);
             ivShare.setImageResource(R.drawable.ic_playlist_share);
@@ -4167,29 +3633,25 @@ public class MusicPlayerFragment extends Fragment {
                 shareTrackResult(track);
             });
         }
-
         View btnPlayPlaylist = view.findViewById(R.id.btnBsPlayPlaylist);
         View btnPlay = view.findViewById(R.id.btnBsPlay);
         View btnFavorite = view.findViewById(R.id.btnBsFavorite);
         View btnDownload = view.findViewById(R.id.btnBsDownload);
         View btnAddToQueue = view.findViewById(R.id.btnBsAddToQueue);
-        
         // Reproducir Playlist - hidden when shown in top buttons for playlists
         if ("playlist".equals(track.resultType)) {
             btnPlayPlaylist.setVisibility(View.GONE);
         } else {
             btnPlayPlaylist.setVisibility(View.GONE);
         }
-
         btnPlay.setVisibility(View.GONE);
-        
         // Slot 4: Add to Playlist (if video) - was Favorite
         if (track.isVideo()) {
             btnFavorite.setVisibility(View.VISIBLE);
             ImageView ivAddList = btnFavorite.findViewById(R.id.ivBsFavorite);
             TextView tvAddList = btnFavorite.findViewById(R.id.tvBsFavorite);
             ivAddList.setImageResource(R.drawable.ic_stream_queue_add);
-            tvAddList.setText("Añadir a playlist");
+            tvAddList.setText("AÃƒÂ±adir a playlist");
             btnFavorite.setOnClickListener(v -> {
                 dialog.dismiss();
                 showAddToPlaylistDialog(track);
@@ -4197,7 +3659,6 @@ public class MusicPlayerFragment extends Fragment {
         } else {
             btnFavorite.setVisibility(View.GONE);
         }
-
         // Slot 5: Favorite (if video) - was Download
         if (track.isVideo()) {
             btnDownload.setVisibility(View.VISIBLE);
@@ -4212,23 +3673,17 @@ public class MusicPlayerFragment extends Fragment {
         } else {
             btnDownload.setVisibility(View.GONE);
         }
-
         btnAddToQueue.setVisibility(View.GONE);
-
         View parent = (View) view.getParent();
         if (parent != null) {
             parent.setBackgroundColor(android.graphics.Color.TRANSPARENT);
         }
-
         dialog.show();
     }
-
     private void showAddToPlaylistDialog(@NonNull YouTubeMusicService.TrackResult track) {
         if (!isAdded()) return;
-
         List<String> localNames = CustomPlaylistsStore.INSTANCE.getAllPlaylistNames(requireContext());
         String token = resolveAccessTokenForPlaylistDetail();
-
         if (TextUtils.isEmpty(token)) {
             // Only local
             if (localNames.isEmpty()) {
@@ -4238,7 +3693,6 @@ public class MusicPlayerFragment extends Fragment {
             showAddToPlaylistDialogInternal(track, localNames, Collections.emptyList());
             return;
         }
-
         // Show loading and fetch YT playlists
         android.widget.Toast.makeText(requireContext(), "Cargando tus listas de YouTube...", android.widget.Toast.LENGTH_SHORT).show();
         youTubeMusicService.fetchMyPlaylists(token, 50, new YouTubeMusicService.PlaylistsCallback() {
@@ -4247,7 +3701,6 @@ public class MusicPlayerFragment extends Fragment {
                 if (!isAdded()) return;
                 showAddToPlaylistDialogInternal(track, localNames, playlists);
             }
-
             @Override
             public void onError(@NonNull String error) {
                 if (!isAdded()) return;
@@ -4255,7 +3708,6 @@ public class MusicPlayerFragment extends Fragment {
             }
         });
     }
-
     private void showAddToPlaylistDialogInternal(@NonNull YouTubeMusicService.TrackResult track, @NonNull List<String> localNames, @NonNull List<YouTubeMusicService.PlaylistResult> ytPlaylists) {
         List<String> displayNames = new ArrayList<>();
         for (String name : localNames) {
@@ -4264,15 +3716,13 @@ public class MusicPlayerFragment extends Fragment {
         for (YouTubeMusicService.PlaylistResult playlist : ytPlaylists) {
             displayNames.add("[YT] " + playlist.title);
         }
-
         if (displayNames.isEmpty()) {
             android.widget.Toast.makeText(requireContext(), "No tienes playlists. Crea una primero.", android.widget.Toast.LENGTH_SHORT).show();
             return;
         }
-
         String[] array = displayNames.toArray(new String[0]);
         new com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
-            .setTitle("Añadir a playlist")
+            .setTitle("AÃƒÂ±adir a playlist")
             .setItems(array, (dialog, which) -> {
                 if (which < localNames.size()) {
                     String selected = localNames.get(which);
@@ -4285,7 +3735,7 @@ public class MusicPlayerFragment extends Fragment {
                         "",
                         track.thumbnailUrl == null ? "" : track.thumbnailUrl
                     );
-                    android.widget.Toast.makeText(requireContext(), "Añadida a local: " + selected, android.widget.Toast.LENGTH_SHORT).show();
+                    android.widget.Toast.makeText(requireContext(), "AÃƒÂ±adida a local: " + selected, android.widget.Toast.LENGTH_SHORT).show();
                     fetchLibraryPlaylists(true);
                 } else {
                     int ytIdx = which - localNames.size();
@@ -4294,7 +3744,7 @@ public class MusicPlayerFragment extends Fragment {
                     youTubeMusicService.insertTrackToPlaylist(token, selected.playlistId, track.videoId, (success, error) -> {
                         if (!isAdded()) return;
                         if (success) {
-                            android.widget.Toast.makeText(requireContext(), "Añadida a YouTube: " + selected.title, android.widget.Toast.LENGTH_SHORT).show();
+                            android.widget.Toast.makeText(requireContext(), "AÃƒÂ±adida a YouTube: " + selected.title, android.widget.Toast.LENGTH_SHORT).show();
                         } else {
                             android.widget.Toast.makeText(requireContext(), "Error YouTube: " + error, android.widget.Toast.LENGTH_SHORT).show();
                         }
@@ -4304,20 +3754,16 @@ public class MusicPlayerFragment extends Fragment {
             .setNegativeButton("Cancelar", null)
             .show();
     }
-
     private void showRenamePlaylistDialog(@NonNull YouTubeMusicService.TrackResult playlistTrack) {
         if (!isAdded()) return;
-
         final String oldName = playlistTrack.title == null ? "" : playlistTrack.title.trim();
         if (TextUtils.isEmpty(oldName)) {
-            android.widget.Toast.makeText(requireContext(), "Nombre inválido", android.widget.Toast.LENGTH_SHORT).show();
+            android.widget.Toast.makeText(requireContext(), "Nombre invÃƒÂ¡lido", android.widget.Toast.LENGTH_SHORT).show();
             return;
         }
-
         final android.widget.EditText input = new android.widget.EditText(requireContext());
         input.setText(oldName);
         input.setSelection(Math.min(oldName.length(), oldName.length()));
-
         new com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
             .setTitle("Renombrar playlist")
             .setMessage("Nuevo nombre:")
@@ -4335,12 +3781,10 @@ public class MusicPlayerFragment extends Fragment {
             .setNegativeButton("Cancelar", null)
             .show();
     }
-
     private void addSearchTrackToFavorites(@NonNull YouTubeMusicService.TrackResult track) {
         if (!isAdded() || !track.isVideo()) {
             return;
         }
-
         FavoritesPlaylistStore.upsertFavorite(
                 requireContext(),
                 track.videoId,
@@ -4349,15 +3793,12 @@ public class MusicPlayerFragment extends Fragment {
                 "--:--",
                 track.thumbnailUrl == null ? "" : track.thumbnailUrl
         );
-
         ensureFavoritesPlaylistInLibraryTracks();
     }
-
     private void shareTrackResult(@NonNull YouTubeMusicService.TrackResult track) {
         if (!isAdded()) {
             return;
         }
-
         try {
             String watchUrl = track.getWatchUrl();
             String title = TextUtils.isEmpty(track.title) ? "Mira este resultado" : track.title;
@@ -4367,10 +3808,8 @@ public class MusicPlayerFragment extends Fragment {
             shareIntent.putExtra(Intent.EXTRA_TEXT, title + "\n" + watchUrl);
             startActivity(Intent.createChooser(shareIntent, "Compartir"));
         } catch (Exception e) {
-            
         }
     }
-
     @Nullable
     private SongPlayerFragment findSongPlayerFragment() {
         androidx.fragment.app.Fragment fragment = getParentFragmentManager().findFragmentByTag("song_player");
@@ -4379,35 +3818,30 @@ public class MusicPlayerFragment extends Fragment {
         }
         return null;
     }
-
     @NonNull
     private PlaybackHistoryStore.Snapshot loadPlaybackSnapshot() {
         if (!isAdded()) {
             return new PlaybackHistoryStore.Snapshot(new ArrayList<>(), 0, 0, 1, false, 0L);
         }
-
         long now = System.currentTimeMillis();
         if (miniSnapshotCache != null && (now - miniSnapshotCacheReadAtMs) < MINI_SNAPSHOT_REFRESH_MS) {
             return miniSnapshotCache;
         }
-
-        PlaybackHistoryStore.Snapshot snapshot = PlaybackHistoryStore.load(requireContext());
+        PlaybackHistoryStore.Snapshot snapshot = PlaybackHistoryStore
+                .load(requireContext());
         miniSnapshotCache = snapshot;
         miniSnapshotCacheReadAtMs = now;
         return snapshot;
     }
-
     private void invalidateMiniSnapshotCache() {
         miniSnapshotCache = null;
         miniSnapshotCacheReadAtMs = 0L;
     }
-
     private void resetMiniPlayerRenderCache() {
         lastMiniArtworkTrackId = "";
         lastMiniArtworkUrl = "";
         lastMiniProgressValue = -1;
     }
-
     private void openPlayerFromMiniBar() {
         if (llMiniPlayer != null) {
             llMiniPlayer.animate().alpha(0f).setDuration(200).withEndAction(() -> {
@@ -4427,21 +3861,16 @@ public class MusicPlayerFragment extends Fragment {
             invalidateMiniSnapshotCache();
             return;
         }
-
         PlaybackHistoryStore.Snapshot snapshot = loadPlaybackSnapshot();
         if (openPlayerFromSnapshot(snapshot, false)) {
             return;
         }
-
         if (launchPlayerFromLastTrackPrefs(false, true)) {
             return;
         }
-
         if (!openLastPlaylistDetailFromPrefs()) {
-            
         }
     }
-
     private void toggleMiniPlayback() {
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
         if (existingPlayer != null && existingPlayer.isAdded()) {
@@ -4450,37 +3879,29 @@ public class MusicPlayerFragment extends Fragment {
             updateMiniPlayerUi();
             return;
         }
-
         PlaybackHistoryStore.Snapshot snapshot = loadPlaybackSnapshot();
         if (startHiddenPlayerFromSnapshot(snapshot, true)) {
             return;
         }
-
         if (launchPlayerFromLastTrackPrefs(true, false)) {
             return;
         }
-
         if (!openLastPlaylistDetailFromPrefs()) {
-            
         }
     }
-
     private boolean launchPlayerFromLastTrackPrefs(boolean startPlaying, boolean showPlayer) {
         if (!isAdded()) {
             return false;
         }
-
         SharedPreferences prefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
         String videoId = prefs.getString(PREF_LAST_VIDEO_ID, "");
         if (TextUtils.isEmpty(videoId)) {
             return false;
         }
-
         String title = prefs.getString(PREF_LAST_TRACK_TITLE, "");
         String artist = prefs.getString(PREF_LAST_TRACK_ARTIST, "");
         String duration = prefs.getString(PREF_LAST_TRACK_DURATION, "");
         String image = prefs.getString(PREF_LAST_TRACK_IMAGE, "");
-
         ArrayList<String> ids = new ArrayList<>();
         ArrayList<String> titles = new ArrayList<>();
         ArrayList<String> artists = new ArrayList<>();
@@ -4491,12 +3912,10 @@ public class MusicPlayerFragment extends Fragment {
         artists.add(artist == null ? "" : artist);
         durations.add(duration == null ? "" : duration);
         images.add(image == null ? "" : image);
-
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
         if (existingPlayer != null && existingPlayer.isAdded()) {
             existingPlayer.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
             existingPlayer.externalReplaceQueue(ids, titles, artists, durations, images, 0, startPlaying);
-
             if (showPlayer) {
                 getParentFragmentManager()
                         .beginTransaction()
@@ -4505,16 +3924,13 @@ public class MusicPlayerFragment extends Fragment {
                         .runOnCommit(existingPlayer::externalAnimateEnterSlide)
                         .commit();
             }
-
             invalidateMiniSnapshotCache();
             updateMiniPlayerUi();
             return true;
         }
-
         if (getParentFragmentManager().isStateSaved()) {
             return false;
         }
-
         SongPlayerFragment playerFragment = SongPlayerFragment.newInstance(
                 ids,
                 titles,
@@ -4525,13 +3941,11 @@ public class MusicPlayerFragment extends Fragment {
                 startPlaying
         );
         playerFragment.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
-
         final SongPlayerFragment newPlayerForAnim = playerFragment;
         androidx.fragment.app.FragmentTransaction transaction = getParentFragmentManager()
                 .beginTransaction()
                 .setReorderingAllowed(true)
                 .add(R.id.playerContainer, playerFragment, "song_player");
-
         if (showPlayer) {
             transaction
                     .runOnCommit(newPlayerForAnim::externalAnimateEnterSlide)
@@ -4541,12 +3955,10 @@ public class MusicPlayerFragment extends Fragment {
                     .hide(playerFragment)
                     .commit();
         }
-
         invalidateMiniSnapshotCache();
         updateMiniPlayerUi();
         return true;
     }
-
     private boolean startHiddenPlayerFromSnapshot(
             @NonNull PlaybackHistoryStore.Snapshot snapshot,
             boolean startPlaying
@@ -4554,7 +3966,6 @@ public class MusicPlayerFragment extends Fragment {
         if (!snapshot.isValid() || !isAdded()) {
             return false;
         }
-
         ArrayList<String> ids = new ArrayList<>();
         ArrayList<String> titles = new ArrayList<>();
         ArrayList<String> artists = new ArrayList<>();
@@ -4570,10 +3981,8 @@ public class MusicPlayerFragment extends Fragment {
         if (ids.isEmpty()) {
             return false;
         }
-
         int snapshotIndex = Math.max(0, Math.min(snapshot.currentIndex, ids.size() - 1));
         persistSnapshotPositionToPlayerState(snapshot);
-
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
         if (existingPlayer != null && existingPlayer.isAdded()) {
             existingPlayer.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
@@ -4582,11 +3991,9 @@ public class MusicPlayerFragment extends Fragment {
             updateMiniPlayerUi();
             return true;
         }
-
         if (getParentFragmentManager().isStateSaved()) {
             return false;
         }
-
         SongPlayerFragment playerFragment = SongPlayerFragment.newInstance(
                 ids,
                 titles,
@@ -4597,24 +4004,20 @@ public class MusicPlayerFragment extends Fragment {
                 startPlaying
         );
         playerFragment.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
-
         getParentFragmentManager()
                 .beginTransaction()
                 .setReorderingAllowed(true)
                 .add(R.id.playerContainer, playerFragment, "song_player")
                 .hide(playerFragment)
                 .commit();
-
         invalidateMiniSnapshotCache();
         updateMiniPlayerUi();
         return true;
     }
-
     private boolean openLastPlaylistDetailFromPrefs() {
         if (!isAdded()) {
             return false;
         }
-
         try {
             getParentFragmentManager().popBackStackImmediate(
                     "playlist_detail",
@@ -4622,13 +4025,11 @@ public class MusicPlayerFragment extends Fragment {
             );
         } catch (Exception ignored) {
         }
-
         SharedPreferences prefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
         String playlistId = prefs.getString(PREF_LAST_PLAYLIST_ID, "");
         if (TextUtils.isEmpty(playlistId)) {
             return false;
         }
-
         String playlistTitle = prefs.getString(PREF_LAST_PLAYLIST_TITLE, "Lista");
         String playlistSubtitle = prefs.getString(PREF_LAST_PLAYLIST_SUBTITLE, "Playlist");
         String playlistThumbnail = prefs.getString(PREF_LAST_PLAYLIST_THUMBNAIL, "");
@@ -4643,7 +4044,6 @@ public class MusicPlayerFragment extends Fragment {
             normalizedPlaylistId = YouTubeMusicService.SPECIAL_LIKED_VIDEOS_ID;
         }
         String accessTokenForDetail = resolveAccessTokenForPlaylistDetail();
-
         PlaylistDetailFragment detailFragment = PlaylistDetailFragment.newInstance(
                 normalizedPlaylistId,
                 TextUtils.isEmpty(playlistTitle) ? "Lista" : playlistTitle,
@@ -4651,25 +4051,20 @@ public class MusicPlayerFragment extends Fragment {
                 playlistThumbnail == null ? "" : playlistThumbnail,
             accessTokenForDetail
         );
-
         androidx.fragment.app.Fragment existingDetail = getParentFragmentManager().findFragmentByTag("playlist_detail");
-
         androidx.fragment.app.FragmentTransaction transaction = getParentFragmentManager()
             .beginTransaction()
                 .setReorderingAllowed(true)
             ;
-
         if (existingDetail != null && existingDetail.isAdded() && existingDetail != this) {
             transaction.remove(existingDetail);
         }
-
         transaction
             .add(R.id.fragmentContainer, detailFragment, "playlist_detail")
             .addToBackStack("playlist_detail")
             .commit();
         return true;
     }
-
     private boolean openPlayerFromSnapshot(
             @NonNull PlaybackHistoryStore.Snapshot snapshot,
             boolean startPlaying
@@ -4677,7 +4072,6 @@ public class MusicPlayerFragment extends Fragment {
         if (!snapshot.isValid()) {
             return false;
         }
-
         ArrayList<String> ids = new ArrayList<>();
         ArrayList<String> titles = new ArrayList<>();
         ArrayList<String> artists = new ArrayList<>();
@@ -4693,15 +4087,12 @@ public class MusicPlayerFragment extends Fragment {
         if (ids.isEmpty()) {
             return false;
         }
-
         int snapshotIndex = Math.max(0, Math.min(snapshot.currentIndex, ids.size() - 1));
         persistSnapshotPositionToPlayerState(snapshot);
-
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
         if (existingPlayer != null && existingPlayer.isAdded()) {
             existingPlayer.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
             existingPlayer.externalReplaceQueue(ids, titles, artists, durations, images, snapshotIndex, startPlaying);
-
             getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
@@ -4719,7 +4110,6 @@ public class MusicPlayerFragment extends Fragment {
                     startPlaying
             );
             playerFragment.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
-
             final SongPlayerFragment newPlayerForAnim = playerFragment;
             getParentFragmentManager()
                     .beginTransaction()
@@ -4728,56 +4118,46 @@ public class MusicPlayerFragment extends Fragment {
                     .runOnCommit(newPlayerForAnim::externalAnimateEnterSlide)
                     .commit();
         }
-
         invalidateMiniSnapshotCache();
         updateMiniPlayerUi();
         return true;
     }
-
     private void persistSnapshotPositionToPlayerState(@NonNull PlaybackHistoryStore.Snapshot snapshot) {
         if (!isAdded()) {
             return;
         }
-
         PlaybackHistoryStore.QueueTrack current = snapshot.currentTrack();
         if (current == null || TextUtils.isEmpty(current.videoId)) {
             return;
         }
-
         requireContext()
                 .getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE)
                 .edit()
                 .putInt(PREF_PLAYBACK_POS_PREFIX + current.videoId, Math.max(0, snapshot.currentSeconds))
                 .commit();
     }
-
     private void clearPersistedPositionForVideoId(@Nullable String videoId) {
         if (!isAdded() || TextUtils.isEmpty(videoId)) {
             return;
         }
-
         requireContext()
                 .getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE)
                 .edit()
                 .remove(PREF_PLAYBACK_POS_PREFIX + videoId)
                 .apply();
     }
-
     private void updateMiniPlayerUi() {
         if (!isAdded() || llMiniPlayer == null) {
             return;
         }
-
         SongPlayerFragment songPlayer = findSongPlayerFragment();
         boolean playerAttached = songPlayer != null && songPlayer.isAdded();
         PlaybackHistoryStore.Snapshot snapshot = loadPlaybackSnapshot();
         SharedPreferences playerPrefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
-
         PlaybackHistoryStore.QueueTrack currentTrack = snapshot.currentTrack();
         int currentSeconds = Math.max(0, snapshot.currentSeconds);
         int totalSeconds = Math.max(1, snapshot.totalSeconds);
         boolean miniPlaying = snapshot.isPlaying;
-
         if (currentTrack == null || TextUtils.isEmpty(currentTrack.videoId)) {
             String fallbackVideoId = playerPrefs.getString(PREF_LAST_VIDEO_ID, "");
             if (!TextUtils.isEmpty(fallbackVideoId)) {
@@ -4785,10 +4165,9 @@ public class MusicPlayerFragment extends Fragment {
                 String fallbackArtist = playerPrefs.getString(PREF_LAST_TRACK_ARTIST, "");
                 String fallbackDuration = playerPrefs.getString(PREF_LAST_TRACK_DURATION, "");
                 String fallbackImage = playerPrefs.getString(PREF_LAST_TRACK_IMAGE, "");
-
                 currentTrack = new PlaybackHistoryStore.QueueTrack(
                         fallbackVideoId,
-                        TextUtils.isEmpty(fallbackTitle) ? "Última reproducción" : fallbackTitle,
+                        TextUtils.isEmpty(fallbackTitle) ? "ÃƒÅ¡ltima reproducciÃƒÂ³n" : fallbackTitle,
                         fallbackArtist == null ? "" : fallbackArtist,
                         fallbackDuration == null ? "" : fallbackDuration,
                         fallbackImage == null ? "" : fallbackImage
@@ -4798,7 +4177,6 @@ public class MusicPlayerFragment extends Fragment {
                 miniPlaying = playerPrefs.getBoolean(PREF_LAST_IS_PLAYING, false);
             }
         }
-
         if (playerAttached) {
             String playerVideoId = songPlayer.externalGetCurrentVideoId();
             PlaybackHistoryStore.QueueTrack fromQueue = findSnapshotTrackByVideoId(snapshot, playerVideoId);
@@ -4807,7 +4185,6 @@ public class MusicPlayerFragment extends Fragment {
             } else if (!TextUtils.isEmpty(playerVideoId)) {
                 currentTrack = new PlaybackHistoryStore.QueueTrack(playerVideoId, "Reproduciendo", "", "", "");
             }
-
             int playerSeconds = songPlayer.externalGetCurrentSeconds();
             // If player shows 0 but snapshot has a position, use snapshot (player hasn't loaded saved position yet)
             PlaybackHistoryStore.QueueTrack snapshotTrack = snapshot.currentTrack();
@@ -4822,18 +4199,15 @@ public class MusicPlayerFragment extends Fragment {
         } else if (currentTrack != null && totalSeconds <= 1) {
             totalSeconds = Math.max(1, parseDurationSeconds(currentTrack.duration));
         }
-
         if (lastMiniPlayerIsPlaying != miniPlaying) {
             lastMiniPlayerIsPlaying = miniPlaying;
             if (adapter != null) {
                 adapter.notifyDataSetChanged();
             }
         }
-
         if (!playerAttached) {
             miniPlaying = false;
         }
-
         if (currentTrack == null || TextUtils.isEmpty(currentTrack.videoId)) {
             if (llMiniPlayer.getVisibility() != View.GONE) {
                 llMiniPlayer.setVisibility(View.GONE);
@@ -4843,41 +4217,33 @@ public class MusicPlayerFragment extends Fragment {
             lastMiniProgressValue = -1;
             return;
         }
-
         if (llMiniPlayer.getVisibility() != View.VISIBLE && !isTv) {
             llMiniPlayer.setVisibility(View.VISIBLE);
         } else if (isTv && llMiniPlayer.getVisibility() != View.GONE) {
             llMiniPlayer.setVisibility(View.GONE);
         }
-        
-        String trackTitle = TextUtils.isEmpty(currentTrack.title) ? "Última reproducción" : currentTrack.title;
+        String trackTitle = TextUtils.isEmpty(currentTrack.title) ? "ÃƒÅ¡ltima reproducciÃƒÂ³n" : currentTrack.title;
         if (!TextUtils.equals(tvMiniPlayerTitle.getText(), trackTitle)) {
             tvMiniPlayerTitle.setText(trackTitle);
         }
-        
         String trackArtist = TextUtils.isEmpty(currentTrack.artist) ? "" : currentTrack.artist;
         if (!TextUtils.equals(tvMiniPlayerSubtitle.getText(), trackArtist)) {
             tvMiniPlayerSubtitle.setText(trackArtist);
         }
-
         // Update TV player if visible
         if (isTv && llTvPlayerPane != null) {
             tvTvPlayerTitle.setText(trackTitle);
             tvTvPlayerSubtitle.setText(trackArtist);
             btnTvPlayPause.setImageResource(miniPlaying ? R.drawable.ic_player_pause : R.drawable.ic_player_play);
-            
             if (sbTvProgress != null) {
                 int clampedCurrent = Math.max(0, Math.min(totalSeconds, currentSeconds));
                 int progress = Math.round((clampedCurrent / (float) Math.max(1, totalSeconds)) * 1000f);
                 sbTvProgress.setProgress(Math.max(0, Math.min(1000, progress)));
             }
-
             if (!TextUtils.equals(currentTrack.videoId, lastMiniArtworkTrackId) 
                 || !TextUtils.equals(currentTrack.imageUrl, lastMiniArtworkUrl)) {
-                
                 lastMiniArtworkTrackId = currentTrack.videoId;
                 lastMiniArtworkUrl = currentTrack.imageUrl;
-
                 if (!TextUtils.isEmpty(currentTrack.imageUrl)) {
                     Glide.with(this)
                         .load(currentTrack.imageUrl)
@@ -4885,7 +4251,6 @@ public class MusicPlayerFragment extends Fragment {
                         .placeholder(R.drawable.ic_music)
                         .error(R.drawable.ic_music)
                         .into(ivTvPlayerCover);
-
                     if (ivTvPlayerBackground != null) {
                         Glide.with(this)
                             .load(currentTrack.imageUrl)
@@ -4898,11 +4263,9 @@ public class MusicPlayerFragment extends Fragment {
                 }
             }
         }
-        
         btnMiniPlayPause.setImageResource(miniPlaying
                 ? R.drawable.ic_mini_pause
                 : R.drawable.ic_mini_play);
-
         if (sbMiniPlayerProgress != null) {
             int clampedCurrent = Math.max(0, Math.min(totalSeconds, currentSeconds));
             int progress = Math.round((clampedCurrent / (float) Math.max(1, totalSeconds)) * 1000f);
@@ -4912,7 +4275,6 @@ public class MusicPlayerFragment extends Fragment {
                 lastMiniProgressValue = boundedProgress;
             }
         }
-
         String imageUrl = currentTrack.imageUrl == null ? "" : currentTrack.imageUrl.trim();
         String trackId = currentTrack.videoId == null ? "" : currentTrack.videoId;
         if (!TextUtils.equals(lastMiniArtworkTrackId, trackId)
@@ -4922,7 +4284,6 @@ public class MusicPlayerFragment extends Fragment {
             lastMiniArtworkUrl = imageUrl;
         }
     }
-
     @Nullable
     private PlaybackHistoryStore.QueueTrack findSnapshotTrackByVideoId(
             @NonNull PlaybackHistoryStore.Snapshot snapshot,
@@ -4938,12 +4299,10 @@ public class MusicPlayerFragment extends Fragment {
         }
         return null;
     }
-
     private int parseDurationSeconds(@Nullable String duration) {
         if (TextUtils.isEmpty(duration) || duration.contains("--")) {
             return 1;
         }
-
         String[] parts = duration.split(":");
         try {
             if (parts.length == 2) {
@@ -4960,47 +4319,37 @@ public class MusicPlayerFragment extends Fragment {
         } catch (NumberFormatException ignored) {
             return 1;
         }
-
         return 1;
     }
-
     private void onMusicResultMoreClicked(
             @NonNull YouTubeMusicService.TrackResult track,
             @NonNull View anchor
     ) {
         if (!isAdded()) return;
-
         anchor.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
         anchor.animate().cancel();
         anchor.animate().alpha(0.85f).setDuration(80L)
             .withEndAction(() -> anchor.animate().alpha(1f).setDuration(120L).start())
             .start();
-
         if ("playlist".equals(track.resultType)) {
             showPlaylistActionTooltip(anchor, track);
         } else {
             showSearchTrackOptions(track, anchor);
         }
     }
-
     private void showPlaylistActionTooltip(@NonNull View anchor, @NonNull YouTubeMusicService.TrackResult track) {
         if (!isAdded()) return;
-
         String playlistId = track.contentId == null ? "" : track.contentId.trim();
         boolean isOfflineEnabled = isPersistedPlaylistOfflineAutoEnabled(playlistId);
-
         com.google.android.material.bottomsheet.BottomSheetDialog dialog = new com.google.android.material.bottomsheet.BottomSheetDialog(requireContext());
         View view = LayoutInflater.from(requireContext()).inflate(R.layout.bottom_sheet_track_options, null);
         dialog.setContentView(view);
-
         TextView tvTitle = view.findViewById(R.id.tvBsTrackTitle);
         TextView tvSubtitle = view.findViewById(R.id.tvBsTrackSubtitle);
         ImageView ivArt = view.findViewById(R.id.ivBsTrackArt);
-        
         tvTitle.setText(track.title);
         tvSubtitle.setText(searchTypeLabel(track));
         loadArtworkInto(ivArt, track.thumbnailUrl);
-
         // Top 3 buttons: Play, Share, Download/Delete Downloads
         View btnPlayNext = view.findViewById(R.id.btnBsPlayNext);
         View btnAddPrimary = view.findViewById(R.id.btnBsAddPrimary);
@@ -5011,7 +4360,6 @@ public class MusicPlayerFragment extends Fragment {
         TextView tvAddPrimary = view.findViewById(R.id.tvBsAddPrimary);
         ImageView ivShare = view.findViewById(R.id.ivBsShareIcon);
         TextView tvShare = view.findViewById(R.id.tvBsShareLabel);
-        
         // Button 1: Reproducir playlist
         btnPlayNext.setVisibility(View.VISIBLE);
         ivPlayNext.setImageResource(R.drawable.ic_player_play);
@@ -5020,7 +4368,6 @@ public class MusicPlayerFragment extends Fragment {
             dialog.dismiss();
             playPlaylistFromStart(track);
         });
-        
         // Button 2: Compartir
         btnShare.setVisibility(View.VISIBLE);
         ivShare.setImageResource(R.drawable.ic_playlist_share);
@@ -5029,7 +4376,6 @@ public class MusicPlayerFragment extends Fragment {
             dialog.dismiss();
             shareTrackResult(track);
         });
-        
         // Button 3: Descargar o Eliminar descargas
         btnAddPrimary.setVisibility(View.VISIBLE);
         if (isOfflineEnabled) {
@@ -5047,14 +4393,12 @@ public class MusicPlayerFragment extends Fragment {
                 enqueuePlaylistOfflineDownload(track);
             });
         }
-
         // Hide other buttons
         view.findViewById(R.id.btnBsPlay).setVisibility(View.GONE);
         View btnDeletePlaylist = view.findViewById(R.id.btnBsFavorite);
         View btnRenamePlaylist = view.findViewById(R.id.btnBsDownload);
         view.findViewById(R.id.btnBsAddToQueue).setVisibility(View.GONE);
         view.findViewById(R.id.btnBsPlayPlaylist).setVisibility(View.GONE);
-
         boolean isCustomPlaylist = false;
         java.util.List<String> customPlaylists = CustomPlaylistsStore.INSTANCE.getAllPlaylistNames(requireContext());
         for (String customName : customPlaylists) {
@@ -5063,7 +4407,6 @@ public class MusicPlayerFragment extends Fragment {
                 break;
             }
         }
-
         if (isCustomPlaylist) {
             btnDeletePlaylist.setVisibility(View.VISIBLE);
             ImageView ivDelete = btnDeletePlaylist.findViewById(R.id.ivBsFavorite);
@@ -5074,7 +4417,6 @@ public class MusicPlayerFragment extends Fragment {
                 dialog.dismiss();
                 showDeletePlaylistConfirmDialog(track);
             });
-
             btnRenamePlaylist.setVisibility(View.VISIBLE);
             ImageView ivRename = btnRenamePlaylist.findViewById(R.id.ivBsDownload);
             TextView tvRename = btnRenamePlaylist.findViewById(R.id.tvBsDownload);
@@ -5088,18 +4430,14 @@ public class MusicPlayerFragment extends Fragment {
             btnDeletePlaylist.setVisibility(View.GONE);
             btnRenamePlaylist.setVisibility(View.GONE);
         }
-
         View parent = (View) view.getParent();
         if (parent != null) {
             parent.setBackgroundColor(android.graphics.Color.TRANSPARENT);
         }
-
         dialog.show();
     }
-
     private void playPlaylistFromStart(@NonNull YouTubeMusicService.TrackResult playlistTrack) {
         if (!isAdded()) return;
-
         // 1) Local/custom playlist by name
         java.util.List<String> customPlaylists = CustomPlaylistsStore.INSTANCE.getAllPlaylistNames(requireContext());
         for (String customName : customPlaylists) {
@@ -5107,10 +4445,9 @@ public class MusicPlayerFragment extends Fragment {
                 java.util.List<FavoritesPlaylistStore.FavoriteTrack> tracks =
                         CustomPlaylistsStore.INSTANCE.getTracksFromPlaylist(requireContext(), customName);
                 if (tracks.isEmpty()) {
-                    android.widget.Toast.makeText(requireContext(), "La playlist está vacía", android.widget.Toast.LENGTH_SHORT).show();
+                    android.widget.Toast.makeText(requireContext(), "La playlist estÃƒÂ¡ vacÃƒÂ­a", android.widget.Toast.LENGTH_SHORT).show();
                     return;
                 }
-
                 ArrayList<String> ids = new ArrayList<>();
                 ArrayList<String> titles = new ArrayList<>();
                 ArrayList<String> artists = new ArrayList<>();
@@ -5124,40 +4461,33 @@ public class MusicPlayerFragment extends Fragment {
                     durations.add(TextUtils.isEmpty(t.duration) ? "--:--" : t.duration);
                     images.add(t.imageUrl == null ? "" : t.imageUrl);
                 }
-
                 if (ids.isEmpty()) {
-                    android.widget.Toast.makeText(requireContext(), "La playlist está vacía", android.widget.Toast.LENGTH_SHORT).show();
+                    android.widget.Toast.makeText(requireContext(), "La playlist estÃƒÂ¡ vacÃƒÂ­a", android.widget.Toast.LENGTH_SHORT).show();
                     return;
                 }
-
                 startPlaybackQueue(ids, titles, artists, durations, images, 0);
                 return;
             }
         }
-
         // 2) YouTube playlist by id
         String playlistId = playlistTrack.contentId == null ? "" : playlistTrack.contentId.trim();
         if (TextUtils.isEmpty(playlistId)) {
-            android.widget.Toast.makeText(requireContext(), "Playlist inválida", android.widget.Toast.LENGTH_SHORT).show();
+            android.widget.Toast.makeText(requireContext(), "Playlist invÃƒÂ¡lida", android.widget.Toast.LENGTH_SHORT).show();
             return;
         }
-
         String token = resolveAccessTokenForPlaylistDetail();
         if (TextUtils.isEmpty(token)) {
-            android.widget.Toast.makeText(requireContext(), "Inicia sesión para reproducir esta playlist", android.widget.Toast.LENGTH_SHORT).show();
+            android.widget.Toast.makeText(requireContext(), "Inicia sesiÃƒÂ³n para reproducir esta playlist", android.widget.Toast.LENGTH_SHORT).show();
             return;
         }
-
         youTubeMusicService.fetchPlaylistTracks(token, playlistId, 250, new YouTubeMusicService.PlaylistTracksCallback() {
             @Override
             public void onSuccess(java.util.List<YouTubeMusicService.PlaylistTrackResult> tracks) {
                 if (!isAdded()) return;
-
                 if (tracks == null || tracks.isEmpty()) {
-                    android.widget.Toast.makeText(requireContext(), "La playlist está vacía", android.widget.Toast.LENGTH_SHORT).show();
+                    android.widget.Toast.makeText(requireContext(), "La playlist estÃƒÂ¡ vacÃƒÂ­a", android.widget.Toast.LENGTH_SHORT).show();
                     return;
                 }
-
                 ArrayList<String> ids = new ArrayList<>();
                 ArrayList<String> titles = new ArrayList<>();
                 ArrayList<String> artists = new ArrayList<>();
@@ -5171,15 +4501,12 @@ public class MusicPlayerFragment extends Fragment {
                     durations.add(TextUtils.isEmpty(t.duration) ? "--:--" : t.duration);
                     images.add(t.thumbnailUrl == null ? "" : t.thumbnailUrl);
                 }
-
                 if (ids.isEmpty()) {
-                    android.widget.Toast.makeText(requireContext(), "La playlist está vacía", android.widget.Toast.LENGTH_SHORT).show();
+                    android.widget.Toast.makeText(requireContext(), "La playlist estÃƒÂ¡ vacÃƒÂ­a", android.widget.Toast.LENGTH_SHORT).show();
                     return;
                 }
-
                 startPlaybackQueue(ids, titles, artists, durations, images, 0);
             }
-
             @Override
             public void onError(String error) {
                 if (!isAdded()) return;
@@ -5187,7 +4514,6 @@ public class MusicPlayerFragment extends Fragment {
             }
         });
     }
-
     private void startPlaybackQueue(
             @NonNull ArrayList<String> ids,
             @NonNull ArrayList<String> titles,
@@ -5197,23 +4523,18 @@ public class MusicPlayerFragment extends Fragment {
             int selectedIndex
     ) {
         if (!isAdded() || ids.isEmpty()) return;
-
         int index = Math.max(0, Math.min(selectedIndex, ids.size() - 1));
-
         if (llMiniPlayer != null) {
             llMiniPlayer.animate().alpha(0f).setDuration(200).withEndAction(() -> {
                 llMiniPlayer.setVisibility(View.GONE);
                 llMiniPlayer.setAlpha(1f);
             }).start();
         }
-
         clearPersistedPositionForVideoId(ids.get(index));
-
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
         if (existingPlayer != null && existingPlayer.isAdded()) {
             existingPlayer.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
             existingPlayer.externalReplaceQueueFromStart(ids, titles, artists, durations, images, index, true);
-
             getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
@@ -5231,7 +4552,6 @@ public class MusicPlayerFragment extends Fragment {
                     true
             );
             playerFragment.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
-
             final SongPlayerFragment newPlayerForAnim = playerFragment;
             getParentFragmentManager()
                     .beginTransaction()
@@ -5240,22 +4560,18 @@ public class MusicPlayerFragment extends Fragment {
                     .runOnCommit(newPlayerForAnim::externalAnimateEnterSlide)
                     .commit();
         }
-
         invalidateMiniSnapshotCache();
     }
-
     private void showDeletePlaylistConfirmDialog(@NonNull YouTubeMusicService.TrackResult playlistTrack) {
         if (!isAdded()) return;
-        
         new androidx.appcompat.app.AlertDialog.Builder(requireContext())
             .setTitle("Eliminar playlist")
-            .setMessage("¿Estás seguro de que quieres eliminar la playlist \"" + playlistTrack.title + "\"?")
+            .setMessage("Ã‚Â¿EstÃƒÂ¡s seguro de que quieres eliminar la playlist \"" + playlistTrack.title + "\"?")
             .setPositiveButton("Eliminar", (dialog, which) -> {
                 boolean deleted = CustomPlaylistsStore.INSTANCE.deletePlaylist(requireContext(), playlistTrack.title);
                 if (deleted) {
                     // Also delete from cloud
                     CloudSyncManager.getInstance(requireContext()).deleteCloudPlaylist(playlistTrack.title);
-                    
                     // Remove from local list immediately for real-time feel
                     String contentId = playlistTrack.contentId;
                     for (int i = 0; i < libraryTracks.size(); i++) {
@@ -5264,13 +4580,10 @@ public class MusicPlayerFragment extends Fragment {
                             break;
                         }
                     }
-                    
                     // Re-render library list
                     renderLibraryResults();
-                    
                     // Refresh from source to ensure consistency
                     fetchLibraryPlaylists(true);
-                    
                     android.widget.Toast.makeText(requireContext(), "Playlist eliminada", android.widget.Toast.LENGTH_SHORT).show();
                 } else {
                     android.widget.Toast.makeText(requireContext(), "No se pudo eliminar la playlist", android.widget.Toast.LENGTH_SHORT).show();
@@ -5279,16 +4592,12 @@ public class MusicPlayerFragment extends Fragment {
             .setNegativeButton("Cancelar", null)
             .show();
     }
-
     private void deletePlaylistDownloads(@NonNull YouTubeMusicService.TrackResult playlistTrack) {
         if (!isAdded()) return;
-        
         String playlistId = playlistTrack.contentId == null ? "" : playlistTrack.contentId.trim();
         if (playlistId.isEmpty()) return;
-        
         // Get tracks from this playlist and delete their downloads
         java.util.List<String> trackIds = new java.util.ArrayList<>();
-        
         // Check if it's a custom playlist
         java.util.List<String> customPlaylists = CustomPlaylistsStore.INSTANCE.getAllPlaylistNames(requireContext());
         boolean isCustomPlaylist = false;
@@ -5305,23 +4614,18 @@ public class MusicPlayerFragment extends Fragment {
                 break;
             }
         }
-        
         // Delete offline audio for all tracks
         int deleted = OfflineAudioStore.deleteOfflineAudio(requireContext(), trackIds);
-        
         // Clear offline enabled state for this playlist
         persistPlaylistOfflineAutoEnabled(playlistId, false);
         persistPlaylistOfflineComplete(playlistId, false);
-        
         // Refresh UI
         if (adapter != null) {
             adapter.invalidatePlaylistOfflineState(playlistId);
         }
-        
         String message = deleted > 0 ? "Eliminadas " + deleted + " descargas" : "No hay descargas para eliminar";
         android.widget.Toast.makeText(requireContext(), message, android.widget.Toast.LENGTH_SHORT).show();
     }
-
     @NonNull
     private View createPlaylistActionRow(
             int iconRes,
@@ -5333,13 +4637,11 @@ public class MusicPlayerFragment extends Fragment {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(12), dp(10), dp(12), dp(10));
-
         ImageView icon = new ImageView(requireContext());
         LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(18), dp(18));
         icon.setLayoutParams(iconParams);
         icon.setImageResource(iconRes);
         icon.setColorFilter(ContextCompat.getColor(requireContext(), android.R.color.white));
-
         TextView labelView = new TextView(requireContext());
         LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -5351,54 +4653,43 @@ public class MusicPlayerFragment extends Fragment {
         labelView.setTextSize(13f);
         labelView.setTypeface(Typeface.DEFAULT_BOLD);
         labelView.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_secondary));
-
         row.addView(icon);
         row.addView(labelView);
-
         GradientDrawable rowContent = new GradientDrawable();
         rowContent.setCornerRadius(dp(10));
         rowContent.setColor(Color.TRANSPARENT);
         int rippleColor = withAlpha(ContextCompat.getColor(requireContext(), R.color.stitch_blue_light), 0.32f);
         row.setBackground(new RippleDrawable(ColorStateList.valueOf(rippleColor), rowContent, null));
-
         row.setOnClickListener(v -> {
             action.run();
             popupWindow.dismiss();
         });
-
         return row;
     }
-
     private void dismissPlaylistActionTooltip() {
         if (playlistActionPopupWindow != null) {
             playlistActionPopupWindow.dismiss();
             playlistActionPopupWindow = null;
         }
     }
-
     private void enqueuePlaylistOfflineDownload(@NonNull YouTubeMusicService.TrackResult playlistTrack) {
         if (!isAdded()) {
             return;
         }
-
         String playlistId = playlistTrack.contentId == null ? "" : playlistTrack.contentId.trim();
         if (TextUtils.isEmpty(playlistId)) {
-            
             return;
         }
         String playlistTitle = playlistTrack.title == null ? "" : playlistTrack.title.trim();
         if (TextUtils.isEmpty(playlistTitle)) {
             playlistTitle = playlistId;
         }
-
         persistPlaylistOfflineAutoEnabled(playlistId, true);
         if (adapter != null) {
             adapter.invalidatePlaylistOfflineState(playlistId);
         }
-
         enqueuePlaylistOfflineDownloadInternal(playlistId, playlistTitle, true);
     }
-
     private boolean enqueuePlaylistOfflineDownloadInternal(
             @NonNull String playlistId,
             @NonNull String playlistTitle,
@@ -5407,12 +4698,10 @@ public class MusicPlayerFragment extends Fragment {
         if (!isAdded()) {
             return false;
         }
-
         ArrayList<CachedPlaylistTrack> cachedTracks = loadCachedPlaylistTracksForOffline(playlistId);
         if (cachedTracks.isEmpty()) {
             return false;
         }
-
         Set<String> restrictedIds = OfflineRestrictionStore.getRestrictedVideoIds(requireContext());
         ArrayList<String> ids = new ArrayList<>();
         ArrayList<String> titles = new ArrayList<>();
@@ -5422,34 +4711,27 @@ public class MusicPlayerFragment extends Fragment {
         int skippedAlreadyOffline = 0;
         int skippedRestricted = 0;
         int totalEligibleWithVideoId = 0;
-
         for (CachedPlaylistTrack track : cachedTracks) {
             if (TextUtils.isEmpty(track.videoId)) {
                 continue;
             }
-
             if (!seen.add(track.videoId)) {
                 continue;
             }
-
             if (OfflineRestrictionStore.isRestricted(restrictedIds, track.videoId)) {
                 skippedRestricted++;
                 continue;
             }
-
             totalEligibleWithVideoId++;
-
             if (OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), track.videoId, track.duration)) {
                 skippedAlreadyOffline++;
                 continue;
             }
-
             ids.add(track.videoId);
             titles.add(track.title);
             artists.add(track.artist);
             durations.add(track.duration);
         }
-
         int totalWithVideoId = totalEligibleWithVideoId;
         if (totalWithVideoId <= 0) {
             persistPlaylistOfflineComplete(playlistId, true);
@@ -5461,7 +4743,6 @@ public class MusicPlayerFragment extends Fragment {
             }
             return false;
         }
-
         if (ids.isEmpty()) {
             persistPlaylistOfflineComplete(playlistId, true);
             if (adapter != null) {
@@ -5472,7 +4753,6 @@ public class MusicPlayerFragment extends Fragment {
             }
             return false;
         }
-
         Data input = new Data.Builder()
                 .putString(OfflinePlaylistDownloadWorker.INPUT_PLAYLIST_ID, playlistId)
             .putString(OfflinePlaylistDownloadWorker.INPUT_PLAYLIST_TITLE, playlistTitle)
@@ -5485,46 +4765,37 @@ public class MusicPlayerFragment extends Fragment {
                 .putBoolean(OfflinePlaylistDownloadWorker.INPUT_USER_INITIATED, userInitiated)
                 .putBoolean(OfflinePlaylistDownloadWorker.INPUT_MANUAL_QUEUE, false)
                 .build();
-
         SharedPreferences prefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE);
         boolean allowMobileData = prefs.getBoolean(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false);
         Constraints constraints = new Constraints.Builder()
                 .setRequiredNetworkType(allowMobileData ? NetworkType.CONNECTED : NetworkType.UNMETERED)
                 .build();
-
         OneTimeWorkRequest request = new OneTimeWorkRequest.Builder(OfflinePlaylistDownloadWorker.class)
                 .setInputData(input)
                 .setConstraints(constraints)
                 .addTag(OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME)
                 .addTag(OFFLINE_DOWNLOAD_UNIQUE_PREFIX + playlistId)
                 .build();
-
         enqueueOfflineDownloadUniqueWork(request);
-
         if (adapter != null) {
             adapter.invalidatePlaylistOfflineState(playlistId);
         }
-
         return true;
     }
-
     private void enqueueOfflineDownloadUniqueWork(@NonNull OneTimeWorkRequest request) {
         WorkManager manager = WorkManager.getInstance(requireContext().getApplicationContext());
         manager.enqueueUniqueWork(OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request);
     }
-
     private void startObservingOfflineQueue() {
         if (!isAdded()) {
             return;
         }
-
         if (offlineQueueObserver == null) {
             offlineQueueObserver = this::onOfflineQueueWorkInfosChanged;
             WorkManager.getInstance(requireContext().getApplicationContext())
                     .getWorkInfosForUniqueWorkLiveData(OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME)
                     .observe(getViewLifecycleOwner(), offlineQueueObserver);
         }
-
         if (offlineManualQueueObserver == null) {
             offlineManualQueueObserver = this::onOfflineManualQueueWorkInfosChanged;
             WorkManager.getInstance(requireContext().getApplicationContext())
@@ -5532,38 +4803,31 @@ public class MusicPlayerFragment extends Fragment {
                     .observe(getViewLifecycleOwner(), offlineManualQueueObserver);
         }
     }
-
     private void stopObservingOfflineQueue() {
         if (!isAdded()) {
             offlineQueueObserver = null;
             offlineManualQueueObserver = null;
             return;
         }
-
         if (offlineQueueObserver != null) {
             WorkManager.getInstance(requireContext().getApplicationContext())
                     .getWorkInfosForUniqueWorkLiveData(OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME)
                     .removeObserver(offlineQueueObserver);
         }
-
         if (offlineManualQueueObserver != null) {
             WorkManager.getInstance(requireContext().getApplicationContext())
                     .getWorkInfosForUniqueWorkLiveData(OFFLINE_DOWNLOAD_MANUAL_TRACK_QUEUE_UNIQUE_NAME)
                     .removeObserver(offlineManualQueueObserver);
         }
-
         offlineQueueObserver = null;
         offlineManualQueueObserver = null;
     }
-
     private void onOfflineQueueWorkInfosChanged(@Nullable List<WorkInfo> workInfos) {
         if (!isAdded()) {
             return;
         }
-
         boolean hasActiveWork = hasActiveOfflineWork(workInfos);
         boolean hasEnqueuedWork = hasEnqueuedOfflineWork(workInfos);
-
         if (hasActiveWork) {
             offlineQueueHadActiveWork = true;
             if (!hasEnqueuedWork) {
@@ -5571,41 +4835,33 @@ public class MusicPlayerFragment extends Fragment {
             }
             return;
         }
-
         if (offlineQueueHadActiveWork && adapter != null) {
             adapter.invalidatePlaylistOfflineState(null);
         }
         offlineQueueHadActiveWork = false;
-
         synchronized (MusicPlayerFragment.class) {
             isOfflineSyncInFlight = false;
         }
-        
         maybeEnqueueNextOfflineAutoPlaylist();
     }
-
     private void onOfflineManualQueueWorkInfosChanged(@Nullable List<WorkInfo> workInfos) {
         if (!isAdded()) {
             return;
         }
-
         boolean hasActiveWork = hasActiveOfflineWork(workInfos);
         if (hasActiveWork) {
             offlineManualQueueHadActiveWork = true;
             return;
         }
-
         if (offlineManualQueueHadActiveWork && adapter != null) {
             adapter.invalidatePlaylistOfflineState(null);
         }
         offlineManualQueueHadActiveWork = false;
     }
-
     private boolean hasActiveOfflineWork(@Nullable List<WorkInfo> workInfos) {
         if (workInfos == null || workInfos.isEmpty()) {
             return false;
         }
-
         for (WorkInfo info : workInfos) {
             if (info == null) {
                 continue;
@@ -5616,15 +4872,12 @@ public class MusicPlayerFragment extends Fragment {
                 return true;
             }
         }
-
         return false;
     }
-
     private boolean hasEnqueuedOfflineWork(@Nullable List<WorkInfo> workInfos) {
         if (workInfos == null || workInfos.isEmpty()) {
             return false;
         }
-
         for (WorkInfo info : workInfos) {
             if (info == null) {
                 continue;
@@ -5633,23 +4886,18 @@ public class MusicPlayerFragment extends Fragment {
                 return true;
             }
         }
-
         return false;
     }
-
     private void maybeEnqueueNextOfflineAutoPlaylist() {
         if (!isAdded()) return;
-        
         synchronized (MusicPlayerFragment.class) {
             if (isOfflineSyncInFlight || offlineAutoQueueScanInFlight) {
                 return;
             }
         }
-
         Context appContext = requireContext().getApplicationContext();
         ArrayList<YouTubeMusicService.TrackResult> playlistsSnapshot = new ArrayList<>(libraryTracks);
         offlineAutoQueueScanInFlight = true;
-
         offlineStateExecutor.execute(() -> {
             PendingOfflineBatchCandidate candidate = resolveNextPendingOfflineAutoBatch(appContext, playlistsSnapshot);
             mainHandler.post(() -> {
@@ -5657,21 +4905,17 @@ public class MusicPlayerFragment extends Fragment {
                 if (!isAdded() || candidate == null) {
                     return;
                 }
-
                 if (offlineSyncRecentlyProcessedPlaylistIds.contains(candidate.primaryPlaylistId)) {
                     return;
                 }
-
                 synchronized (MusicPlayerFragment.class) {
                     isOfflineSyncInFlight = true;
                 }
-                
                 final String primaryId = candidate.primaryPlaylistId;
                 offlineSyncRecentlyProcessedPlaylistIds.add(primaryId);
                 new Handler(Looper.getMainLooper()).postDelayed(() -> {
                     offlineSyncRecentlyProcessedPlaylistIds.remove(primaryId);
                 }, 60000);
-
                 boolean enqueued = enqueueOfflineAutoBatchDownloadInternal(candidate);
                 if (enqueued && adapter != null) {
                     for (String playlistId : candidate.playlistIds) {
@@ -5681,60 +4925,48 @@ public class MusicPlayerFragment extends Fragment {
             });
         });
     }
-
     @Nullable
     private PendingOfflineBatchCandidate resolveNextPendingOfflineAutoBatch(
             @NonNull Context appContext,
             @NonNull List<YouTubeMusicService.TrackResult> playlistsSnapshot
     ) {
         ArrayList<PendingOfflinePlaylistCandidate> candidates = new ArrayList<>();
-
         for (YouTubeMusicService.TrackResult playlist : playlistsSnapshot) {
             if (playlist == null || !"playlist".equals(playlist.resultType)) {
                 continue;
             }
-
             String playlistId = playlist.contentId == null ? "" : playlist.contentId.trim();
             if (TextUtils.isEmpty(playlistId) || !isPersistedPlaylistOfflineAutoEnabled(playlistId)) {
                 continue;
             }
-
             if (isPlaylistFullyOffline(appContext, playlistId)) {
                 continue;
             }
-
             ArrayList<CachedPlaylistTrack> cachedTracks = loadCachedPlaylistTracksForOffline(appContext, playlistId);
             if (cachedTracks.isEmpty()) {
                 continue;
             }
-
             int pendingCount = countPendingOfflineTracks(appContext, cachedTracks);
             if (pendingCount <= 0) {
                 persistPlaylistOfflineComplete(appContext, playlistId, true);
                 continue;
             }
-
             String playlistTitle = playlist.title == null ? "" : playlist.title.trim();
             if (TextUtils.isEmpty(playlistTitle)) {
                 playlistTitle = playlistId;
             }
-
             candidates.add(new PendingOfflinePlaylistCandidate(playlistId, playlistTitle, pendingCount, cachedTracks));
         }
-
         if (candidates.isEmpty()) {
             return null;
         }
-
         Collections.sort(candidates, (left, right) -> Integer.compare(left.pendingCount, right.pendingCount));
-
         Set<String> restrictedIds = OfflineRestrictionStore.getRestrictedVideoIds(appContext);
         HashSet<String> seenIds = new HashSet<>();
         ArrayList<PendingOfflineTrackCandidate> batchTracks = new ArrayList<>();
         ArrayList<String> batchPlaylistIds = new ArrayList<>();
         String primaryPlaylistId = "";
         String primaryPlaylistTitle = "";
-
         for (PendingOfflinePlaylistCandidate candidate : candidates) {
             int addedFromPlaylist = 0;
             for (CachedPlaylistTrack track : candidate.cachedTracks) {
@@ -5750,14 +4982,12 @@ public class MusicPlayerFragment extends Fragment {
                 if (OfflineAudioStore.hasValidatedOfflineAudio(appContext, track.videoId, track.duration)) {
                     continue;
                 }
-
                 batchTracks.add(new PendingOfflineTrackCandidate(track.videoId, track.title, track.artist, track.duration));
                 addedFromPlaylist++;
                 if (batchTracks.size() >= OFFLINE_AUTO_BATCH_TARGET_TRACKS) {
                     break;
                 }
             }
-
             if (addedFromPlaylist > 0) {
                 batchPlaylistIds.add(candidate.playlistId);
                 if (TextUtils.isEmpty(primaryPlaylistId)) {
@@ -5765,16 +4995,13 @@ public class MusicPlayerFragment extends Fragment {
                     primaryPlaylistTitle = candidate.playlistTitle;
                 }
             }
-
             if (batchTracks.size() >= OFFLINE_AUTO_BATCH_TARGET_TRACKS) {
                 break;
             }
         }
-
         if (batchTracks.isEmpty() || TextUtils.isEmpty(primaryPlaylistId)) {
             return null;
         }
-
         return new PendingOfflineBatchCandidate(
                 primaryPlaylistId,
                 primaryPlaylistTitle,
@@ -5782,24 +5009,20 @@ public class MusicPlayerFragment extends Fragment {
                 batchTracks
         );
     }
-
     private boolean enqueueOfflineAutoBatchDownloadInternal(@NonNull PendingOfflineBatchCandidate candidate) {
         if (!isAdded() || candidate.tracks.isEmpty()) {
             return false;
         }
-
         ArrayList<String> ids = new ArrayList<>(candidate.tracks.size());
         ArrayList<String> titles = new ArrayList<>(candidate.tracks.size());
         ArrayList<String> artists = new ArrayList<>(candidate.tracks.size());
         ArrayList<String> durations = new ArrayList<>(candidate.tracks.size());
-
         for (PendingOfflineTrackCandidate track : candidate.tracks) {
             ids.add(track.videoId);
             titles.add(track.title);
             artists.add(track.artist);
             durations.add(track.duration);
         }
-
         Data input = new Data.Builder()
                 .putString(OfflinePlaylistDownloadWorker.INPUT_PLAYLIST_ID, candidate.primaryPlaylistId)
                 .putString(OfflinePlaylistDownloadWorker.INPUT_PLAYLIST_TITLE, candidate.primaryPlaylistTitle)
@@ -5812,29 +5035,24 @@ public class MusicPlayerFragment extends Fragment {
                 .putBoolean(OfflinePlaylistDownloadWorker.INPUT_USER_INITIATED, false)
                 .putBoolean(OfflinePlaylistDownloadWorker.INPUT_MANUAL_QUEUE, false)
                 .build();
-
         SharedPreferences prefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE);
         boolean allowMobileData = prefs.getBoolean(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false);
         Constraints constraints = new Constraints.Builder()
                 .setRequiredNetworkType(allowMobileData ? NetworkType.CONNECTED : NetworkType.UNMETERED)
                 .build();
-
         OneTimeWorkRequest.Builder requestBuilder = new OneTimeWorkRequest.Builder(OfflinePlaylistDownloadWorker.class)
                 .setInputData(input)
                 .setConstraints(constraints)
                 .addTag(OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME);
-
         for (String playlistId : candidate.playlistIds) {
             if (TextUtils.isEmpty(playlistId)) {
                 continue;
             }
             requestBuilder.addTag(OFFLINE_DOWNLOAD_UNIQUE_PREFIX + playlistId);
         }
-
         enqueueOfflineDownloadUniqueWork(requestBuilder.build());
         return true;
     }
-
     private int countPendingOfflineTracks(
             @NonNull Context appContext,
             @NonNull List<CachedPlaylistTrack> cachedTracks
@@ -5842,7 +5060,6 @@ public class MusicPlayerFragment extends Fragment {
         int pending = 0;
         HashSet<String> seen = new HashSet<>();
         Set<String> restrictedIds = OfflineRestrictionStore.getRestrictedVideoIds(appContext);
-
         for (CachedPlaylistTrack track : cachedTracks) {
             if (track == null || TextUtils.isEmpty(track.videoId)) {
                 continue;
@@ -5857,10 +5074,8 @@ public class MusicPlayerFragment extends Fragment {
                 pending++;
             }
         }
-
         return pending;
     }
-
     private boolean isPlaylistFullyOffline(@NonNull String playlistId) {
         Context context = getContext();
         if (context == null || TextUtils.isEmpty(playlistId)) {
@@ -5868,17 +5083,14 @@ public class MusicPlayerFragment extends Fragment {
         }
         return isPlaylistFullyOffline(context.getApplicationContext(), playlistId);
     }
-
     private boolean isPlaylistFullyOffline(@NonNull Context appContext, @NonNull String playlistId) {
         if (TextUtils.isEmpty(playlistId)) {
             return false;
         }
-
         ArrayList<CachedPlaylistTrack> cachedTracks = loadCachedPlaylistTracksForOffline(appContext, playlistId);
         if (cachedTracks.isEmpty()) {
             return isPersistedPlaylistOfflineComplete(appContext, playlistId);
         }
-
         HashSet<String> seen = new HashSet<>();
         Set<String> restrictedIds = OfflineRestrictionStore.getRestrictedVideoIds(appContext);
         int eligibleCount = 0;
@@ -5896,26 +5108,21 @@ public class MusicPlayerFragment extends Fragment {
                 offlineCount++;
             }
         }
-
         if (eligibleCount <= 0) {
             persistPlaylistOfflineComplete(appContext, playlistId, true);
             return true;
         }
-
         boolean complete = offlineCount >= eligibleCount;
         persistPlaylistOfflineComplete(appContext, playlistId, complete);
         return complete;
     }
-
     private void persistPlaylistOfflineComplete(@NonNull String playlistId, boolean complete) {
         Context context = getContext();
         if (context == null || TextUtils.isEmpty(playlistId)) {
             return;
         }
-
         persistPlaylistOfflineComplete(context.getApplicationContext(), playlistId, complete);
     }
-
     private void persistPlaylistOfflineComplete(
             @NonNull Context context,
             @NonNull String playlistId,
@@ -5924,21 +5131,17 @@ public class MusicPlayerFragment extends Fragment {
         if (TextUtils.isEmpty(playlistId)) {
             return;
         }
-
         getCachePrefs(context).edit()
                 .putBoolean(PREF_PLAYLIST_OFFLINE_COMPLETE_PREFIX + playlistId, complete)
                 .apply();
     }
-
     private boolean isPersistedPlaylistOfflineComplete(@NonNull String playlistId) {
         Context context = getContext();
         if (context == null || TextUtils.isEmpty(playlistId)) {
             return false;
         }
-
         return isPersistedPlaylistOfflineComplete(context.getApplicationContext(), playlistId);
     }
-
     private boolean isPersistedPlaylistOfflineComplete(
             @NonNull Context context,
             @NonNull String playlistId
@@ -5946,31 +5149,25 @@ public class MusicPlayerFragment extends Fragment {
         if (TextUtils.isEmpty(playlistId)) {
             return false;
         }
-
         return getCachePrefs(context).getBoolean(PREF_PLAYLIST_OFFLINE_COMPLETE_PREFIX + playlistId, false);
     }
-
     private void persistPlaylistOfflineAutoEnabled(@NonNull String playlistId, boolean enabled) {
         Context context = getContext();
         if (context == null || TextUtils.isEmpty(playlistId)) {
             return;
         }
-
         getCachePrefs(context.getApplicationContext()).edit()
                 .putBoolean(PREF_PLAYLIST_OFFLINE_AUTO_PREFIX + playlistId, enabled)
                 .apply();
     }
-
     private boolean isPersistedPlaylistOfflineAutoEnabled(@NonNull String playlistId) {
         Context context = getContext();
         if (context == null || TextUtils.isEmpty(playlistId)) {
             return false;
         }
-
         return getCachePrefs(context.getApplicationContext())
                 .getBoolean(PREF_PLAYLIST_OFFLINE_AUTO_PREFIX + playlistId, false);
     }
-
     @NonNull
     private ArrayList<CachedPlaylistTrack> loadCachedPlaylistTracksForOffline(@NonNull String playlistId) {
         Context context = getContext();
@@ -5979,7 +5176,6 @@ public class MusicPlayerFragment extends Fragment {
         }
         return loadCachedPlaylistTracksForOffline(context.getApplicationContext(), playlistId);
     }
-
     @NonNull
     private ArrayList<CachedPlaylistTrack> loadCachedPlaylistTracksForOffline(
             @NonNull Context context,
@@ -5989,7 +5185,6 @@ public class MusicPlayerFragment extends Fragment {
         if (TextUtils.isEmpty(playlistId)) {
             return result;
         }
-
         SharedPreferences prefs = getCachePrefs(context);
         long updatedAt = prefs.getLong(PREF_TRACKS_UPDATED_AT_PREFIX + playlistId, 0L);
         if (updatedAt > 0L) {
@@ -6001,7 +5196,6 @@ public class MusicPlayerFragment extends Fragment {
                 }
             }
         }
-
         String raw = prefs.getString(PREF_TRACKS_DATA_PREFIX + playlistId, "");
         if (TextUtils.isEmpty(raw)) {
             synchronized (cachedPlaylistTracksLock) {
@@ -6010,7 +5204,6 @@ public class MusicPlayerFragment extends Fragment {
             }
             return result;
         }
-
         try {
             JSONArray array = new JSONArray(raw);
             for (int i = 0; i < array.length(); i++) {
@@ -6018,7 +5211,6 @@ public class MusicPlayerFragment extends Fragment {
                 if (obj == null) {
                     continue;
                 }
-
                 String videoId = obj.optString("videoId", "").trim();
                 String title = obj.optString("title", "").trim();
                 String artist = obj.optString("artist", "").trim();
@@ -6027,60 +5219,48 @@ public class MusicPlayerFragment extends Fragment {
                 if (TextUtils.isEmpty(videoId)) {
                     continue;
                 }
-
                 result.add(new CachedPlaylistTrack(videoId, title, artist, duration, imageUrl));
             }
         } catch (Exception ignored) {
             return new ArrayList<>();
         }
-
         synchronized (cachedPlaylistTracksLock) {
             cachedPlaylistTracksById.put(playlistId, new ArrayList<>(result));
             cachedPlaylistTracksUpdatedAtById.put(playlistId, updatedAt);
         }
-
         return result;
     }
-
     private int withAlpha(int color, float alpha) {
         float clamped = Math.max(0f, Math.min(1f, alpha));
         int alphaInt = Math.round(255f * clamped);
         return (color & 0x00FFFFFF) | (alphaInt << 24);
     }
-
     private int dp(int value) {
         if (!isAdded()) {
             return value;
         }
         return Math.round(requireContext().getResources().getDisplayMetrics().density * value);
     }
-
     private void launchSearchActivity() {
         if (getActivity() instanceof MainActivity) {
             ((MainActivity) getActivity()).showModuleLoadingOverlay();
         }
-
         Intent intent = new Intent(requireContext(), SearchActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION);
-        
         androidx.core.app.ActivityOptionsCompat options = 
             androidx.core.app.ActivityOptionsCompat.makeCustomAnimation(
                 requireContext(), R.anim.fade_in, R.anim.fade_out);
-        
         searchActivityLauncher.launch(intent, options);
     }
-
     private void handleSearchActivityResult(int resultCode, @NonNull Intent data) {
         if (resultCode == SearchActivity.RESULT_TRACK_SELECTED || resultCode == SearchActivity.RESULT_PLAYLIST_SELECTED) {
             playTrackFromSearchInternal(data);
         }
     }
-
     public void playTrackFromSearch(@NonNull Intent data) {
         if (!isAdded()) return;
         playTrackFromSearchInternal(data);
     }
-
     private void playTrackFromSearchInternal(@NonNull Intent data) {
         String resultType = data.getStringExtra(SearchActivity.EXTRA_RESULT_TYPE);
         String videoId = data.getStringExtra(SearchActivity.EXTRA_RESULT_VIDEO_ID);
@@ -6089,10 +5269,8 @@ public class MusicPlayerFragment extends Fragment {
         String subtitle = data.getStringExtra(SearchActivity.EXTRA_RESULT_SUBTITLE);
         String thumbnailUrl = data.getStringExtra(SearchActivity.EXTRA_RESULT_THUMBNAIL);
         String queueJson = data.getStringExtra(SearchActivity.EXTRA_RESULT_TRACKS_JSON);
-
         YouTubeMusicService.TrackResult track = new YouTubeMusicService.TrackResult(
                 resultType, contentId, title, subtitle, thumbnailUrl);
-        
         // Populate tracks for queue finding
         tracks.clear();
         featuredTrack = track;
@@ -6113,75 +5291,59 @@ public class MusicPlayerFragment extends Fragment {
             }
         } catch (Exception ignored) {
         }
-
         openTrack(track, true);
     }
-
     public void playNextFromSearch(@NonNull Intent data) {
         String videoId = data.getStringExtra(SearchActivity.EXTRA_RESULT_VIDEO_ID);
         String title = data.getStringExtra(SearchActivity.EXTRA_RESULT_TITLE);
         String subtitle = data.getStringExtra(SearchActivity.EXTRA_RESULT_SUBTITLE);
         String thumbnailUrl = data.getStringExtra(SearchActivity.EXTRA_RESULT_THUMBNAIL);
-        
         SongPlayerFragment player = findSongPlayerFragment();
         if (player != null && player.isAdded()) {
             player.externalInsertNext(videoId, title, subtitle, "", thumbnailUrl);
-            android.widget.Toast.makeText(requireContext(), "Se reproducirá a continuación", android.widget.Toast.LENGTH_SHORT).show();
+            android.widget.Toast.makeText(requireContext(), "Se reproducirÃƒÂ¡ a continuaciÃƒÂ³n", android.widget.Toast.LENGTH_SHORT).show();
         }
     }
-
     public void addToQueueFromSearch(@NonNull Intent data) {
         String videoId = data.getStringExtra(SearchActivity.EXTRA_RESULT_VIDEO_ID);
         String title = data.getStringExtra(SearchActivity.EXTRA_RESULT_TITLE);
         String subtitle = data.getStringExtra(SearchActivity.EXTRA_RESULT_SUBTITLE);
         String thumbnailUrl = data.getStringExtra(SearchActivity.EXTRA_RESULT_THUMBNAIL);
-
         SongPlayerFragment player = findSongPlayerFragment();
         if (player != null && player.isAdded()) {
             player.externalEnqueue(videoId, title, subtitle, "", thumbnailUrl);
             android.widget.Toast.makeText(requireContext(), "Agregado a la fila", android.widget.Toast.LENGTH_SHORT).show();
         }
     }
-
-
     private void openTrack(@NonNull YouTubeMusicService.TrackResult track) {
         openTrack(track, false);
     }
-
     private void openTrack(@NonNull YouTubeMusicService.TrackResult track, boolean startInMiniMode) {
-
         if ("playlist".equals(track.resultType)) {
             openPlaylistDetail(track);
             return;
         }
-
         if (track.isVideo()) {
             openTrackInIntegratedPlayer(track, startInMiniMode);
             return;
         }
-
         try {
             Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(track.getWatchUrl()));
             startActivity(intent);
         } catch (Exception ignored) {
             if (isAdded()) {
-                
             }
         }
     }
-
     private boolean shouldUseRadioQueueForTrack(@NonNull YouTubeMusicService.TrackResult selectedTrack) {
         if (!selectedTrack.isVideo()) {
             return false;
         }
-
         if (activeScreen == ScreenMode.SEARCH) {
             return true;
         }
-
         return activeScreen == ScreenMode.LIBRARY && !TextUtils.isEmpty(getLibraryInlineQuery());
     }
-
     @NonNull
     private ArrayList<YouTubeMusicService.TrackResult> buildPlaybackQueueCandidates(
             @NonNull YouTubeMusicService.TrackResult selectedTrack,
@@ -6189,12 +5351,10 @@ public class MusicPlayerFragment extends Fragment {
     ) {
         ArrayList<YouTubeMusicService.TrackResult> queue = new ArrayList<>();
         HashSet<String> seenVideoIds = new HashSet<>();
-
         if (!TextUtils.isEmpty(selectedTrack.videoId)) {
             queue.add(selectedTrack);
             seenVideoIds.add(selectedTrack.videoId);
         }
-
         if (featuredTrack != null
                 && featuredTrack.isVideo()
                 && !TextUtils.isEmpty(featuredTrack.videoId)
@@ -6202,7 +5362,6 @@ public class MusicPlayerFragment extends Fragment {
             queue.add(featuredTrack);
             seenVideoIds.add(featuredTrack.videoId);
         }
-
         for (YouTubeMusicService.TrackResult item : tracks) {
             if (item == null || !item.isVideo() || TextUtils.isEmpty(item.videoId)) {
                 continue;
@@ -6213,11 +5372,9 @@ public class MusicPlayerFragment extends Fragment {
             queue.add(item);
             seenVideoIds.add(item.videoId);
         }
-
         if (!radioMode || queue.size() <= 2) {
             return queue;
         }
-
         YouTubeMusicService.TrackResult anchor = queue.get(0);
         ArrayList<YouTubeMusicService.TrackResult> tail = new ArrayList<>(queue.subList(1, queue.size()));
         tail.sort((left, right) -> {
@@ -6230,13 +5387,11 @@ public class MusicPlayerFragment extends Fragment {
             String rightTitle = normalizeForFilter(right.title);
             return leftTitle.compareTo(rightTitle);
         });
-
         ArrayList<YouTubeMusicService.TrackResult> radioQueue = new ArrayList<>(queue.size());
         radioQueue.add(anchor);
         radioQueue.addAll(tail);
         return radioQueue;
     }
-
     private int computeRadioQueueScore(
             @NonNull YouTubeMusicService.TrackResult anchor,
             @NonNull YouTubeMusicService.TrackResult candidate
@@ -6244,17 +5399,14 @@ public class MusicPlayerFragment extends Fragment {
         if (TextUtils.equals(anchor.videoId, candidate.videoId)) {
             return Integer.MAX_VALUE;
         }
-
         String anchorTitle = normalizeForFilter(anchor.title);
         String anchorSubtitle = normalizeForFilter(anchor.subtitle);
         String candidateTitle = normalizeForFilter(candidate.title);
         String candidateSubtitle = normalizeForFilter(candidate.subtitle);
-
         int score = 0;
         if (!anchorSubtitle.isEmpty() && candidateSubtitle.contains(anchorSubtitle)) {
             score += 240;
         }
-
         String[] tokens = extractSearchTokens((anchorTitle + " " + anchorSubtitle).trim());
         for (String token : tokens) {
             if (token.length() < 3) {
@@ -6267,7 +5419,6 @@ public class MusicPlayerFragment extends Fragment {
                 score += 40;
             }
         }
-
         if (candidateTitle.startsWith(anchorTitle) || anchorTitle.startsWith(candidateTitle)) {
             score += 110;
         }
@@ -6276,26 +5427,20 @@ public class MusicPlayerFragment extends Fragment {
         }
         return score;
     }
-
     private void openTrackInIntegratedPlayer(@NonNull YouTubeMusicService.TrackResult selectedTrack, boolean startInMiniMode) {
         if (!isAdded()) {
             return;
         }
-
         if (TextUtils.isEmpty(selectedTrack.videoId)) {
-            
             return;
         }
-
         ArrayList<String> ids = new ArrayList<>();
         ArrayList<String> titles = new ArrayList<>();
         ArrayList<String> artists = new ArrayList<>();
         ArrayList<String> durations = new ArrayList<>();
         ArrayList<String> images = new ArrayList<>();
-
         boolean radioMode = shouldUseRadioQueueForTrack(selectedTrack);
         ArrayList<YouTubeMusicService.TrackResult> queueCandidates = buildPlaybackQueueCandidates(selectedTrack, radioMode);
-
         int selectedIndex = -1;
         for (YouTubeMusicService.TrackResult item : queueCandidates) {
             ids.add(item.videoId);
@@ -6303,12 +5448,10 @@ public class MusicPlayerFragment extends Fragment {
             artists.add(item.subtitle == null ? "" : item.subtitle);
             durations.add("--:--");
             images.add(item.thumbnailUrl == null ? "" : item.thumbnailUrl);
-
             if (selectedIndex < 0 && TextUtils.equals(item.videoId, selectedTrack.videoId)) {
                 selectedIndex = ids.size() - 1;
             }
         }
-
         if (selectedIndex < 0) {
             // El "mejor resultado" no vive en `tracks` (la lista secundaria),
             // por eso lo inyectamos al inicio para reproducir exactamente ese.
@@ -6319,7 +5462,6 @@ public class MusicPlayerFragment extends Fragment {
             images.add(0, selectedTrack.thumbnailUrl == null ? "" : selectedTrack.thumbnailUrl);
             selectedIndex = 0;
         }
-
         // Fade out mini-player to match player entry animation
         if (llMiniPlayer != null && !startInMiniMode) {
             llMiniPlayer.animate().alpha(0f).setDuration(200).withEndAction(() -> {
@@ -6327,12 +5469,10 @@ public class MusicPlayerFragment extends Fragment {
                 llMiniPlayer.setAlpha(1f);
             }).start();
         }
-
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
         if (existingPlayer != null && existingPlayer.isAdded()) {
             existingPlayer.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
             existingPlayer.externalReplaceQueueFromStart(ids, titles, artists, durations, images, selectedIndex, true);
-
             if (!startInMiniMode) {
                 getParentFragmentManager()
                         .beginTransaction()
@@ -6348,7 +5488,6 @@ public class MusicPlayerFragment extends Fragment {
             if (selectedIndex >= 0 && selectedIndex < ids.size()) {
                 clearPersistedPositionForVideoId(ids.get(selectedIndex));
             }
-
             SongPlayerFragment playerFragment = SongPlayerFragment.newInstance(
                     ids,
                     titles,
@@ -6359,41 +5498,33 @@ public class MusicPlayerFragment extends Fragment {
                     true
             );
             playerFragment.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
-
             final SongPlayerFragment newPlayerForAnim = playerFragment;
             androidx.fragment.app.FragmentTransaction transaction = getParentFragmentManager()
                     .beginTransaction()
                     .setReorderingAllowed(true)
                     .add(R.id.playerContainer, playerFragment, "song_player");
-                    
             if (startInMiniMode) {
                 transaction.hide(playerFragment);
                 transaction.commit();
             } else {
                 transaction.runOnCommit(newPlayerForAnim::externalAnimateEnterSlide).commit();
             }
-            
             if (startInMiniMode) {
                 updateMiniPlayerUi();
             }
         }
-
         invalidateMiniSnapshotCache();
         // Don't update mini-player UI immediately if not in mini mode - keep it hidden while full player is visible
         // updateMiniPlayerUi() will be called when returning from player
     }
-
     private void openPlaylistDetail(@NonNull YouTubeMusicService.TrackResult track) {
         if (!isAdded()) {
             return;
         }
-
         if (getParentFragmentManager().isStateSaved()) {
             return;
         }
-
         String accessTokenForDetail = resolveAccessTokenForPlaylistDetail();
-
         PlaylistDetailFragment detailFragment = PlaylistDetailFragment.newInstance(
                 track.contentId,
                 track.title,
@@ -6401,41 +5532,33 @@ public class MusicPlayerFragment extends Fragment {
                 track.thumbnailUrl,
             accessTokenForDetail
         );
-
         androidx.fragment.app.Fragment existingDetail = getParentFragmentManager().findFragmentByTag("playlist_detail");
-
         androidx.fragment.app.FragmentTransaction transaction = getParentFragmentManager()
             .beginTransaction()
                 .setReorderingAllowed(true)
             ;
-
         if (existingDetail != null && existingDetail.isAdded() && existingDetail != this) {
             transaction.remove(existingDetail);
         }
-
         transaction
             .add(R.id.fragmentContainer, detailFragment, "playlist_detail")
             .addToBackStack("playlist_detail")
             .commit();
     }
-
     @NonNull
     private String resolveAccessTokenForPlaylistDetail() {
         String inMemory = youtubeAccessToken == null ? "" : youtubeAccessToken.trim();
         if (!TextUtils.isEmpty(inMemory)) {
             return inMemory;
         }
-
         String accountKey = resolveAccountKey();
         if (hasValidCachedToken(accountKey)) {
             youtubeAccessToken = cachedYoutubeAccessToken;
             return cachedYoutubeAccessToken;
         }
-
         if (!isAdded()) {
             return "";
         }
-
         SharedPreferences prefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
         String persisted = prefs.getString(PREF_LAST_YOUTUBE_ACCESS_TOKEN, "");
         if (persisted == null) {
@@ -6447,28 +5570,23 @@ public class MusicPlayerFragment extends Fragment {
         }
         return trimmed;
     }
-
     private boolean isNetworkAvailable() {
         if (!isAdded()) {
             return false;
         }
-
         ConnectivityManager cm = ContextCompat.getSystemService(requireContext(), ConnectivityManager.class);
         if (cm == null) {
             return false;
         }
-
         NetworkCapabilities capabilities = cm.getNetworkCapabilities(cm.getActiveNetwork());
         if (capabilities == null) {
             return false;
         }
-
         return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
                 || capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
                 || capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
                 || capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN);
     }
-
     private boolean isLikelyNetworkError(@NonNull String error) {
         String normalized = normalizeForFilter(error);
         return containsAny(normalized,
@@ -6481,14 +5599,12 @@ public class MusicPlayerFragment extends Fragment {
                 "connection reset",
                 "no address associated");
     }
-
     private void showCreatePlaylistDialog() {
         if (!isAdded()) return;
         android.widget.EditText input = new android.widget.EditText(requireContext());
         input.setHint("Nombre de la playlist");
         int padding = (int) (16 * getResources().getDisplayMetrics().density);
         input.setPadding(padding, padding, padding, padding);
-
         new com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
                 .setTitle("Crear nueva playlist")
                 .setView(input)
@@ -6507,7 +5623,6 @@ public class MusicPlayerFragment extends Fragment {
                 .setNegativeButton("Cancelar", null)
                 .show();
     }
-
     @Override
     public void onDestroyView() {
         if (clearSearchBackPressedCallback != null) {
@@ -6525,7 +5640,6 @@ public class MusicPlayerFragment extends Fragment {
         normalizedFilterCache.clear();
         super.onDestroyView();
     }
-
     @Override
     public void onDestroy() {
         authExecutor.shutdownNow();
@@ -6533,7 +5647,6 @@ public class MusicPlayerFragment extends Fragment {
         offlinePrefetchExecutor.shutdownNow();
         super.onDestroy();
     }
-
     private static final class PendingOfflinePlaylistCandidate {
         @NonNull
         final String playlistId;
@@ -6542,7 +5655,6 @@ public class MusicPlayerFragment extends Fragment {
         final int pendingCount;
         @NonNull
         final List<CachedPlaylistTrack> cachedTracks;
-
         private PendingOfflinePlaylistCandidate(
                 @NonNull String playlistId,
                 @NonNull String playlistTitle,
@@ -6555,7 +5667,6 @@ public class MusicPlayerFragment extends Fragment {
             this.cachedTracks = cachedTracks;
         }
     }
-
     private static final class PendingOfflineTrackCandidate {
         @NonNull
         final String videoId;
@@ -6565,7 +5676,6 @@ public class MusicPlayerFragment extends Fragment {
         final String artist;
         @NonNull
         final String duration;
-
         private PendingOfflineTrackCandidate(
                 @NonNull String videoId,
                 @Nullable String title,
@@ -6578,7 +5688,6 @@ public class MusicPlayerFragment extends Fragment {
             this.duration = duration == null ? "" : duration;
         }
     }
-
     private static final class PendingOfflineBatchCandidate {
         @NonNull
         final String primaryPlaylistId;
@@ -6588,7 +5697,6 @@ public class MusicPlayerFragment extends Fragment {
         final List<String> playlistIds;
         @NonNull
         final List<PendingOfflineTrackCandidate> tracks;
-
         private PendingOfflineBatchCandidate(
                 @NonNull String primaryPlaylistId,
                 @NonNull String primaryPlaylistTitle,
@@ -6601,13 +5709,10 @@ public class MusicPlayerFragment extends Fragment {
             this.tracks = tracks;
         }
     }
-
     private final class MusicResultsAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
-
         private static final int VIEW_TYPE_LIST = 0;
         private static final int VIEW_TYPE_SEARCH = 2;
         private static final int VIEW_TYPE_CREATE_PLAYLIST = 3;
-
         private final List<YouTubeMusicService.TrackResult> data = new ArrayList<>();
         private final OnLibraryTrackClick onTrackClick;
         private final OnLibraryTrackMoreClick onTrackMoreClick;
@@ -6615,7 +5720,6 @@ public class MusicPlayerFragment extends Fragment {
         private final Set<String> playlistOfflineRefreshInFlight = new HashSet<>();
         private long playlistOfflineStateGeneration;
         private boolean searchMode;
-
         MusicResultsAdapter(
                 @NonNull OnLibraryTrackClick onTrackClick,
                 @NonNull OnLibraryTrackMoreClick onTrackMoreClick
@@ -6624,28 +5728,23 @@ public class MusicPlayerFragment extends Fragment {
             this.onTrackMoreClick = onTrackMoreClick;
             setHasStableIds(true);
         }
-
         void invalidatePlaylistOfflineState(@Nullable String playlistId) {
             if (TextUtils.isEmpty(playlistId)) {
                 playlistOfflineStateGeneration++;
                 playlistOfflineCompleteCache.clear();
                 playlistOfflineRefreshInFlight.clear();
-
                 long generation = playlistOfflineStateGeneration;
                 for (YouTubeMusicService.TrackResult item : data) {
                     if (!"playlist".equals(item.resultType)) {
                         continue;
                     }
-
                     String candidateId = item.contentId == null ? "" : item.contentId.trim();
                     if (candidateId.isEmpty()) {
                         continue;
                     }
-
                     playlistOfflineCompleteCache.put(candidateId, isPersistedPlaylistOfflineComplete(candidateId));
                     requestPlaylistOfflineStateRefreshAsync(candidateId, generation);
                 }
-
                 if (!data.isEmpty()) {
                     notifyItemRangeChanged(0, data.size());
                 }
@@ -6658,14 +5757,11 @@ public class MusicPlayerFragment extends Fragment {
                 }
             }
         }
-
         void notifyPlayingPlaylistChanged(@Nullable String previousPlaylistId, @Nullable String currentPlaylistId) {
             String previous = previousPlaylistId == null ? "" : previousPlaylistId.trim();
             String current = currentPlaylistId == null ? "" : currentPlaylistId.trim();
-
             int previousPosition = findPlaylistPositionById(previous);
             int currentPosition = findPlaylistPositionById(current);
-
             if (previousPosition >= 0) {
                 notifyItemChanged(previousPosition);
             }
@@ -6673,7 +5769,6 @@ public class MusicPlayerFragment extends Fragment {
                 notifyItemChanged(currentPosition);
             }
         }
-
         @Override
         public long getItemId(int position) {
             if (searchMode) {
@@ -6687,7 +5782,6 @@ public class MusicPlayerFragment extends Fragment {
                 return (item.resultType + "|" + item.contentId + "|" + item.title).hashCode();
             }
         }
-
         void setSearchMode(boolean searchMode) {
             if (this.searchMode == searchMode) {
                 return;
@@ -6695,27 +5789,22 @@ public class MusicPlayerFragment extends Fragment {
             this.searchMode = searchMode;
             notifyDataSetChanged();
         }
-
         void submitResults(@NonNull List<YouTubeMusicService.TrackResult> newData) {
             List<YouTubeMusicService.TrackResult> previous = new ArrayList<>(data);
             List<YouTubeMusicService.TrackResult> incoming = new ArrayList<>(newData);
-
             DiffUtil.DiffResult diffResult = DiffUtil.calculateDiff(new DiffUtil.Callback() {
                 @Override
                 public int getOldListSize() {
                     return previous.size();
                 }
-
                 @Override
                 public int getNewListSize() {
                     return incoming.size();
                 }
-
                 @Override
                 public boolean areItemsTheSame(int oldItemPosition, int newItemPosition) {
                     YouTubeMusicService.TrackResult oldItem = previous.get(oldItemPosition);
                     YouTubeMusicService.TrackResult newItem = incoming.get(newItemPosition);
-
                     if (!TextUtils.isEmpty(oldItem.contentId) && !TextUtils.isEmpty(newItem.contentId)) {
                         return TextUtils.equals(oldItem.contentId, newItem.contentId)
                                 && TextUtils.equals(oldItem.resultType, newItem.resultType);
@@ -6723,7 +5812,6 @@ public class MusicPlayerFragment extends Fragment {
                     return TextUtils.equals(oldItem.title, newItem.title)
                             && TextUtils.equals(oldItem.subtitle, newItem.subtitle);
                 }
-
                 @Override
                 public boolean areContentsTheSame(int oldItemPosition, int newItemPosition) {
                     YouTubeMusicService.TrackResult oldItem = previous.get(oldItemPosition);
@@ -6735,13 +5823,11 @@ public class MusicPlayerFragment extends Fragment {
                             && TextUtils.equals(oldItem.thumbnailUrl, newItem.thumbnailUrl);
                 }
             });
-
             data.clear();
             data.addAll(incoming);
             playlistOfflineStateGeneration++;
             playlistOfflineCompleteCache.clear();
             playlistOfflineRefreshInFlight.clear();
-
             for (YouTubeMusicService.TrackResult item : incoming) {
                 if (!"playlist".equals(item.resultType)) {
                     continue;
@@ -6753,7 +5839,6 @@ public class MusicPlayerFragment extends Fragment {
                 playlistOfflineCompleteCache.put(playlistId, isPersistedPlaylistOfflineComplete(playlistId));
                 requestPlaylistOfflineStateRefreshAsync(playlistId, playlistOfflineStateGeneration);
             }
-
             if (searchMode) {
                 diffResult.dispatchUpdatesTo(this);
             } else {
@@ -6761,7 +5846,6 @@ public class MusicPlayerFragment extends Fragment {
                 notifyDataSetChanged(); 
             }
         }
-
         @NonNull
         @Override
         public RecyclerView.ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
@@ -6778,7 +5862,6 @@ public class MusicPlayerFragment extends Fragment {
             View view = LayoutInflater.from(parent.getContext()).inflate(layoutRes, parent, false);
             return new TrackViewHolder(view);
         }
-
         @Override
         public int getItemViewType(int position) {
             if (searchMode) {
@@ -6789,7 +5872,6 @@ public class MusicPlayerFragment extends Fragment {
             }
             return VIEW_TYPE_LIST;
         }
-
         @Override
         public void onBindViewHolder(@NonNull RecyclerView.ViewHolder genericHolder, int position) {
             int viewType = getItemViewType(position);
@@ -6807,24 +5889,20 @@ public class MusicPlayerFragment extends Fragment {
                 }
                 return;
             }
-
             TrackViewHolder holder = (TrackViewHolder) genericHolder;
             YouTubeMusicService.TrackResult item = data.get(position);
             if (isTv) {
                 holder.itemView.setFocusable(true);
                 holder.itemView.setNextFocusLeftId(R.id.btnTvNext);
             }
-
             if (searchMode) {
                 bindSearchRow(holder, item, position);
                 return;
             }
-
             boolean isFavoritesPlaylistStyle = isFavoritesPlaylistStyle(item);
             boolean isLikedPlaylistStyle = !isFavoritesPlaylistStyle && isLikedPlaylistStyle(item);
                 boolean useFavoritesSpecialStyle = isFavoritesPlaylistStyle
                     && TextUtils.isEmpty(item.thumbnailUrl);
-
             if (isFavoritesPlaylistStyle) {
                 holder.tvTrackTitle.setText(FavoritesPlaylistStore.PLAYLIST_TITLE);
                 holder.tvTrackSubtitle.setText(TextUtils.isEmpty(item.subtitle)
@@ -6833,7 +5911,7 @@ public class MusicPlayerFragment extends Fragment {
             } else if (isLikedPlaylistStyle) {
                 holder.tvTrackTitle.setText("Musica que te gusto");
                 if (TextUtils.isEmpty(item.subtitle)) {
-                    holder.tvTrackSubtitle.setText("Playlist autogenerada • 0 canciones");
+                    holder.tvTrackSubtitle.setText("Playlist autogenerada Ã¢â‚¬Â¢ 0 canciones");
                 } else {
                     holder.tvTrackSubtitle.setText(item.subtitle);
                 }
@@ -6845,42 +5923,34 @@ public class MusicPlayerFragment extends Fragment {
                     holder.tvTrackSubtitle.setText(item.subtitle);
                 }
             }
-
             if (TextUtils.isEmpty(item.subtitle) && !isLikedPlaylistStyle) {
                 holder.tvTrackSubtitle.setText("Playlist");
             }
-
             boolean specialPlaylistStyle = isLikedPlaylistStyle || useFavoritesSpecialStyle;
             holder.vLikedBackground.setVisibility(specialPlaylistStyle ? View.VISIBLE : View.GONE);
             holder.ivLikedIcon.setVisibility(specialPlaylistStyle ? View.VISIBLE : View.GONE);
             holder.ivTrackThumb.setVisibility(specialPlaylistStyle ? View.GONE : View.VISIBLE);
-
             if (specialPlaylistStyle) {
                 holder.ivLikedIcon.setImageResource(useFavoritesSpecialStyle
                         ? R.drawable.ic_favorite_star
                         : R.drawable.ic_thumb_up_liked);
                 holder.ivLikedIcon.setColorFilter(Color.WHITE);
             }
-
             if (!specialPlaylistStyle) {
                 loadArtworkInto(holder.ivTrackThumb, item.thumbnailUrl);
             }
-
             holder.vTrackDivider.setVisibility(position == getItemCount() - 1 ? View.GONE : View.VISIBLE);
-
             boolean isPlaylistItem = "playlist".equals(item.resultType);
             holder.ivTrackMore.setVisibility(isPlaylistItem ? View.VISIBLE : View.GONE);
             holder.ivPlaylistOfflineAll.setVisibility(isPlaylistItem ? View.VISIBLE : View.GONE);
             if (holder.llNowPlayingOverlay != null) {
                 holder.llNowPlayingOverlay.setVisibility(View.GONE);
             }
-
             int defaultTitleColor = ContextCompat.getColor(holder.itemView.getContext(), R.color.text_primary);
             int defaultSubtitleColor = ContextCompat.getColor(holder.itemView.getContext(), R.color.text_secondary);
             int activeTitleColor = ContextCompat.getColor(holder.itemView.getContext(), R.color.stitch_blue_light);
             holder.tvTrackTitle.setTextColor(defaultTitleColor);
             holder.tvTrackSubtitle.setTextColor(defaultSubtitleColor);
-
             if (isPlaylistItem) {
                 String playlistId = item.contentId == null ? "" : item.contentId.trim();
                 boolean offlineAutoEnabled = false;
@@ -6895,7 +5965,6 @@ public class MusicPlayerFragment extends Fragment {
                     }
                     completeOffline = cachedState != null && cachedState;
                 }
-
                 if (offlineAutoEnabled) {
                     holder.ivPlaylistOfflineAll.setImageResource(R.drawable.ic_check_small);
                     holder.ivPlaylistOfflineAll.setBackgroundResource(completeOffline
@@ -6914,7 +5983,6 @@ public class MusicPlayerFragment extends Fragment {
                     ));
                     holder.ivPlaylistOfflineAll.setAlpha(0.85f);
                 }
-
                 if (isPlaylistCurrentlyPlaying(playlistId) && !specialPlaylistStyle) {
                     if (holder.llNowPlayingOverlay != null) {
                         holder.llNowPlayingOverlay.setVisibility(View.VISIBLE);
@@ -6933,7 +6001,6 @@ public class MusicPlayerFragment extends Fragment {
                         }
                     }
                 }
-
                 holder.ivTrackMore.setOnClickListener(v -> onTrackMoreClick.onTrackMoreClick(item, holder.ivTrackMore));
                 holder.itemView.setOnLongClickListener(v -> {
                     onTrackMoreClick.onTrackMoreClick(item, holder.itemView);
@@ -6943,9 +6010,7 @@ public class MusicPlayerFragment extends Fragment {
                 holder.ivTrackMore.setOnClickListener(null);
                 holder.itemView.setOnLongClickListener(null);
             }
-
             holder.itemView.setOnClickListener(v -> onTrackClick.onTrackClick(item));
-            
             if (SystemType.INSTANCE.isTv(holder.itemView.getContext())) {
                 holder.itemView.setOnFocusChangeListener((v, hasFocus) -> {
                     if (hasFocus) {
@@ -6956,7 +6021,6 @@ public class MusicPlayerFragment extends Fragment {
                 });
             }
         }
-
         private void bindSearchRow(
                 @NonNull TrackViewHolder holder,
                 @NonNull YouTubeMusicService.TrackResult item,
@@ -6966,32 +6030,25 @@ public class MusicPlayerFragment extends Fragment {
             holder.ivLikedIcon.setVisibility(View.GONE);
             holder.ivPlaylistOfflineAll.setVisibility(View.GONE);
             holder.ivTrackThumb.setVisibility(View.VISIBLE);
-            
             SongPlayerFragment songPlayer = findSongPlayerFragment();
             String currentVideoId = songPlayer != null ? songPlayer.getLoadedVideoId() : "";
             boolean isNowPlaying = !currentVideoId.isEmpty() && TextUtils.equals(currentVideoId, item.contentId);
             boolean isActuallyPlaying = isNowPlaying && songPlayer != null && songPlayer.isPlaying();
-
             if (holder.llNowPlayingOverlay != null) {
                 holder.llNowPlayingOverlay.setVisibility(isNowPlaying ? View.VISIBLE : View.GONE);
                 if (holder.animatedEq != null) {
                     holder.animatedEq.setAnimating(isActuallyPlaying);
                 }
             }
-            
             int activeTitleColor = ContextCompat.getColor(holder.itemView.getContext(), R.color.stitch_blue_light);
             int defaultTitleColor = ContextCompat.getColor(holder.itemView.getContext(), R.color.text_primary);
             holder.tvTrackTitle.setTextColor(isNowPlaying ? activeTitleColor : defaultTitleColor);
-
             String title = TextUtils.isEmpty(item.title) ? "Resultado" : item.title;
             holder.tvTrackTitle.setText(title);
-
             String typeLabel = searchTypeLabel(item);
             String subtitle = TextUtils.isEmpty(item.subtitle) ? typeLabel : item.subtitle;
             holder.tvTrackSubtitle.setText(subtitle);
-
             loadArtworkInto(holder.ivTrackThumb, item.thumbnailUrl);
-
             holder.vTrackDivider.setVisibility(position == getItemCount() - 1 ? View.GONE : View.VISIBLE);
             holder.ivTrackMore.setVisibility(View.VISIBLE);
             holder.ivTrackMore.setOnClickListener(v -> showSearchTrackOptions(item, holder.ivTrackMore));
@@ -7001,22 +6058,18 @@ public class MusicPlayerFragment extends Fragment {
             });
             holder.itemView.setOnClickListener(v -> onTrackClick.onTrackClick(item));
         }
-
         private boolean isLikedPlaylistStyle(@NonNull YouTubeMusicService.TrackResult item) {
             if (YouTubeMusicService.SPECIAL_LIKED_VIDEOS_ID.equals(item.contentId)) {
                 return true;
             }
-
             String normalizedTitle = item.title == null ? "" : item.title.toLowerCase(Locale.US);
             return normalizedTitle.contains("gusto")
                     || normalizedTitle.contains("liked")
                     || normalizedTitle.contains("me gusta");
         }
-
         private boolean isFavoritesPlaylistStyle(@NonNull YouTubeMusicService.TrackResult item) {
             return TextUtils.equals(FavoritesPlaylistStore.PLAYLIST_ID, item.contentId);
         }
-
         @Override
         public int getItemCount() {
             if (searchMode) {
@@ -7024,7 +6077,6 @@ public class MusicPlayerFragment extends Fragment {
             }
             return data.size() + 1;
         }
-
         private void requestPlaylistOfflineStateRefreshAsync(
                 @NonNull String playlistId,
                 long generation
@@ -7032,7 +6084,6 @@ public class MusicPlayerFragment extends Fragment {
             if (playlistId.isEmpty() || playlistOfflineRefreshInFlight.contains(playlistId)) {
                 return;
             }
-
             playlistOfflineRefreshInFlight.add(playlistId);
             offlineStateExecutor.execute(() -> {
                 boolean computed = isPlaylistFullyOffline(playlistId);
@@ -7041,12 +6092,10 @@ public class MusicPlayerFragment extends Fragment {
                     if (!isAdded() || generation != playlistOfflineStateGeneration) {
                         return;
                     }
-
                     Boolean previous = playlistOfflineCompleteCache.put(playlistId, computed);
                     if (previous != null && previous == computed) {
                         return;
                     }
-
                     int updatedPosition = findPlaylistPositionById(playlistId);
                     if (updatedPosition >= 0) {
                         notifyItemChanged(updatedPosition);
@@ -7056,7 +6105,6 @@ public class MusicPlayerFragment extends Fragment {
                 });
             });
         }
-
         private int findPlaylistPositionById(@NonNull String playlistId) {
             for (int i = 0; i < data.size(); i++) {
                 YouTubeMusicService.TrackResult item = data.get(i);
@@ -7069,13 +6117,11 @@ public class MusicPlayerFragment extends Fragment {
             }
             return -1;
         }
-
         private final class CreatePlaylistViewHolder extends RecyclerView.ViewHolder {
             CreatePlaylistViewHolder(@NonNull View itemView) {
                 super(itemView);
             }
         }
-
         final class TrackViewHolder extends RecyclerView.ViewHolder {
             final ImageView ivTrackThumb;
             final View vLikedBackground;
@@ -7087,7 +6133,6 @@ public class MusicPlayerFragment extends Fragment {
             final View vTrackDivider;
             final View llNowPlayingOverlay;
             final AnimatedEqualizerView animatedEq;
-
             TrackViewHolder(@NonNull View itemView) {
                 super(itemView);
                 ivTrackThumb = itemView.findViewById(R.id.ivTrackThumb);
@@ -7103,14 +6148,12 @@ public class MusicPlayerFragment extends Fragment {
             }
         }
     }
-
     private static final class CachedPlaylistTrack {
         final String videoId;
         final String title;
         final String artist;
         final String duration;
         final String imageUrl;
-
         CachedPlaylistTrack(
                 @NonNull String videoId,
                 @NonNull String title,
@@ -7134,4 +6177,3 @@ public class MusicPlayerFragment extends Fragment {
         return settingsPrefs.getBoolean(CloudSyncManager.KEY_AMOLED_MODE_ENABLED, false);
     }
 }
-

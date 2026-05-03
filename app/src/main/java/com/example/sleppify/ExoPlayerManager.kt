@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import androidx.annotation.NonNull
 import androidx.annotation.Nullable
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 
@@ -33,11 +35,18 @@ object ExoPlayerManager {
                 if (!initialized) {
                     try {
                         val appContext = context.applicationContext
+                        val audioAttributes = AudioAttributes.Builder()
+                            .setUsage(C.USAGE_MEDIA)
+                            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                            .build()
+
                         sharedExoPlayer = ExoPlayer.Builder(appContext)
                             .setLooper(android.os.Looper.getMainLooper())
+                            .setAudioAttributes(audioAttributes, true)
+                            .setHandleAudioBecomingNoisy(true)
                             .build()
                         initialized = true
-                        Log.d(TAG, "ExoPlayer compartido inicializado exitosamente con main thread handler")
+                        Log.d(TAG, "ExoPlayer compartido inicializado con AudioFocus y Noisy handling")
                     } catch (e: Exception) {
                         Log.e(TAG, "Falló la inicialización del ExoPlayer compartido", e)
                     }

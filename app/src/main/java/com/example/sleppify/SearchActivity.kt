@@ -115,6 +115,7 @@ class SearchActivity : AppCompatActivity() {
     private lateinit var llSearchRoot: View
     private lateinit var bottomNavigation: com.google.android.material.bottomnavigation.BottomNavigationView
     private var isPlayerVisible = false
+    private var pendingContainerHide: Runnable? = null
     // private lateinit var searchBottomSheetAdapter: SearchBottomSheetAdapter
     // private var sheetBottomSheetBehavior: BottomSheetBehavior<View>? = null
 
@@ -423,23 +424,24 @@ class SearchActivity : AppCompatActivity() {
                 launch(Dispatchers.Main) {
                     if (isFinishing || isDestroyed || requestId != latestSearchRequestId) return@launch
 
-                    setSearchLoadingState(false, "")
-                    revealModuleContent()
-                    rvSearchResults.alpha = 0f
-                    rvSearchResults.animate().alpha(1f).setDuration(250).start()
-                    hideKeyboard()
-
                     if (!append) allTracks.clear()
                     appendUniqueTracks(offlineResults)
 
                     // No pagination for offline search
                     nextSearchPageToken = ""
                     hasMoreSearchPages = false
-                    applyActiveFilter(query)
+                    applyActiveFilter(query, forceSort = true)
 
                     if (allTracks.isEmpty()) {
-                        tvSearchState.text = "No encontré resultados para: $query"
+                        setSearchLoadingState(false, "No encontré resultados para: $query")
+                    } else {
+                        setSearchLoadingState(false, "")
                     }
+                    
+                    revealModuleContent()
+                    rvSearchResults.alpha = 0f
+                    rvSearchResults.animate().alpha(1f).setDuration(250).start()
+                    hideKeyboard()
                 }
             }
             return
@@ -459,24 +461,29 @@ class SearchActivity : AppCompatActivity() {
                 
                 if (append) {
                     searchPaginationInFlight = false
-                } else {
-                    setSearchLoadingState(false, "")
-                    revealModuleContent()
-                    rvSearchResults.alpha = 0f
-                    rvSearchResults.animate().alpha(1f).setDuration(250).start()
-                    hideKeyboard()
                 }
-
-                if (!append) allTracks.clear()
+                if (!append) {
+                    allTracks.clear()
+                    // Also merge local playlist results into online search
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        val localResults = performOfflineSearch(query)
+                        launch(Dispatchers.Main) {
+                            if (isFinishing || isDestroyed) return@launch
+                            appendUniqueTracks(localResults)
+                            applyActiveFilter(query, forceSort = true)
+                        }
+                    }
+                }
                 appendUniqueTracks(pageResult.tracks)
                 
                 nextSearchPageToken = pageResult.nextPageToken
                 hasMoreSearchPages = nextSearchPageToken.isNotEmpty()
-                applyActiveFilter(query)
+                applyActiveFilter(query, forceSort = true)
 
                 if (allTracks.isEmpty()) {
-                    tvSearchState.text = "No encontré resultados para: $query"
+                    if (!append) setSearchLoadingState(false, "No encontré resultados para: $query")
                 } else if (!append) {
+                    setSearchLoadingState(false, "")
                     // Predictive pre-fetching in IO dispatcher
                     allTracks.firstOrNull()?.videoId?.let { id ->
                         lifecycleScope.launch(Dispatchers.IO) {
@@ -484,6 +491,16 @@ class SearchActivity : AppCompatActivity() {
                             InnertubeResolver.resolveStreamUrl(id)
                         }
                     }
+                }
+                
+                if (!append && !allTracks.isEmpty()) {
+                    revealModuleContent()
+                    rvSearchResults.alpha = 0f
+                    rvSearchResults.animate().alpha(1f).setDuration(250).start()
+                    hideKeyboard()
+                } else if (!append) {
+                    revealModuleContent()
+                    hideKeyboard()
                 }
             }
 
@@ -501,56 +518,80 @@ class SearchActivity : AppCompatActivity() {
 
     private fun performOfflineSearch(query: String): List<YouTubeMusicService.TrackResult> {
         val normalizedQuery = normalizeForFilter(query)
-        val results = mutableListOf<YouTubeMusicService.TrackResult>()
+        if (normalizedQuery.isEmpty()) return emptyList()
+        val queryTokens = normalizedQuery.split(Regex("\\s+")).filter { it.isNotEmpty() }
+        val scored = mutableListOf<Pair<YouTubeMusicService.TrackResult, Int>>()
         val seenIds = mutableSetOf<String>()
 
-        // Search in favorites
-        val favorites = FavoritesPlaylistStore.loadFavorites(this)
-        for (track in favorites) {
-            if (matchesQuery(track.title, track.artist, normalizedQuery)) {
-                val key = "video|${track.videoId}"
-                if (key !in seenIds) {
-                    seenIds.add(key)
-                    results.add(YouTubeMusicService.TrackResult(
-                        "video",
-                        track.videoId,
-                        track.title,
-                        track.artist,
-                        track.imageUrl
-                    ))
-                }
-            }
+        fun tryAdd(track: FavoritesPlaylistStore.FavoriteTrack) {
+            val key = "video|${track.videoId}"
+            if (key in seenIds) return
+            val score = computeFuzzyScore(track.title, track.artist, normalizedQuery, queryTokens)
+            if (score <= 0) return
+            seenIds.add(key)
+            scored.add(YouTubeMusicService.TrackResult(
+                "video", track.videoId, track.title, track.artist, track.imageUrl
+            ) to score)
         }
+
+        // Search in favorites
+        FavoritesPlaylistStore.loadFavorites(this).forEach { tryAdd(it) }
 
         // Search in custom playlists
-        val playlistNames = CustomPlaylistsStore.getAllPlaylistNames(this)
-        for (playlistName in playlistNames) {
-            val tracks = CustomPlaylistsStore.getTracksFromPlaylist(this, playlistName)
-            for (track in tracks) {
-                if (matchesQuery(track.title, track.artist, normalizedQuery)) {
-                    val key = "video|${track.videoId}"
-                    if (key !in seenIds) {
-                        seenIds.add(key)
-                        results.add(YouTubeMusicService.TrackResult(
-                            "video",
-                            track.videoId,
-                            track.title,
-                            track.artist,
-                            track.imageUrl
-                        ))
-                    }
-                }
+        for (name in CustomPlaylistsStore.getAllPlaylistNames(this)) {
+            CustomPlaylistsStore.getTracksFromPlaylist(this, name).forEach { tryAdd(it) }
+        }
+
+        // Sort by score descending
+        scored.sortByDescending { it.second }
+        return scored.map { it.first }
+    }
+
+    /** Fuzzy score: returns >0 if any query token matches title or artist. Title scores much higher. */
+    private fun computeFuzzyScore(title: String, artist: String, query: String, tokens: List<String>): Int {
+        val t = normalizeForFilter(title)
+        val a = normalizeForFilter(artist)
+        var score = 0
+
+        // Full query match in title (highest priority)
+        if (t == query) score += 1000
+        else if (t.startsWith("$query ")) score += 900
+        else if (t.startsWith(query)) score += 800
+        else if (t.contains(query)) score += 600
+
+        val titleWords = t.split(Regex("\\s+"))
+        val artistWords = a.split(Regex("\\s+"))
+
+        // Per-token matching in title
+        var titleTokenHits = 0
+        for (tok in tokens) {
+            if (titleWords.contains(tok)) {
+                titleTokenHits++
+                score += 100
+            } else if (titleWords.any { it.startsWith(tok) }) {
+                titleTokenHits++
+                score += 50
             }
         }
 
-        return results
-    }
+        // Artist match (much lower weight)
+        if (a == query) score += 80
+        else if (a.startsWith(query)) score += 60
+        else if (a.contains(query)) score += 40
+        
+        for (tok in tokens) {
+            if (artistWords.contains(tok)) score += 15
+            else if (artistWords.any { it.startsWith(tok) }) score += 5
+        }
 
-    private fun matchesQuery(title: String, artist: String, query: String): Boolean {
-        if (query.isEmpty()) return true
-        val normalizedTitle = normalizeForFilter(title)
-        val normalizedArtist = normalizeForFilter(artist)
-        return normalizedTitle.contains(query) || normalizedArtist.contains(query)
+        // Require at least one token to match in title or full query in artist
+        if (titleTokenHits == 0 && !a.contains(query)) {
+            // Check if at least half of tokens match somewhere
+            val anyHits = tokens.count { titleWords.contains(it) || artistWords.contains(it) || titleWords.any { w -> w.startsWith(it) } || artistWords.any { w -> w.startsWith(it) } }
+            if (anyHits < (tokens.size + 1) / 2) return 0
+        }
+
+        return score
     }
 
     private fun loadMoreSearchResults() {
@@ -564,13 +605,12 @@ class SearchActivity : AppCompatActivity() {
         allTracks.addAll(newOnes)
     }
 
-    private fun applyActiveFilter(query: String?) {
+    private fun applyActiveFilter(query: String?, forceSort: Boolean = false) {
         val normalizedQuery = query?.trim() ?: ""
         val filtered = allTracks.toMutableList()
 
-        if (normalizedQuery.isNotEmpty() && filtered.size > 1) {
-            // Do not sort results locally. Preserve the API's natural relevance ranking.
-            // sortResults(filtered, normalizedQuery)
+        if (forceSort && normalizedQuery.isNotEmpty() && filtered.size > 1) {
+            sortResults(filtered, normalizedQuery)
         }
 
         tracks.clear()
@@ -602,18 +642,30 @@ class SearchActivity : AppCompatActivity() {
         val t = normalizeForFilter(track.title)
         val s = normalizeForFilter(track.subtitle)
         var score = 0
-        if (t == query) score += 800
-        else if (t.startsWith("$query ")) score += 760
-        else if (t.startsWith(query)) score += 560
-        else if (t.contains(query)) score += 340
+        // Title matches (high weight)
+        if (t == query) score += 1000
+        else if (t.startsWith("$query ")) score += 900
+        else if (t.startsWith(query)) score += 700
+        else if (t.contains(query)) score += 500
+
+        // Artist/subtitle matches (low weight - only as tiebreaker)
+        if (s == query) score += 80
+        else if (s.startsWith("$query ")) score += 70
+        else if (s.startsWith(query)) score += 60
+        else if (s.contains(query)) score += 40
+
+        // Per-token matching (match whole words to avoid false positives)
+        val titleWords = t.split(Regex("\\s+"))
+        val subtitleWords = s.split(Regex("\\s+"))
         
-        if (s == query) score += 220
-        else if (s.startsWith(query)) score += 180
-        else if (s.contains(query)) score += 120
-        
-        tokens.forEach { 
-            if (t.contains(it)) score += 60
-            if (s.contains(it)) score += 30
+        tokens.forEach { tok ->
+            // Title token hits
+            if (titleWords.contains(tok)) score += 100
+            else if (titleWords.any { it.startsWith(tok) }) score += 50
+            
+            // Subtitle token hits
+            if (subtitleWords.contains(tok)) score += 15
+            else if (subtitleWords.any { it.startsWith(tok) }) score += 5
         }
         return score
     }
@@ -681,17 +733,13 @@ class SearchActivity : AppCompatActivity() {
     }
 
     private fun stopMainActivityPlayer() {
-        // Dispatch a pause to MainActivity's player if running
+        // Always dispatch pause to MainActivity's player to prevent dual mini-players
         try {
             val intent = Intent().apply {
                 action = MainActivity.ACTION_TOGGLE_CURRENT_PLAYBACK
                 putExtra(MainActivity.EXTRA_OPENED_FROM_SEARCH_ACTIVITY, true)
             }
-            // Only pause if currently playing
-            val snapshot = PlaybackHistoryStore.load(this)
-            if (snapshot.isPlaying) {
-                MainActivity.dispatchSearchPlayback(intent)
-            }
+            MainActivity.dispatchSearchPlayback(intent)
         } catch (_: Exception) {}
     }
 
@@ -703,6 +751,10 @@ class SearchActivity : AppCompatActivity() {
         images: ArrayList<String>,
         selectedIndex: Int
     ) {
+        // Cancel any pending container hide from a previous call
+        pendingContainerHide?.let { searchPlayerContainer.removeCallbacks(it) }
+        pendingContainerHide = null
+
         val existingPlayer = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER) as? SongPlayerFragment
         if (existingPlayer != null && existingPlayer.isAdded) {
             // Reuse existing player - replace queue and start playing
@@ -727,9 +779,14 @@ class SearchActivity : AppCompatActivity() {
                 .commitNowAllowingStateLoss()
 
             // Let it start in mini mode
-            searchPlayerContainer.postDelayed({
-                searchPlayerContainer.visibility = View.GONE
-            }, 100)
+            val hideRunnable = Runnable {
+                if (!isPlayerVisible) {
+                    searchPlayerContainer.visibility = View.GONE
+                }
+                pendingContainerHide = null
+            }
+            pendingContainerHide = hideRunnable
+            searchPlayerContainer.postDelayed(hideRunnable, 100)
         }
 
         // Update mini player after a short delay to let playback initialize
@@ -970,6 +1027,10 @@ class SearchActivity : AppCompatActivity() {
     }
 
     private fun openCurrentPlayerFromMiniBar() {
+        // Cancel any pending container hide
+        pendingContainerHide?.let { searchPlayerContainer.removeCallbacks(it) }
+        pendingContainerHide = null
+
         val existingPlayer = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER) as? SongPlayerFragment
         if (existingPlayer != null && existingPlayer.isAdded) {
             // Show existing player full screen
@@ -996,10 +1057,19 @@ class SearchActivity : AppCompatActivity() {
                 .setReorderingAllowed(true)
                 .add(R.id.searchPlayerContainer, playerFragment, TAG_SONG_PLAYER)
                 .commitNowAllowingStateLoss()
+
+            // Animate in after layout
+            searchPlayerContainer.post {
+                playerFragment.externalAnimateEnterSlide()
+            }
         }
     }
 
     private fun showPlayerFullScreen(player: SongPlayerFragment) {
+        // Cancel any pending container hide
+        pendingContainerHide?.let { searchPlayerContainer.removeCallbacks(it) }
+        pendingContainerHide = null
+
         searchPlayerContainer.visibility = View.VISIBLE
         isPlayerVisible = true
         llMiniPlayer.visibility = View.GONE
@@ -1007,6 +1077,16 @@ class SearchActivity : AppCompatActivity() {
             .setReorderingAllowed(true)
             .show(player)
             .commitNowAllowingStateLoss()
+
+        // Ensure the view is actually visible and animate in
+        player.view?.let { v ->
+            v.visibility = View.VISIBLE
+            v.translationY = 0f
+            v.alpha = 1f
+        }
+        searchPlayerContainer.post {
+            player.externalAnimateEnterSlide()
+        }
     }
 
     private fun collapsePlayerToMini() {
@@ -1145,6 +1225,17 @@ class SearchActivity : AppCompatActivity() {
                 holder.subtitle.text = if (item.subtitle.isEmpty()) typeLabel else "$typeLabel • ${item.subtitle}"
             }
             loadArtworkInto(holder.thumb, item.thumbnailUrl)
+            
+            // Check offline status
+            if (item.videoId?.isNotEmpty() == true && OfflineAudioStore.hasOfflineAudio(this@SearchActivity, item.videoId)) {
+                holder.offlineIndicator.visibility = View.VISIBLE
+                holder.offlineIndicator.setImageResource(R.drawable.ic_check_small)
+                holder.offlineIndicator.setBackgroundResource(R.drawable.bg_offline_state_filled_primary)
+                holder.offlineIndicator.setColorFilter(ContextCompat.getColor(this@SearchActivity, R.color.surface_dark))
+            } else {
+                holder.offlineIndicator.visibility = View.GONE
+            }
+            
             holder.divider.visibility = if (position == data.size - 1) View.GONE else View.VISIBLE
             holder.itemView.setOnClickListener { onClick(item) }
             holder.itemView.setOnLongClickListener {
@@ -1162,6 +1253,7 @@ class SearchActivity : AppCompatActivity() {
             val subtitle: TextView = v.findViewById(R.id.tvTrackSubtitle)
             val divider: View = v.findViewById(R.id.vTrackDivider)
             val more: ImageView = v.findViewById(R.id.ivTrackMore)
+            val offlineIndicator: ImageView = v.findViewById(R.id.ivOfflineIndicator)
         }
     }
 

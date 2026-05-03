@@ -3339,6 +3339,8 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
+        playerEnterAnimationRunning = true;
+
         root.post(() -> {
             View v = getView();
             if (v == null) {
@@ -3351,7 +3353,6 @@ public class SongPlayerFragment extends Fragment {
                 distance = v.getResources().getDisplayMetrics().heightPixels;
             }
 
-            playerEnterAnimationRunning = true;
             v.animate().cancel();
             v.setVisibility(View.VISIBLE);
             v.setTranslationY(distance);
@@ -3654,7 +3655,10 @@ public class SongPlayerFragment extends Fragment {
     }
 
     public boolean externalTryEnterMiniMode() {
-        return collapseToMiniMode(true);
+        if (!isHidden()) {
+            return collapseToMiniMode(true);
+        }
+        return false;
     }
 
     private void setupBackPressToMiniMode() {
@@ -4675,7 +4679,15 @@ public class SongPlayerFragment extends Fragment {
                 bottomSheet.setBackgroundResource(android.R.color.transparent);
                 BottomSheetBehavior<View> behavior = BottomSheetBehavior.from(bottomSheet);
                 behavior.setSkipCollapsed(true);
-                behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
+                bottomSheet.setAlpha(0f);
+                bottomSheet.setVisibility(View.INVISIBLE);
+                bottomSheet.post(() -> {
+                    behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
+                    bottomSheet.post(() -> {
+                        bottomSheet.setVisibility(View.VISIBLE);
+                        bottomSheet.animate().alpha(1f).setDuration(120L).start();
+                    });
+                });
             }
         });
 
@@ -4820,8 +4832,12 @@ public class SongPlayerFragment extends Fragment {
                                         .withEndAction(() -> {
                                             isDragging = false;
                                             swipeDismissAnimationRunning = false;
-                                            if (isAdded() && getActivity() instanceof MainActivity) {
-                                                ((MainActivity) getActivity()).externalClosePlayerImmediately();
+                                            if (isAdded()) {
+                                                if (getActivity() instanceof MainActivity) {
+                                                    ((MainActivity) getActivity()).externalClosePlayerImmediately();
+                                                } else if (getActivity() instanceof SearchActivity) {
+                                                    requireActivity().onBackPressed();
+                                                }
                                             }
                                         })
                                         .start();
@@ -5092,7 +5108,11 @@ public class SongPlayerFragment extends Fragment {
                     return;
                 }
                 if (TextUtils.equals(mediaNotificationLargeIconVideoId, requestVideoId)) {
-                    clearMediaNotificationArtwork();
+                    new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+                        clearMediaNotificationArtwork();
+                        updateMediaSessionMetadata();
+                    });
+
                     updateMediaSessionMetadata();
                 }
             }
