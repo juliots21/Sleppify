@@ -445,10 +445,11 @@ class ScannerFragment : Fragment() {
             val targetRect = firstBox?.let { mapImageRectToPreviewView(it, imageWidth, imageHeight, rotationDegrees) }
             if (targetRect != null) {
                 animateFocusToRect(targetRect) {
-                    showScanResultBottomCardAnimated(items)
-
                     viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Main) {
-                        delay(1000)
+                        showScanResultBottomCardAnimated(items)
+
+                        // Resume scanning sooner so it doesn't feel like it "detects worse".
+                        delay(250)
                         resumeScanning()
                     }
                 }
@@ -517,12 +518,17 @@ class ScannerFragment : Fragment() {
             (target.bottom + pad).coerceAtMost(pv.height.toFloat())
         )
 
-        val startSize = dpToPx(220).toFloat()
+        // Start from a MUCH larger crop centered on the detected area, then shrink into it.
+        val cx = clamped.centerX()
+        val cy = clamped.centerY()
+        val grow = 2.6f
+        val halfW = (clamped.width() * grow) / 2f
+        val halfH = (clamped.height() * grow) / 2f
         val start = RectF(
-            pv.width / 2f - startSize / 2f,
-            pv.height / 2f - startSize / 2f,
-            pv.width / 2f + startSize / 2f,
-            pv.height / 2f + startSize / 2f
+            (cx - halfW).coerceAtLeast(0f),
+            (cy - halfH).coerceAtLeast(0f),
+            (cx + halfW).coerceAtMost(pv.width.toFloat()),
+            (cy + halfH).coerceAtMost(pv.height.toFloat())
         )
 
         overlay.visibility = View.VISIBLE
@@ -533,18 +539,20 @@ class ScannerFragment : Fragment() {
         overlay.animate().cancel()
         overlay.animate()
             .alpha(1f)
-            .setDuration(110)
+            .setDuration(160)
             .setInterpolator(DecelerateInterpolator())
             .start()
 
         val anim = ValueAnimator.ofFloat(0f, 1f)
-        anim.duration = 290
+        anim.duration = 1000
         val os = OvershootInterpolator(0.85f)
         anim.addUpdateListener { va ->
             val t = va.animatedValue as Float
+            // Use overshoot but keep it subtle for a "premium" slow shrink.
             val tt = os.getInterpolation(t.coerceIn(0f, 1f))
             overlay.setRect(lerpRect(start, clamped, tt))
-            overlay.setDimAlpha(t)
+            // Dim comes in quickly, then holds.
+            overlay.setDimAlpha((t * 1.15f).coerceIn(0f, 1f))
         }
         anim.addListener(object : android.animation.AnimatorListenerAdapter() {
             override fun onAnimationEnd(animation: android.animation.Animator) {

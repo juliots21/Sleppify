@@ -130,7 +130,7 @@ object FavoritesPlaylistStore {
             for (i in 0 until array.length()) {
                 val obj = array.optJSONObject(i) ?: continue
                 val videoId = safe(obj.optString("videoId", ""))
-                if (videoId.isEmpty() || dedup.containsKey(videoId)) {
+                if (videoId.isEmpty()) {
                     continue
                 }
 

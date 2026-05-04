@@ -3,11 +3,34 @@ package com.example.sleppify
 import android.content.Context
 import android.net.Uri
 import android.text.TextUtils
+import java.util.concurrent.CopyOnWriteArrayList
 
 object OfflineRestrictionStore {
     private const val PREFS_NAME = "offline_restrictions"
     private const val KEY_RESTRICTED_IDS = "restricted_video_ids"
     private const val KEY_NEWPIPE_AUTO_FAIL_PREFIX = "newpipe_auto_fail_"
+
+    fun interface RestrictionListener {
+        fun onRestrictionChanged(videoId: String, restricted: Boolean)
+    }
+
+    private val listeners = CopyOnWriteArrayList<RestrictionListener>()
+
+    @JvmStatic
+    fun addRestrictionListener(listener: RestrictionListener) {
+        if (!listeners.contains(listener)) listeners.add(listener)
+    }
+
+    @JvmStatic
+    fun removeRestrictionListener(listener: RestrictionListener) {
+        listeners.remove(listener)
+    }
+
+    private fun notifyRestrictionChanged(videoId: String, restricted: Boolean) {
+        for (l in listeners) {
+            try { l.onRestrictionChanged(videoId, restricted) } catch (_: Exception) {}
+        }
+    }
 
     @JvmStatic
     fun isRestricted(context: Context, videoId: String): Boolean {
@@ -81,6 +104,8 @@ object OfflineRestrictionStore {
             .edit()
             .putStringSet(KEY_RESTRICTED_IDS, ids)
             .apply()
+
+        notifyRestrictionChanged(safeVideoId, true)
     }
 
     @JvmStatic
@@ -143,6 +168,8 @@ object OfflineRestrictionStore {
             .edit()
             .putStringSet(KEY_RESTRICTED_IDS, ids)
             .apply()
+
+        notifyRestrictionChanged(safeVideoId, false)
     }
 
     @JvmStatic

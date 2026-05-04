@@ -33,6 +33,10 @@ class CloudSyncManager private constructor(context: Context) {
         fun onResult(playlists: @JvmSuppressWildcards Map<String, List<FavoritesPlaylistStore.FavoriteTrack>>)
     }
 
+    fun interface CloudPlaylistOverridesCallback {
+        fun onResult(overrides: @JvmSuppressWildcards Map<String, List<PlaylistOverrideStore.Override>>)
+    }
+
     private val appContext: Context = context.applicationContext
     private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
     private val eqPrefs: SharedPreferences =
@@ -1180,6 +1184,63 @@ class CloudSyncManager private constructor(context: Context) {
             .addOnFailureListener { e -> Log.e(TAG, "Error syncing playlist $playlistName", e) }
     }
 
+    fun syncPlaylistOverridesToCloud(
+        playlistId: String,
+        overrides: List<PlaylistOverrideStore.Override>
+    ) {
+        val uid = activeUserId
+        if (uid.isNullOrEmpty() || playlistId.isBlank()) return
+
+        val overrideMaps = ArrayList<Map<String, Any?>>(overrides.size)
+        for (o in overrides) overrideMaps.add(o.toMap())
+        val data = hashMapOf<String, Any>(
+            "overrides" to overrideMaps,
+            FIELD_UPDATED_AT to FieldValue.serverTimestamp()
+        )
+
+        firestore.collection(USERS_COLLECTION).document(uid)
+            .collection(COLLECTION_PLAYLIST_OVERRIDES).document(sanitizePlaylistDocId(playlistId))
+            .set(data, SetOptions.merge())
+            .addOnSuccessListener { Log.d(TAG, "Overrides synced for playlist $playlistId") }
+            .addOnFailureListener { e -> Log.e(TAG, "Error syncing overrides for playlist $playlistId", e) }
+    }
+
+    fun fetchAllPlaylistOverridesFromCloud(callback: CloudPlaylistOverridesCallback) {
+        val uid = activeUserId
+        if (uid.isNullOrEmpty()) {
+            callback.onResult(emptyMap())
+            return
+        }
+
+        firestore.collection(USERS_COLLECTION).document(uid)
+            .collection(COLLECTION_PLAYLIST_OVERRIDES)
+            .get()
+            .addOnSuccessListener { documents ->
+                val result = HashMap<String, List<PlaylistOverrideStore.Override>>()
+                for (doc in documents) {
+                    val playlistId = doc.id
+                    @Suppress("UNCHECKED_CAST")
+                    val rawList = doc.get("overrides") as? List<Map<String, Any?>> ?: continue
+                    val parsed = ArrayList<PlaylistOverrideStore.Override>(rawList.size)
+                    for (m in rawList) {
+                        val o = PlaylistOverrideStore.Override.fromMap(m) ?: continue
+                        parsed.add(o)
+                    }
+                    if (parsed.isNotEmpty()) result[playlistId] = parsed
+                }
+                callback.onResult(result)
+            }
+            .addOnFailureListener { e ->
+                Log.e(TAG, "Error fetching cloud playlist overrides", e)
+                callback.onResult(emptyMap())
+            }
+    }
+
+    private fun sanitizePlaylistDocId(playlistId: String): String {
+        // Firestore doc ids may not contain '/'. Replace defensively.
+        return playlistId.trim().replace('/', '_')
+    }
+
     fun deleteCloudPlaylist(playlistName: String) {
         val uid = activeUserId
         if (uid.isNullOrEmpty()) return
@@ -1283,6 +1344,7 @@ class CloudSyncManager private constructor(context: Context) {
         private const val DOC_SETTINGS = "settings"
         private const val DOC_STREAMING = "streaming"
         private const val COLLECTION_PLAYLISTS = "playlists"
+        private const val COLLECTION_PLAYLIST_OVERRIDES = "playlist_overrides"
 
         private const val FIELD_PREFS = "prefs"
         private const val FIELD_UPDATED_AT = "updatedAt"

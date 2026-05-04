@@ -57,12 +57,12 @@ class ScanFocusOverlayView(context: Context, attrs: AttributeSet?) : View(contex
         canvas.drawRect(rect.right, rect.top, w, rect.bottom, dimPaint)
 
         val cornerRadius = 14f * resources.displayMetrics.density
-        val stroke = 2.25f * resources.displayMetrics.density
+        val stroke = 1.25f * resources.displayMetrics.density
         strokePaint.strokeWidth = stroke
 
         canvas.drawRoundRect(rect, cornerRadius, cornerRadius, strokePaint)
 
-        val cornerLen = 22f * resources.displayMetrics.density
+        val cornerLen = 20f * resources.displayMetrics.density
         val halfStroke = stroke / 2f
         val l = rect.left + halfStroke
         val t = rect.top + halfStroke

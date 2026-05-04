@@ -100,7 +100,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
-public class PlaylistDetailFragment extends Fragment {
+public class PlaylistDetailFragment extends Fragment
+        implements RestrictedTrackReplacementSheet.OnReplacementConfirmedListener {
 
     private static final String PREFS_STREAMING_CACHE = "streaming_cache";
     private static final long TRACKS_CACHE_TTL_MS = 24 * 60 * 60 * 1000L;
@@ -184,6 +185,7 @@ public class PlaylistDetailFragment extends Fragment {
 
     private final YouTubeMusicService youTubeMusicService = new YouTubeMusicService();
     private final ExecutorService urlPrefetchExecutor = Executors.newFixedThreadPool(2);
+    private final ExecutorService trackStateLookupExecutor = Executors.newFixedThreadPool(2);
     private final List<PlaylistTrack> originalTracks = new ArrayList<>();
     private final List<PlaylistTrack> currentTracks = new ArrayList<>();
     private final List<PlaylistTrack> playbackQueueTracks = new ArrayList<>();
@@ -645,6 +647,7 @@ public class PlaylistDetailFragment extends Fragment {
     @Override
     public void onDestroy() {
         offlineReadyStateExecutor.shutdownNow();
+        trackStateLookupExecutor.shutdownNow();
         urlPrefetchExecutor.shutdownNow();
         super.onDestroy();
     }
@@ -1431,17 +1434,17 @@ public class PlaylistDetailFragment extends Fragment {
                 String cleanArtist = decodeHtmlEntities(track.artist);
                 cleaned.add(new PlaylistTrack(track.videoId, cleanTitle, cleanArtist, track.duration, track.imageUrl));
             }
-            cachedTracks = cleaned;
+            List<PlaylistTrack> cleanedCachedTracks = cleaned;
 
-            renderTracks(cachedTracks, playlistId, true);
-            if (cachedTracks.isEmpty() && !isOfflineStatusPinned()) {
+            renderTracks(cleanedCachedTracks, playlistId, true);
+            if (cleanedCachedTracks.isEmpty() && !isOfflineStatusPinned()) {
                 notifyHeaderChanged();
             }
 
             // On pull-to-refresh, try to enrich tracks missing durations
-            if (forceRefresh && !cachedTracks.isEmpty() && !effectiveAccessToken.isEmpty()) {
+            if (forceRefresh && !cleanedCachedTracks.isEmpty() && !effectiveAccessToken.isEmpty()) {
                 List<String> missingDurationIds = new ArrayList<>();
-                for (PlaylistTrack track : cachedTracks) {
+                for (PlaylistTrack track : cleanedCachedTracks) {
                     if (TextUtils.isEmpty(track.duration) || "--:--".equals(track.duration)) {
                         if (!TextUtils.isEmpty(track.videoId)) {
                             missingDurationIds.add(track.videoId);
@@ -1449,7 +1452,7 @@ public class PlaylistDetailFragment extends Fragment {
                     }
                 }
 
-                final List<PlaylistTrack> tracksToEnrich = new ArrayList<>(cachedTracks);
+                final List<PlaylistTrack> tracksToEnrich = new ArrayList<>(cleanedCachedTracks);
                 final String enrichPlaylistId = playlistId;
                 final boolean isFavContext = favoritesContext;
 
@@ -1917,6 +1920,89 @@ public class PlaylistDetailFragment extends Fragment {
 
     private boolean hasRestrictedTracksInCurrentPlaylist() {
         return countRestrictedTracks(currentTracks) > 0;
+    }
+
+    @NonNull
+    private String resolvePlaylistType(@NonNull String playlistId) {
+        if (isFavoritesPlaylistContext(playlistId)) return "favorites";
+        if (isCustomPlaylistContext(playlistId)) return "custom";
+        return "youtube";
+    }
+
+    @Override
+    public void onReplacementConfirmed(
+            @NonNull String playlistId,
+            @NonNull String playlistType,
+            @NonNull String originalVideoId,
+            @NonNull YouTubeMusicService.ReplacementCandidate candidate
+    ) {
+        if (!isAdded()) return;
+
+        Context ctx = requireContext();
+
+        // 1. Persist the override locally + cloud
+        PlaylistOverrideStore.Override override = new PlaylistOverrideStore.Override(
+                originalVideoId,
+                candidate.videoId,
+                candidate.title,
+                candidate.artist,
+                candidate.duration,
+                candidate.thumbnailUrl,
+                System.currentTimeMillis()
+        );
+        PlaylistOverrideStore.INSTANCE.putOverride(ctx, playlistId, override);
+
+        // 2. Unmark the original as restricted (the override replaces it)
+        //    so re-opening the playlist won't treat the slot as restricted.
+        //    The override store handles the replacement transparently.
+
+        // 3. Refresh the track list in-place
+        List<PlaylistTrack> refreshed = sanitizeTracksForPlaylist(currentPlaylistId, currentTracks);
+        renderTracks(refreshed, currentPlaylistId, false);
+        replacePlayerQueueWithCurrentOrder();
+
+        // 4. Auto-download if offline subscription is active
+        if (isCurrentPlaylistOfflineAutoEnabled()) {
+            enqueueSingleTrackForOfflineDownload(candidate.videoId, candidate.title, candidate.artist, candidate.duration);
+        }
+
+        // 5. Sync overrides to cloud
+        if (AuthManager.getInstance(ctx).isSignedIn()) {
+            CloudSyncManager.getInstance(ctx).syncPlaylistOverridesToCloud(
+                    playlistId,
+                    new ArrayList<>(PlaylistOverrideStore.INSTANCE.getOverrides(ctx, playlistId).values())
+            );
+        }
+    }
+
+    private void enqueueSingleTrackForOfflineDownload(
+            @NonNull String videoId,
+            @NonNull String title,
+            @NonNull String artist,
+            @NonNull String duration
+    ) {
+        if (!isAdded() || TextUtils.isEmpty(videoId)) return;
+        try {
+            Data inputData = new Data.Builder()
+                    .putStringArray(OfflinePlaylistDownloadWorker.INPUT_VIDEO_IDS, new String[]{videoId})
+                    .putStringArray(OfflinePlaylistDownloadWorker.INPUT_TITLES, new String[]{title})
+                    .putStringArray(OfflinePlaylistDownloadWorker.INPUT_ARTISTS, new String[]{artist})
+                    .putStringArray(OfflinePlaylistDownloadWorker.INPUT_DURATIONS, new String[]{duration})
+                    .putBoolean(OfflinePlaylistDownloadWorker.INPUT_MANUAL_QUEUE, true)
+                    .build();
+
+            androidx.work.OneTimeWorkRequest request = new androidx.work.OneTimeWorkRequest.Builder(
+                    OfflinePlaylistDownloadWorker.class)
+                    .setInputData(inputData)
+                    .addTag(currentPlaylistOfflineTag())
+                    .build();
+
+            androidx.work.WorkManager.getInstance(requireContext())
+                    .enqueue(request);
+            Log.d("PlaylistDetailFragment", "enqueueSingleTrackForOfflineDownload: queued videoId=" + videoId);
+        } catch (Exception e) {
+            Log.w("PlaylistDetailFragment", "enqueueSingleTrackForOfflineDownload: failed", e);
+        }
     }
 
     private boolean copyUriToOfflineFile(@NonNull Uri uri, @NonNull String trackId) {
@@ -2453,6 +2539,25 @@ public class PlaylistDetailFragment extends Fragment {
             return mapped;
         }
 
+        // For YouTube (non-local) playlists, apply persisted overrides
+        if (isAdded() && !playlistId.isEmpty()) {
+            java.util.Map<String, PlaylistOverrideStore.Override> overridesMap =
+                    PlaylistOverrideStore.INSTANCE.getOverrides(requireContext(), playlistId);
+            
+            List<PlaylistTrack> overridden = PlaylistOverrideStore.INSTANCE.applyOverridesTo(
+                    new ArrayList<>(source),
+                    overridesMap,
+                    track -> track.videoId,
+                    ovr -> new PlaylistTrack(
+                            ovr.getReplacementVideoId(),
+                            ovr.getTitle(),
+                            ovr.getArtist(),
+                            ovr.getDuration(),
+                            ovr.getImageUrl()
+                    )
+            );
+            return overridden;
+        }
         return new ArrayList<>(source);
     }
 
@@ -2492,7 +2597,7 @@ public class PlaylistDetailFragment extends Fragment {
                 CustomPlaylistsStore.INSTANCE.savePlaylist(requireContext(), name, updated);
             }
         } catch (Exception e) {
-            Log.e(TAG, "Error persisting enriched tracks", e);
+            Log.e("PlaylistDetailFragment", "Error persisting enriched tracks", e);
         }
     }
 
@@ -2986,6 +3091,25 @@ public class PlaylistDetailFragment extends Fragment {
             return;
         }
 
+        // Intercept restricted tracks: show replacement sheet instead of playing
+        PlaylistTrack tappedTrack = currentTracks.get(position);
+        if (!TextUtils.isEmpty(tappedTrack.videoId) && isRestrictedTrack(tappedTrack.videoId)) {
+            String playlistType = resolvePlaylistType(currentPlaylistId);
+            boolean offlineSub = isCurrentPlaylistOfflineAutoEnabled();
+            RestrictedTrackReplacementSheet.show(
+                    getChildFragmentManager(),
+                    currentPlaylistId,
+                    playlistType,
+                    tappedTrack.videoId,
+                    tappedTrack.title,
+                    tappedTrack.artist,
+                    tappedTrack.duration,
+                    tappedTrack.imageUrl,
+                    offlineSub
+            );
+            return;
+        }
+
         ensurePlaybackQueue();
         if (playbackQueueTracks.isEmpty()) {
             return;
@@ -3141,12 +3265,25 @@ public class PlaylistDetailFragment extends Fragment {
         btnFavorite.setVisibility(View.VISIBLE);
         ImageView ivFav = btnFavorite.findViewById(R.id.ivBsFavorite);
         TextView tvFav = btnFavorite.findViewById(R.id.tvBsFavorite);
-        ivFav.setImageResource(R.drawable.ic_favorite_star);
-        tvFav.setText("Agregar a Favoritos");
-        btnFavorite.setOnClickListener(v -> {
-            dialog.dismiss();
-            addTrackToFavoritesFromRow(position);
-        });
+        
+        boolean isFavoritesPlaylist = FavoritesPlaylistStore.PLAYLIST_ID.equals(currentPlaylistId);
+        boolean isAlreadyFavorite = FavoritesPlaylistStore.isFavorite(requireContext(), selectedTrack.videoId);
+
+        if (isFavoritesPlaylist || isAlreadyFavorite) {
+            ivFav.setImageResource(R.drawable.ic_favorite_star);
+            tvFav.setText("Quitar de Favoritos");
+            btnFavorite.setOnClickListener(v -> {
+                dialog.dismiss();
+                removeTrackFromFavoritesFromRow(position);
+            });
+        } else {
+            ivFav.setImageResource(R.drawable.ic_favorite_star);
+            tvFav.setText("Agregar a Favoritos");
+            btnFavorite.setOnClickListener(v -> {
+                dialog.dismiss();
+                addTrackToFavoritesFromRow(position);
+            });
+        }
         
         // Download / Delete track download
         btnDownload.setVisibility(View.VISIBLE);
@@ -3400,6 +3537,24 @@ public class PlaylistDetailFragment extends Fragment {
                 selected.duration,
                 selected.imageUrl
         );
+    }
+
+    private void removeTrackFromFavoritesFromRow(int position) {
+        if (!isAdded() || position < 0 || position >= currentTracks.size()) {
+            return;
+        }
+
+        PlaylistTrack selected = currentTracks.get(position);
+        if (TextUtils.isEmpty(selected.videoId)) {
+            return;
+        }
+
+        FavoritesPlaylistStore.removeFavorite(requireContext(), selected.videoId);
+        
+        if (FavoritesPlaylistStore.PLAYLIST_ID.equals(currentPlaylistId)) {
+            currentTracks.remove(position);
+            renderTracks(currentTracks, currentPlaylistId, false);
+        }
     }
 
     private int resolveCurrentQueueIndex() {
@@ -5095,7 +5250,7 @@ public class PlaylistDetailFragment extends Fragment {
             }
             
             offlineAvailabilityCache.put(normalized, false); // Prevent duplicate checks
-            android.os.AsyncTask.THREAD_POOL_EXECUTOR.execute(() -> {
+            trackStateLookupExecutor.execute(() -> {
                 boolean available = OfflineAudioStore.hasValidatedOfflineAudio(context, normalized, expectedDuration);
                 new Handler(Looper.getMainLooper()).post(() -> {
                     Boolean current = offlineAvailabilityCache.get(normalized);
@@ -5119,7 +5274,7 @@ public class PlaylistDetailFragment extends Fragment {
             }
             
             restrictedTrackCache.put(normalized, false); // Prevent duplicate checks
-            android.os.AsyncTask.THREAD_POOL_EXECUTOR.execute(() -> {
+            trackStateLookupExecutor.execute(() -> {
                 boolean restricted = OfflineRestrictionStore.isRestricted(context, normalized);
                 new Handler(Looper.getMainLooper()).post(() -> {
                     Boolean current = restrictedTrackCache.get(normalized);

@@ -296,12 +296,12 @@ public class MusicPlayerFragment extends Fragment {
                     ? YouTubeMusicService.SPECIAL_LIKED_VIDEOS_ID
                     : playlist.playlistId;
             if (isLikedCollection) {
-                title = "Musica que te gusto";
+                title = "Música que te gustó";
                 subtitle = playlist.itemCount > 0
-                        ? "Playlist autogenerada Ã¢â‚¬Â¢ " + playlist.itemCount + " canciones"
+                        ? "Playlist autogenerada • " + playlist.itemCount + " canciones"
                         : "Playlist autogenerada";
             } else if (playlist.itemCount > 0) {
-                subtitle = "Playlist Ã¢â‚¬Â¢ " + playlist.itemCount + " canciones";
+                subtitle = "Playlist • " + playlist.itemCount + " canciones";
             } else {
                 subtitle = "Playlist";
             }
@@ -357,7 +357,7 @@ public class MusicPlayerFragment extends Fragment {
         for (String customName : customPlaylists) {
             List<FavoritesPlaylistStore.FavoriteTrack> customTracks = CustomPlaylistsStore.INSTANCE.getTracksFromPlaylist(requireContext(), customName);
             int countCustom = customTracks.size();
-            String customSubtitle = countCustom == 1 ? "1 canciÃƒÂ³n" : countCustom + " canciones";
+            String customSubtitle = countCustom == 1 ? "1 canción" : countCustom + " canciones";
             String customThumb = "";
             for (FavoritesPlaylistStore.FavoriteTrack t : customTracks) {
                 if (!TextUtils.isEmpty(t.imageUrl)) {
@@ -402,7 +402,7 @@ public class MusicPlayerFragment extends Fragment {
                         }
                         if (alreadyHandled) continue;
                         List<FavoritesPlaylistStore.FavoriteTrack> tracks = entry.getValue();
-                        String sub = tracks.size() == 1 ? "1 canciÃƒÂ³n (Nube)" : tracks.size() + " canciones (Nube)";
+                        String sub = tracks.size() == 1 ? "1 canción (Nube)" : tracks.size() + " canciones (Nube)";
                         String thumb = "";
                         for (FavoritesPlaylistStore.FavoriteTrack t : tracks) {
                             if (!TextUtils.isEmpty(t.imageUrl)) { thumb = t.imageUrl; break; }
@@ -791,7 +791,7 @@ public class MusicPlayerFragment extends Fragment {
                 // Fix D-pad focus navigation
                 if (rvMusicResults != null) {
                     rvMusicResults.setNextFocusLeftId(R.id.btnTvPlayPause);
-                    // Cuando presionas abajo en la lista, ve al navigation rail (mÃƒÂ³dulos)
+                    // Cuando presionas abajo en la lista, ve al navigation rail (módulos)
                     rvMusicResults.setNextFocusDownId(R.id.navigationRail);
                     // Cuando presionas arriba en la lista, ve al buscador
                     rvMusicResults.setNextFocusUpId(R.id.llLibraryInlineSearch);
@@ -1413,7 +1413,7 @@ public class MusicPlayerFragment extends Fragment {
                     .apply();
         }
         // Activar inmediatamente la cookie en InnertubeResolver para que las
-        // siguientes peticiones de resoluciÃƒÂ³n y playback estÃƒÂ©n autenticadas.
+        // siguientes peticiones de resolución y playback estén autenticadas.
         InnertubeResolver.setAuthCookies(cookieHeader);
         streamingOauthCompleted = true;
         updateYoutubeButtonLabel();
@@ -1792,7 +1792,7 @@ public class MusicPlayerFragment extends Fragment {
         } else {
             tvMusicState.setText("");
         }
-        // Controlar la visibilidad del RecyclerView a travÃƒÂ©s de animaciÃƒÂ³n para evitar parpadeo
+        // Controlar la visibilidad del RecyclerView a través de animación para evitar parpadeo
         if (rvMusicResults != null) {
             rvMusicResults.animate().cancel();
             if (rvMusicResults.getVisibility() != View.VISIBLE) {
@@ -2075,7 +2075,7 @@ public class MusicPlayerFragment extends Fragment {
                 String displayTitle = TextUtils.isEmpty(cachedTrack.title) ? "Cancion" : cachedTrack.title;
                 String subtitle = TextUtils.isEmpty(cachedTrack.artist)
                         ? "Playlist: " + playlistTitle
-                        : cachedTrack.artist + " Ã¢â‚¬Â¢ " + playlistTitle;
+                        : cachedTrack.artist + " • " + playlistTitle;
                 result.add(new YouTubeMusicService.TrackResult(
                         "video",
                         cachedTrack.videoId,
@@ -2715,7 +2715,7 @@ public class MusicPlayerFragment extends Fragment {
         String webCookie = playerPrefs.getString(PREF_LAST_YOUTUBE_WEB_COOKIE, "");
         boolean hasWebSession = !TextUtils.isEmpty(webCookie == null ? "" : webCookie.trim());
         // Pasar la cookie a InnertubeResolver para autenticar peticiones de
-        // resoluciÃƒÂ³n y playback (evita LOGIN_REQUIRED y CDN 403 sin PO Token).
+        // resolución y playback (evita LOGIN_REQUIRED y CDN 403 sin PO Token).
         InnertubeResolver.setAuthCookies(webCookie);
         boolean hasCachedLibrary = !libraryTracks.isEmpty();
         streamingOauthCompleted = hasWebSession || hasCachedLibrary || !TextUtils.isEmpty(youtubeAccessToken);
@@ -3440,7 +3440,7 @@ public class MusicPlayerFragment extends Fragment {
         String typeLabel = searchTypeLabel(track);
         String subtitle = TextUtils.isEmpty(track.subtitle)
             ? typeLabel
-            : typeLabel + " Ã¢â‚¬Â¢ " + track.subtitle;
+            : typeLabel + " • " + track.subtitle;
         tvFeaturedSubtitle.setText(subtitle);
         loadArtworkInto(ivFeaturedThumb, track.thumbnailUrl);
     }
@@ -3543,7 +3543,7 @@ public class MusicPlayerFragment extends Fragment {
             return "Playlist";
         }
         if ("album".equals(track.resultType)) {
-            return "ÃƒÂlbum";
+            return "Álbum";
         }
         return "";
     }
@@ -3562,7 +3562,7 @@ public class MusicPlayerFragment extends Fragment {
         ImageView ivArt = view.findViewById(R.id.ivBsTrackArt);
         tvTitle.setText(TextUtils.isEmpty(track.title) ? "Tema" : track.title);
         String typeLabel = searchTypeLabel(track);
-        String subtitle = TextUtils.isEmpty(track.subtitle) ? typeLabel : typeLabel + " Ã¢â‚¬Â¢ " + track.subtitle;
+        String subtitle = TextUtils.isEmpty(track.subtitle) ? typeLabel : typeLabel + " • " + track.subtitle;
         tvSubtitle.setText(subtitle);
         loadArtworkInto(ivArt, track.thumbnailUrl);
         View btnPlayNext = view.findViewById(R.id.btnBsPlayNext);
@@ -3599,7 +3599,7 @@ public class MusicPlayerFragment extends Fragment {
             if (track.isVideo()) {
                 btnPlayNext.setVisibility(View.VISIBLE);
                 ivPlayNext.setImageResource(R.drawable.ic_stream_play_next);
-                tvPlayNext.setText("Reproducir a\ncontinuaciÃƒÂ³n");
+                tvPlayNext.setText("Reproducir a\ncontinuación");
                 btnPlayNext.setOnClickListener(v -> {
                     dialog.dismiss();
                     SongPlayerFragment player = findSongPlayerFragment();
@@ -3652,7 +3652,7 @@ public class MusicPlayerFragment extends Fragment {
             ImageView ivAddList = btnFavorite.findViewById(R.id.ivBsFavorite);
             TextView tvAddList = btnFavorite.findViewById(R.id.tvBsFavorite);
             ivAddList.setImageResource(R.drawable.ic_stream_queue_add);
-            tvAddList.setText("AÃƒÂ±adir a playlist");
+            tvAddList.setText("Añadir a playlist");
             btnFavorite.setOnClickListener(v -> {
                 dialog.dismiss();
                 showAddToPlaylistDialog(track);
@@ -3723,7 +3723,7 @@ public class MusicPlayerFragment extends Fragment {
         }
         String[] array = displayNames.toArray(new String[0]);
         new com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
-            .setTitle("AÃƒÂ±adir a playlist")
+            .setTitle("Añadir a playlist")
             .setItems(array, (dialog, which) -> {
                 if (which < localNames.size()) {
                     String selected = localNames.get(which);
@@ -3736,7 +3736,7 @@ public class MusicPlayerFragment extends Fragment {
                         "",
                         track.thumbnailUrl == null ? "" : track.thumbnailUrl
                     );
-                    android.widget.Toast.makeText(requireContext(), "AÃƒÂ±adida a local: " + selected, android.widget.Toast.LENGTH_SHORT).show();
+                    android.widget.Toast.makeText(requireContext(), "Añadida a local: " + selected, android.widget.Toast.LENGTH_SHORT).show();
                     fetchLibraryPlaylists(true);
                 } else {
                     int ytIdx = which - localNames.size();
@@ -3745,7 +3745,7 @@ public class MusicPlayerFragment extends Fragment {
                     youTubeMusicService.insertTrackToPlaylist(token, selected.playlistId, track.videoId, (success, error) -> {
                         if (!isAdded()) return;
                         if (success) {
-                            android.widget.Toast.makeText(requireContext(), "AÃƒÂ±adida a YouTube: " + selected.title, android.widget.Toast.LENGTH_SHORT).show();
+                            android.widget.Toast.makeText(requireContext(), "Añadida a YouTube: " + selected.title, android.widget.Toast.LENGTH_SHORT).show();
                         } else {
                             android.widget.Toast.makeText(requireContext(), "Error YouTube: " + error, android.widget.Toast.LENGTH_SHORT).show();
                         }
@@ -3759,7 +3759,7 @@ public class MusicPlayerFragment extends Fragment {
         if (!isAdded()) return;
         final String oldName = playlistTrack.title == null ? "" : playlistTrack.title.trim();
         if (TextUtils.isEmpty(oldName)) {
-            android.widget.Toast.makeText(requireContext(), "Nombre invÃƒÂ¡lido", android.widget.Toast.LENGTH_SHORT).show();
+            android.widget.Toast.makeText(requireContext(), "Nombre inválido", android.widget.Toast.LENGTH_SHORT).show();
             return;
         }
         final android.widget.EditText input = new android.widget.EditText(requireContext());
@@ -4180,7 +4180,7 @@ public class MusicPlayerFragment extends Fragment {
                 String fallbackImage = playerPrefs.getString(PREF_LAST_TRACK_IMAGE, "");
                 currentTrack = new PlaybackHistoryStore.QueueTrack(
                         fallbackVideoId,
-                        TextUtils.isEmpty(fallbackTitle) ? "ÃƒÅ¡ltima reproducciÃƒÂ³n" : fallbackTitle,
+                        TextUtils.isEmpty(fallbackTitle) ? "Última reproducción" : fallbackTitle,
                         fallbackArtist == null ? "" : fallbackArtist,
                         fallbackDuration == null ? "" : fallbackDuration,
                         fallbackImage == null ? "" : fallbackImage
@@ -4244,7 +4244,7 @@ public class MusicPlayerFragment extends Fragment {
         } else if (isTv && llMiniPlayer.getVisibility() != View.GONE) {
             llMiniPlayer.setVisibility(View.GONE);
         }
-        String trackTitle = TextUtils.isEmpty(currentTrack.title) ? "ÃƒÅ¡ltima reproducciÃƒÂ³n" : currentTrack.title;
+        String trackTitle = TextUtils.isEmpty(currentTrack.title) ? "Última reproducción" : currentTrack.title;
         if (!TextUtils.equals(tvMiniPlayerTitle.getText(), trackTitle)) {
             tvMiniPlayerTitle.setText(trackTitle);
         }
@@ -4467,7 +4467,7 @@ public class MusicPlayerFragment extends Fragment {
                 java.util.List<FavoritesPlaylistStore.FavoriteTrack> tracks =
                         CustomPlaylistsStore.INSTANCE.getTracksFromPlaylist(requireContext(), customName);
                 if (tracks.isEmpty()) {
-                    android.widget.Toast.makeText(requireContext(), "La playlist estÃƒÂ¡ vacÃƒÂ­a", android.widget.Toast.LENGTH_SHORT).show();
+                    android.widget.Toast.makeText(requireContext(), "La playlist está vacía", android.widget.Toast.LENGTH_SHORT).show();
                     return;
                 }
                 ArrayList<String> ids = new ArrayList<>();
@@ -4484,7 +4484,7 @@ public class MusicPlayerFragment extends Fragment {
                     images.add(t.imageUrl == null ? "" : t.imageUrl);
                 }
                 if (ids.isEmpty()) {
-                    android.widget.Toast.makeText(requireContext(), "La playlist estÃƒÂ¡ vacÃƒÂ­a", android.widget.Toast.LENGTH_SHORT).show();
+                    android.widget.Toast.makeText(requireContext(), "La playlist está vacía", android.widget.Toast.LENGTH_SHORT).show();
                     return;
                 }
                 startPlaybackQueue(ids, titles, artists, durations, images, 0);
@@ -4494,12 +4494,12 @@ public class MusicPlayerFragment extends Fragment {
         // 2) YouTube playlist by id
         String playlistId = playlistTrack.contentId == null ? "" : playlistTrack.contentId.trim();
         if (TextUtils.isEmpty(playlistId)) {
-            android.widget.Toast.makeText(requireContext(), "Playlist invÃƒÂ¡lida", android.widget.Toast.LENGTH_SHORT).show();
+            android.widget.Toast.makeText(requireContext(), "Playlist inválida", android.widget.Toast.LENGTH_SHORT).show();
             return;
         }
         String token = resolveAccessTokenForPlaylistDetail();
         if (TextUtils.isEmpty(token)) {
-            android.widget.Toast.makeText(requireContext(), "Inicia sesiÃƒÂ³n para reproducir esta playlist", android.widget.Toast.LENGTH_SHORT).show();
+            android.widget.Toast.makeText(requireContext(), "Inicia sesión para reproducir esta playlist", android.widget.Toast.LENGTH_SHORT).show();
             return;
         }
         youTubeMusicService.fetchPlaylistTracks(token, playlistId, 250, new YouTubeMusicService.PlaylistTracksCallback() {
@@ -4507,7 +4507,7 @@ public class MusicPlayerFragment extends Fragment {
             public void onSuccess(java.util.List<YouTubeMusicService.PlaylistTrackResult> tracks) {
                 if (!isAdded()) return;
                 if (tracks == null || tracks.isEmpty()) {
-                    android.widget.Toast.makeText(requireContext(), "La playlist estÃƒÂ¡ vacÃƒÂ­a", android.widget.Toast.LENGTH_SHORT).show();
+                    android.widget.Toast.makeText(requireContext(), "La playlist está vacía", android.widget.Toast.LENGTH_SHORT).show();
                     return;
                 }
                 ArrayList<String> ids = new ArrayList<>();
@@ -4524,7 +4524,7 @@ public class MusicPlayerFragment extends Fragment {
                     images.add(t.thumbnailUrl == null ? "" : t.thumbnailUrl);
                 }
                 if (ids.isEmpty()) {
-                    android.widget.Toast.makeText(requireContext(), "La playlist estÃƒÂ¡ vacÃƒÂ­a", android.widget.Toast.LENGTH_SHORT).show();
+                    android.widget.Toast.makeText(requireContext(), "La playlist está vacía", android.widget.Toast.LENGTH_SHORT).show();
                     return;
                 }
                 startPlaybackQueue(ids, titles, artists, durations, images, 0);
@@ -4591,7 +4591,7 @@ public class MusicPlayerFragment extends Fragment {
         if (!isAdded()) return;
         new androidx.appcompat.app.AlertDialog.Builder(requireContext())
             .setTitle("Eliminar playlist")
-            .setMessage("Ã‚Â¿EstÃƒÂ¡s seguro de que quieres eliminar la playlist \"" + playlistTrack.title + "\"?")
+            .setMessage("¿Estás seguro de que quieres eliminar la playlist \"" + playlistTrack.title + "\"?")
             .setPositiveButton("Eliminar", (dialog, which) -> {
                 boolean deleted = CustomPlaylistsStore.INSTANCE.deletePlaylist(requireContext(), playlistTrack.title);
                 if (deleted) {
@@ -5326,7 +5326,7 @@ public class MusicPlayerFragment extends Fragment {
         SongPlayerFragment player = findSongPlayerFragment();
         if (player != null && player.isAdded()) {
             player.externalInsertNext(videoId, title, subtitle, "", thumbnailUrl);
-            android.widget.Toast.makeText(requireContext(), "Se reproducirÃƒÂ¡ a continuaciÃƒÂ³n", android.widget.Toast.LENGTH_SHORT).show();
+            android.widget.Toast.makeText(requireContext(), "Se reproducirá a continuación", android.widget.Toast.LENGTH_SHORT).show();
         }
     }
     public void addToQueueFromSearch(@NonNull Intent data) {
@@ -5939,7 +5939,7 @@ public class MusicPlayerFragment extends Fragment {
             } else if (isLikedPlaylistStyle) {
                 holder.tvTrackTitle.setText("Musica que te gusto");
                 if (TextUtils.isEmpty(item.subtitle)) {
-                    holder.tvTrackSubtitle.setText("Playlist autogenerada Ã¢â‚¬Â¢ 0 canciones");
+                    holder.tvTrackSubtitle.setText("Playlist autogenerada • 0 canciones");
                 } else {
                     holder.tvTrackSubtitle.setText(item.subtitle);
                 }

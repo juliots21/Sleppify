@@ -236,8 +236,8 @@ class OfflinePlaylistDownloadWorker(
         }
 
         val automaticFailCount = OfflineRestrictionStore.getAutomaticNewPipeFailureCount(context, id)
-        if (!userInitiated && automaticFailCount >= MAX_NEWPIPE_AUTOMATIC_FAILURES) {
-            OfflineRestrictionStore.markRestricted(context, id)
+        if (!userInitiated && automaticFailCount >= RestrictionHeuristics.MAX_AUTOMATIC_FAILURES) {
+            RestrictionHeuristics.processFailure(context, id, false, true)
             restrictedIds.add(id)
             Log.w(TAG, "track:auto_blocked_after_newpipe_failures id=$id fails=$automaticFailCount")
             return TrackDownloadResult.failed(id, title)
@@ -280,16 +280,15 @@ class OfflinePlaylistDownloadWorker(
             noNetworkEncountered = noNetworkEncountered || networkIssueTracker.hasIssue()
             Log.d(TAG, "track:newpipe_result id=$id ok=$downloaded")
             if (downloaded) {
-                OfflineRestrictionStore.clearAutomaticNewPipeFailures(context, id)
+                RestrictionHeuristics.processSuccess(context, id)
             } else if (!networkIssueTracker.hasIssue() && networkIssueTracker.isYouTubeRestricted()) {
-                OfflineRestrictionStore.markRestricted(context, id)
+                RestrictionHeuristics.processFailure(context, id, false, true)
                 restrictedIds.add(id)
-                OfflineRestrictionStore.clearAutomaticNewPipeFailures(context, id)
                 Log.w(TAG, "track:newpipe_youtube_restricted id=$id")
                 return TrackDownloadResult.failed(id, title, noNetworkEncountered)
             } else if (!networkIssueTracker.hasIssue() && !userInitiated) {
-                val failures = OfflineRestrictionStore.incrementAutomaticNewPipeFailure(context, id)
-                Log.w(TAG, "track:newpipe_auto_fail id=$id failures=$failures/$MAX_NEWPIPE_AUTOMATIC_FAILURES")
+                val marked = RestrictionHeuristics.processFailure(context, id, false, false)
+                if (marked) restrictedIds.add(id)
             }
 
             if (!downloaded && !networkIssueTracker.hasIssue() && userInitiated) {
@@ -313,7 +312,7 @@ class OfflinePlaylistDownloadWorker(
                     Log.w(TAG, "track:failed_manual_retry id=$id")
                 } else {
                     val failures = OfflineRestrictionStore.getAutomaticNewPipeFailureCount(context, id)
-                    Log.w(TAG, "track:failed_auto id=$id auto_failures=$failures/$MAX_NEWPIPE_AUTOMATIC_FAILURES")
+                    Log.w(TAG, "track:failed_auto id=$id auto_failures=$failures/${RestrictionHeuristics.MAX_AUTOMATIC_FAILURES}")
                 }
                 return TrackDownloadResult.failed(id, title, noNetworkEncountered)
             }
@@ -324,9 +323,8 @@ class OfflinePlaylistDownloadWorker(
             }
 
             progressReporter.onProgress(1f)
-            OfflineRestrictionStore.unmarkRestricted(context, id)
+            RestrictionHeuristics.processSuccess(context, id)
             restrictedIds.remove(id)
-            OfflineRestrictionStore.clearAutomaticNewPipeFailures(context, id)
             OfflineAudioStore.markOfflineAudioState(id, true)
             Log.d(TAG, "track:success id=$id")
             return TrackDownloadResult.downloaded(id, title, noNetworkEncountered)
@@ -1513,7 +1511,7 @@ class OfflinePlaylistDownloadWorker(
         private const val DOWNLOAD_RETRY_BACKOFF_MS = 1200L
         private const val MAX_PARALLEL_DOWNLOADS_AUTO = 3
         private const val MAX_PARALLEL_DOWNLOADS_MANUAL = 1
-        private const val MAX_NEWPIPE_AUTOMATIC_FAILURES = 3
+    // MAX_NEWPIPE_AUTOMATIC_FAILURES replaced by RestrictionHeuristics
         private const val TARGET_M4A_BITRATE_LOW = 64_000
         private const val TARGET_M4A_BITRATE_MEDIUM = 128_000
         private const val TARGET_M4A_BITRATE_HIGH = 256_000

@@ -142,42 +142,30 @@
             android:visibility="gone" />
     </LinearLayout>
 
-    <!-- Featured Result Header -->
-    <LinearLayout
-        android:id="@+id/llFeaturedResult"
+    <!-- Scrollable Results Container with Featured Result -->
+    <androidx.core.widget.NestedScrollView
+        android:id="@+id/nsvSearchContent"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:paddingHorizontal="20dp"
-        android:paddingTop="0dp"
-        android:paddingBottom="6dp"
+        android:layout_height="0dp"
         android:visibility="gone"
-        app:layout_constraintTop_toBottomOf="@id/vDivider">
+        app:layout_constraintTop_toBottomOf="@id/vDivider"
+        app:layout_constraintBottom_toTopOf="@id/llMiniPlayer">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
+            android:orientation="vertical">
 
-            <com.google.android.material.imageview.ShapeableImageView
-                android:id="@+id/ivFeaturedThumb"
-                android:layout_width="84dp"
-                android:layout_height="wrap_content"
-                android:minHeight="84dp"
-                android:background="@color/surface_high"
-                android:scaleType="fitCenter"
-                android:adjustViewBounds="true"
-                android:maxHeight="84dp"
-                android:src="@drawable/ic_music"
-                app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Small" />
-
+            <!-- Featured Result Header - Now scrolls with results -->
             <LinearLayout
-                android:layout_width="0dp"
+                android:id="@+id/llFeaturedResult"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="12dp"
-                android:layout_weight="1"
-                android:orientation="vertical">
+                android:orientation="vertical"
+                android:paddingHorizontal="20dp"
+                android:paddingTop="0dp"
+                android:paddingBottom="6dp"
+                android:visibility="gone">
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -185,106 +173,130 @@
                     android:gravity="center_vertical"
                     android:orientation="horizontal">
 
-                    <TextView
-                        android:id="@+id/tvFeaturedTitle"
+                    <com.google.android.material.imageview.ShapeableImageView
+                        android:id="@+id/ivFeaturedThumb"
+                        android:layout_width="84dp"
+                        android:layout_height="wrap_content"
+                        android:minHeight="84dp"
+                        android:background="@color/surface_high"
+                        android:scaleType="fitCenter"
+                        android:adjustViewBounds="true"
+                        android:maxHeight="84dp"
+                        android:src="@drawable/ic_music"
+                        app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Small" />
+
+                    <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
+                        android:layout_marginStart="12dp"
                         android:layout_weight="1"
-                        android:ellipsize="end"
-                        android:fontFamily="@font/manrope_variable"
-                        android:maxLines="2"
-                        android:textAllCaps="true"
-                        android:textColor="@color/text_primary"
-                        android:textSize="20sp"
-                        android:textStyle="bold" />
+                        android:orientation="vertical">
 
-                    <ImageView
-                        android:id="@+id/ivFeaturedOfflineIndicator"
-                        android:layout_width="24dp"
-                        android:layout_height="24dp"
-                        android:layout_marginStart="8dp"
-                        android:background="@drawable/bg_offline_state_outline_muted"
-                        android:padding="5dp"
-                        android:src="@drawable/ic_check_small"
-                        android:visibility="gone"
-                        app:tint="@color/text_secondary" />
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <TextView
+                                android:id="@+id/tvFeaturedTitle"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:ellipsize="end"
+                                android:fontFamily="@font/manrope_variable"
+                                android:maxLines="2"
+                                android:textAllCaps="true"
+                                android:textColor="@color/text_primary"
+                                android:textSize="20sp"
+                                android:textStyle="bold" />
+
+                            <ImageView
+                                android:id="@+id/ivFeaturedOfflineIndicator"
+                                android:layout_width="24dp"
+                                android:layout_height="24dp"
+                                android:layout_marginStart="8dp"
+                                android:background="@drawable/bg_offline_state_outline_muted"
+                                android:padding="5dp"
+                                android:src="@drawable/ic_check_small"
+                                android:visibility="gone"
+                                app:tint="@color/text_secondary" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:id="@+id/tvFeaturedSubtitle"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:ellipsize="end"
+                            android:fontFamily="@font/inter_variable"
+                            android:maxLines="1"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="14sp" />
+                    </LinearLayout>
                 </LinearLayout>
 
-                <TextView
-                    android:id="@+id/tvFeaturedSubtitle"
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:ellipsize="end"
-                    android:fontFamily="@font/inter_variable"
-                    android:maxLines="1"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="14sp" />
+                    android:layout_marginTop="10dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnFeaturedPlay"
+                        android:layout_width="0dp"
+                        android:layout_height="46dp"
+                        android:layout_weight="1"
+                        android:fontFamily="@font/inter_variable"
+                        android:text="Reproducir"
+                        android:textAllCaps="false"
+                        android:textColor="#111319"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="@color/white"
+                        app:cornerRadius="23dp"
+                        app:icon="@drawable/ic_player_play"
+                        app:iconGravity="textStart"
+                        app:iconPadding="6dp"
+                        app:iconTint="#111319" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnFeaturedShare"
+                        android:layout_width="0dp"
+                        android:layout_height="46dp"
+                        android:layout_marginStart="10dp"
+                        android:layout_weight="1"
+                        android:fontFamily="@font/inter_variable"
+                        android:text="Compartir"
+                        android:textAllCaps="false"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="@android:color/transparent"
+                        app:cornerRadius="23dp"
+                        app:icon="@android:drawable/ic_menu_share"
+                        app:iconGravity="textStart"
+                        app:iconPadding="6dp"
+                        app:iconTint="@color/text_primary"
+                        app:rippleColor="#2FFFFFFF"
+                        app:strokeColor="@color/surface_high"
+                        app:strokeWidth="2dp" />
+                </LinearLayout>
             </LinearLayout>
+
+            <!-- Results list - now inside scrollview -->
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvSearchResults"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:clipToPadding="false"
+                android:paddingStart="12dp"
+                android:paddingEnd="8dp"
+                android:paddingBottom="8dp"
+                android:nestedScrollingEnabled="false" />
         </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnFeaturedPlay"
-                android:layout_width="0dp"
-                android:layout_height="46dp"
-                android:layout_weight="1"
-                android:fontFamily="@font/inter_variable"
-                android:text="Reproducir"
-                android:textAllCaps="false"
-                android:textColor="#111319"
-                android:textSize="13sp"
-                android:textStyle="bold"
-                app:backgroundTint="@color/white"
-                app:cornerRadius="23dp"
-                app:icon="@drawable/ic_player_play"
-                app:iconGravity="textStart"
-                app:iconPadding="6dp"
-                app:iconTint="#111319" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnFeaturedShare"
-                android:layout_width="0dp"
-                android:layout_height="46dp"
-                android:layout_marginStart="10dp"
-                android:layout_weight="1"
-                android:fontFamily="@font/inter_variable"
-                android:text="Compartir"
-                android:textAllCaps="false"
-                android:textColor="@color/text_primary"
-                android:textSize="13sp"
-                android:textStyle="bold"
-                app:backgroundTint="@android:color/transparent"
-                app:cornerRadius="23dp"
-                app:icon="@android:drawable/ic_menu_share"
-                app:iconGravity="textStart"
-                app:iconPadding="6dp"
-                app:iconTint="@color/text_primary"
-                app:rippleColor="#2FFFFFFF"
-                app:strokeColor="@color/surface_high"
-                app:strokeWidth="2dp" />
-        </LinearLayout>
-    </LinearLayout>
-
-    <!-- Results list con scroll propio -->
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/rvSearchResults"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:clipToPadding="false"
-        android:paddingStart="12dp"
-        android:paddingEnd="8dp"
-        android:paddingBottom="8dp"
-        android:visibility="gone"
-        app:layout_constraintBottom_toTopOf="@id/llMiniPlayer"
-        app:layout_constraintTop_toBottomOf="@id/llFeaturedResult"
-        app:layout_goneMarginTop="0dp" />
+    </androidx.core.widget.NestedScrollView>
 
     <!-- Search suggestions -->
     <androidx.recyclerview.widget.RecyclerView
@@ -295,7 +307,7 @@
         android:paddingBottom="16dp"
         android:visibility="visible"
         app:layout_constraintTop_toBottomOf="@id/vDivider"
-        app:layout_constraintBottom_toTopOf="@id/bottomNavigation" />
+        app:layout_constraintBottom_toTopOf="@id/llMiniPlayer" />
 
     <!-- Loading Overlay (Sincronizado con MainActivity y otros modulos) -->
     <androidx.constraintlayout.widget.ConstraintLayout
@@ -329,6 +341,7 @@
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:background="@color/surface_low"
+        android:elevation="16dp"
         app:itemIconTint="@color/stitch_blue"
         app:itemTextColor="@color/stitch_blue"
         app:layout_constraintBottom_toBottomOf="parent"
@@ -336,7 +349,7 @@
         app:layout_constraintStart_toStartOf="parent"
         app:menu="@menu/bottom_nav_menu" />
 
-    <!-- Mini Player - sits flush above bottom navigation -->
+    <!-- Mini Player - sits flush above bottom navigation (behind footer) -->
     <LinearLayout
         android:id="@+id/llMiniPlayer"
         android:layout_width="0dp"
@@ -351,6 +364,7 @@
         android:paddingEnd="0dp"
         android:paddingBottom="0dp"
         android:visibility="gone"
+        android:elevation="8dp"
         app:layout_constraintBottom_toTopOf="@id/bottomNavigation"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent">
@@ -426,10 +440,10 @@
             android:progressTint="@color/stitch_blue"
             android:splitTrack="false"
             android:thumb="@null"
-            android:thumTint="@android:color/transparent" />
+            android:thumbTint="@android:color/transparent" />
     </LinearLayout>
 
-    <!-- Full Player Container (overlays everything when visible) -->
+    <!-- Full Player Container (respeta solo el header, no el buscador) -->
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/searchPlayerContainer"
         android:layout_width="0dp"

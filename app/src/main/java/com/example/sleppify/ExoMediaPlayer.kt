@@ -280,10 +280,9 @@ class ExoMediaPlayer {
         exoPlayer?.let { player ->
             try {
                 player.removeListener(playerListener)
-                // SIEMPRE detener la reproducción para evitar sonido duplicado
-                player.stop()
-                player.clearMediaItems()
                 if (ownsPlayer) {
+                    player.stop()
+                    player.clearMediaItems()
                     player.release()
                 }
             } catch (e: Exception) {

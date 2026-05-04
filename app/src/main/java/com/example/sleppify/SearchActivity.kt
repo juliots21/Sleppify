@@ -94,6 +94,7 @@ class SearchActivity : AppCompatActivity() {
     private lateinit var rvSearchResults: RecyclerView
     private lateinit var tvSearchState: TextView
     private lateinit var llSearchBar: LinearLayout
+    private lateinit var nsvSearchContent: androidx.core.widget.NestedScrollView
     private lateinit var rvSearchSuggestions: RecyclerView
     private lateinit var llFeaturedResult: LinearLayout
     private lateinit var ivFeaturedThumb: ShapeableImageView
@@ -161,7 +162,7 @@ class SearchActivity : AppCompatActivity() {
                     return
                 }
                 
-                val hasResults = rvSearchResults.visibility == View.VISIBLE
+                val hasResults = nsvSearchContent.visibility == View.VISIBLE
                 
                 if (hasResults) {
                     // Back from results → show suggestions
@@ -187,6 +188,7 @@ class SearchActivity : AppCompatActivity() {
         etSearchQuery = findViewById(R.id.etSearchQuery)
         ivSearchClear = findViewById(R.id.ivSearchClear)
         rvSearchResults = findViewById(R.id.rvSearchResults)
+        nsvSearchContent = findViewById(R.id.nsvSearchContent)
         tvSearchState = findViewById(R.id.tvSearchState)
         rvSearchSuggestions = findViewById(R.id.rvSearchSuggestions)
         llFeaturedResult = findViewById(R.id.llFeaturedResult)
@@ -323,8 +325,7 @@ class SearchActivity : AppCompatActivity() {
         refreshSearchSuggestions(query)
         rvSearchSuggestions.visibility = View.VISIBLE
 
-        rvSearchResults.visibility = View.GONE
-        llFeaturedResult.visibility = View.GONE
+        nsvSearchContent.visibility = View.GONE
         findViewById<View>(R.id.llSearchState).visibility = View.GONE
         
         // Ocultar minireproductor y footer en sugerencias
@@ -339,10 +340,10 @@ class SearchActivity : AppCompatActivity() {
         allTracks.clear()
         tracks.clear()
         featuredTrack = null
-        llFeaturedResult.visibility = View.GONE
         adapter?.submitResults(emptyList())
         tvSearchState.text = ""
         activeSearchQuery = ""
+        nsvSearchContent.visibility = View.GONE
         rvSearchSuggestions.visibility = View.VISIBLE
         refreshSearchSuggestions("")
     }
@@ -390,7 +391,6 @@ class SearchActivity : AppCompatActivity() {
         allTracks.clear()
         tracks.clear()
         featuredTrack = null
-        llFeaturedResult.visibility = View.GONE
         adapter?.submitResults(emptyList())
         hasMoreSearchPages = false
         nextSearchPageToken = ""
@@ -398,7 +398,7 @@ class SearchActivity : AppCompatActivity() {
         rememberRecentSearchQuery(query)
         refreshSearchSuggestions(query)
         rvSearchSuggestions.visibility = View.GONE
-        rvSearchResults.visibility = View.VISIBLE
+        nsvSearchContent.visibility = View.VISIBLE
         bottomNavigation.visibility = View.VISIBLE
         updateMiniPlayerUi(forceVisibleInResults = true)
 
@@ -556,9 +556,9 @@ class SearchActivity : AppCompatActivity() {
                         val track = FavoritesPlaylistStore.FavoriteTrack(
                             obj.optString("videoId"),
                             obj.optString("title"),
-                            obj.optString("subtitle"),
-                            "", // duration not always available in cache
-                            obj.optString("thumbnailUrl")
+                            obj.optString("artist"),
+                            obj.optString("duration", ""),
+                            obj.optString("imageUrl")
                         )
                         tryAdd(track)
                     }
@@ -776,7 +776,7 @@ class SearchActivity : AppCompatActivity() {
             ivFeaturedOfflineIndicator.visibility = View.GONE
         }
         
-        loadArtworkInto(ivFeaturedThumb, track.thumbnailUrl)
+        loadArtworkInto(ivFeaturedThumb, track.thumbnailUrl, track.videoId)
         llFeaturedResult.setOnClickListener { onTrackClicked(track) }
         findViewById<View>(R.id.btnFeaturedPlay).setOnClickListener { onTrackClicked(track) }
     }
@@ -784,9 +784,10 @@ class SearchActivity : AppCompatActivity() {
     private val playbackListener = object : PlaybackEventBus.Listener {
         override fun onPlaybackSnapshotUpdated() {
             // Solo actualizar si estamos en la vista de resultados (no en sugerencias)
-            val showingResults = rvSearchResults.visibility == View.VISIBLE
+            val showingResults = nsvSearchContent.visibility == View.VISIBLE
             if (showingResults) {
-                runOnUiThread {   updateMiniPlayerUi(forceVisibleInResults = true)
+                runOnUiThread {
+                    updateMiniPlayerUi(forceVisibleInResults = true)
                 }
             }
         }
@@ -823,23 +824,25 @@ class SearchActivity : AppCompatActivity() {
         var selectedIndex = videoResults.indexOfFirst { it.videoId == track.videoId }
         if (selectedIndex < 0) selectedIndex = 0
 
-        // Stop any existing player in MainActivity first
-        stopMainActivityPlayer()
+        val selectedVideoId = videoResults.getOrNull(selectedIndex)?.videoId.orEmpty()
+        if (selectedVideoId.isNotEmpty()
+            && OfflineAudioStore.hasValidatedOfflineAudio(this, selectedVideoId, null)
+        ) {
+            clearPersistedPositionFor(selectedVideoId)
+        }
 
         // Play locally in this activity
         playInLocalPlayer(ids, titles, artists, durations, images, selectedIndex)
     }
 
-    private fun stopMainActivityPlayer() {
-        // Always dispatch PAUSE (not toggle) to MainActivity's player to prevent dual mini-players
-        try {
-            val intent = Intent().apply {
-                action = MainActivity.ACTION_PAUSE_CURRENT_PLAYBACK
-                putExtra(MainActivity.EXTRA_OPENED_FROM_SEARCH_ACTIVITY, true)
-            }
-            MainActivity.dispatchSearchPlayback(intent)
-        } catch (_: Exception) {}
+    private fun clearPersistedPositionFor(videoId: String) {
+        if (videoId.isBlank()) return
+        getSharedPreferences("player_state", MODE_PRIVATE)
+            .edit()
+            .remove("yt_pos_${videoId}")
+            .apply()
     }
+
 
     private fun playInLocalPlayer(
         ids: ArrayList<String>,
@@ -871,7 +874,7 @@ class SearchActivity : AppCompatActivity() {
             }
 
             // Create new player in mini mode (hidden)
-            val playerFragment = SongPlayerFragment.newInstance(ids, titles, artists, durations, images, selectedIndex, true)
+            val playerFragment = SongPlayerFragment.newInstance(ids, titles, artists, durations, images, selectedIndex, true, true)
             searchPlayerContainer.visibility = View.VISIBLE
             supportFragmentManager.beginTransaction()
                 .setReorderingAllowed(true)
@@ -914,7 +917,7 @@ class SearchActivity : AppCompatActivity() {
         } else {
             tvSubtitle.text = if (track.subtitle.isEmpty()) typeLabel else "$typeLabel • ${track.subtitle}"
         }
-        loadArtworkInto(ivArt, track.thumbnailUrl)
+        loadArtworkInto(ivArt, track.thumbnailUrl, track.videoId)
 
         val isPlaylist = "playlist".equals(track.resultType, ignoreCase = true)
 
@@ -1063,27 +1066,39 @@ class SearchActivity : AppCompatActivity() {
             .take(SEARCH_SUGGESTION_RECENT_LIMIT)
     }
 
+    private val miniProgressHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val miniProgressTicker = object : Runnable {
+        override fun run() {
+            if (isFinishing || isDestroyed) return
+            if (llMiniPlayer.visibility == View.VISIBLE) {
+                updateMiniPlayerUi()
+            }
+            miniProgressHandler.postDelayed(this, 1000)
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         PlaybackEventBus.addListener(playbackListener)
-        val showingResults = rvSearchResults.visibility == View.VISIBLE
+        val showingResults = nsvSearchContent.visibility == View.VISIBLE
         if (showingResults) {
             updateMiniPlayerUi(forceVisibleInResults = true)
         } else {
             llMiniPlayer.visibility = View.GONE
             bottomNavigation.visibility = View.GONE
         }
+        miniProgressHandler.removeCallbacks(miniProgressTicker)
+        miniProgressHandler.post(miniProgressTicker)
     }
 
     override fun onPause() {
         PlaybackEventBus.removeListener(playbackListener)
+        miniProgressHandler.removeCallbacks(miniProgressTicker)
         super.onPause()
     }
 
     override fun onDestroy() {
-        // Persist player state before destroying
-        val player = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER) as? SongPlayerFragment
-        player?.externalSnapshotForNavigation()
+        // player?.externalSnapshotForNavigation() is redundant and corrupts position (since fragment is already destroyed)
         super.onDestroy()
     }
 
@@ -1152,8 +1167,6 @@ class SearchActivity : AppCompatActivity() {
             val snapshot = PlaybackHistoryStore.load(this)
             if (snapshot.queue.isEmpty()) return
 
-            stopMainActivityPlayer()
-
             val ids = ArrayList(snapshot.queue.map { it.videoId })
             val titles = ArrayList(snapshot.queue.map { it.title })
             val artists = ArrayList(snapshot.queue.map { it.artist })
@@ -1161,7 +1174,7 @@ class SearchActivity : AppCompatActivity() {
             val images = ArrayList(snapshot.queue.map { it.imageUrl })
             val selectedIndex = snapshot.currentIndex.coerceIn(0, ids.size - 1)
 
-            val playerFragment = SongPlayerFragment.newInstance(ids, titles, artists, durations, images, selectedIndex, snapshot.isPlaying)
+            val playerFragment = SongPlayerFragment.newInstance(ids, titles, artists, durations, images, selectedIndex, snapshot.isPlaying, true)
             searchPlayerContainer.visibility = View.VISIBLE
             isPlayerVisible = true
             
@@ -1176,12 +1189,10 @@ class SearchActivity : AppCompatActivity() {
             supportFragmentManager.beginTransaction()
                 .setReorderingAllowed(true)
                 .add(R.id.searchPlayerContainer, playerFragment, TAG_SONG_PLAYER)
-                .commitNowAllowingStateLoss()
-
-            // Animate in after layout
-            searchPlayerContainer.post {
-                playerFragment.externalAnimateEnterSlide()
-            }
+                .runOnCommit {
+                    playerFragment.externalAnimateEnterSlide()
+                }
+                .commitAllowingStateLoss()
         }
     }
 
@@ -1204,17 +1215,10 @@ class SearchActivity : AppCompatActivity() {
         supportFragmentManager.beginTransaction()
             .setReorderingAllowed(true)
             .show(player)
-            .commitNowAllowingStateLoss()
-
-        // Ensure the view is actually visible and animate in
-        player.view?.let { v ->
-            v.visibility = View.VISIBLE
-            v.translationY = 0f
-            v.alpha = 1f
-        }
-        searchPlayerContainer.post {
-            player.externalAnimateEnterSlide()
-        }
+            .runOnCommit {
+                player.externalAnimateEnterSlide()
+            }
+            .commitAllowingStateLoss()
     }
 
     private fun collapsePlayerToMini() {
@@ -1241,42 +1245,32 @@ class SearchActivity : AppCompatActivity() {
                 updateMiniPlayerUi(forceVisibleInResults = true)
             }, 150)
         } else {
-            // No local player - create one from snapshot and toggle
-            val snapshot = PlaybackHistoryStore.load(this)
-            if (snapshot.queue.isEmpty()) return
-
-            stopMainActivityPlayer()
-
-            val ids = ArrayList(snapshot.queue.map { it.videoId })
-            val titles = ArrayList(snapshot.queue.map { it.title })
-            val artists = ArrayList(snapshot.queue.map { it.artist })
-            val durations = ArrayList(snapshot.queue.map { it.duration })
-            val images = ArrayList(snapshot.queue.map { it.imageUrl })
-            val selectedIndex = snapshot.currentIndex.coerceIn(0, ids.size - 1)
-            val shouldPlay = !snapshot.isPlaying
-
-            val playerFragment = SongPlayerFragment.newInstance(ids, titles, artists, durations, images, selectedIndex, shouldPlay)
-            searchPlayerContainer.visibility = View.VISIBLE
-            supportFragmentManager.beginTransaction()
-                .setReorderingAllowed(true)
-                .add(R.id.searchPlayerContainer, playerFragment, TAG_SONG_PLAYER)
-                .hide(playerFragment)
-                .commitNowAllowingStateLoss()
-            searchPlayerContainer.postDelayed({
-                searchPlayerContainer.visibility = View.GONE
-                updateMiniPlayerUi(forceVisibleInResults = true)
-            }, 300)
+            // No local player - dispatch toggle to MainActivity
+            try {
+                val intent = Intent().apply {
+                    action = MainActivity.ACTION_TOGGLE_CURRENT_PLAYBACK
+                    putExtra(MainActivity.EXTRA_OPENED_FROM_SEARCH_ACTIVITY, true)
+                }
+                MainActivity.dispatchSearchPlayback(intent)
+            } catch (_: Exception) {}
         }
     }
 
-    private fun loadArtworkInto(target: ImageView, url: String?) {
-        if (url.isNullOrEmpty()) {
+    private fun loadArtworkInto(target: ImageView, url: String?, videoId: String? = null) {
+        var finalUrl = url?.trim()
+        
+        if (finalUrl.isNullOrEmpty() && !videoId.isNullOrEmpty() && OfflineAudioStore.hasOfflineAudio(this, videoId)) {
+            finalUrl = OfflineAudioStore.getThumbnailUri(this, videoId)?.toString()
+        }
+
+        if (finalUrl.isNullOrEmpty()) {
             target.setImageResource(R.drawable.ic_music)
             return
         }
-        val trimmed = url.trim()
-        val safeUrl = if (trimmed.startsWith("//")) "https:$trimmed" else trimmed
-        val offlineOnly = !isNetworkAvailable()
+
+        val safeUrl = if (finalUrl.startsWith("//")) "https:$finalUrl" else finalUrl
+        val isLocalUri = safeUrl.startsWith("file://") || safeUrl.startsWith("content://")
+        val offlineOnly = !isNetworkAvailable() && !isLocalUri
         
         val base = Glide.with(this).load(safeUrl)
             .transform(YouTubeCropTransformation())
@@ -1354,7 +1348,7 @@ class SearchActivity : AppCompatActivity() {
             } else {
                 holder.subtitle.text = if (item.subtitle.isEmpty()) typeLabel else "$typeLabel • ${item.subtitle}"
             }
-            loadArtworkInto(holder.thumb, item.thumbnailUrl)
+            loadArtworkInto(holder.thumb, item.thumbnailUrl, item.videoId)
             
             // Check offline status
             if (item.videoId?.isNotEmpty() == true && OfflineAudioStore.hasOfflineAudio(this@SearchActivity, item.videoId)) {

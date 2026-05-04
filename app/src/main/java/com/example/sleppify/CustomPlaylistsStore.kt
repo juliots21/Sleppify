@@ -113,6 +113,26 @@ object CustomPlaylistsStore {
         return tracks
     }
 
+    fun savePlaylist(context: Context, playlistName: String, tracks: List<FavoritesPlaylistStore.FavoriteTrack>) {
+        val prefs = getPrefs(context)
+        val key = CUSTOM_PLAYLIST_PREFIX + playlistName
+        val newArr = JSONArray()
+        for (track in tracks) {
+            val trackObj = JSONObject()
+            trackObj.put("videoId", track.videoId)
+            trackObj.put("title", track.title)
+            trackObj.put("subtitle", track.artist)
+            trackObj.put("duration", track.duration)
+            trackObj.put("thumbnailUrl", track.imageUrl)
+            newArr.put(trackObj)
+        }
+        prefs.edit().putString(key, newArr.toString()).apply()
+        
+        if (AuthManager.getInstance(context).isSignedIn()) {
+            CloudSyncManager.getInstance(context).syncPlaylistToCloud(playlistName, tracks)
+        }
+    }
+
     fun deletePlaylist(context: Context, name: String): Boolean {
         val trimmed = name.trim()
         if (TextUtils.isEmpty(trimmed)) return false

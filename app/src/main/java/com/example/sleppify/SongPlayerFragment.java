@@ -113,6 +113,7 @@ public class SongPlayerFragment extends Fragment {
     public static final String ARG_IMAGES = "arg_images";
     public static final String ARG_SELECTED_INDEX = "arg_selected_index";
     public static final String ARG_START_PLAYING = "arg_start_playing";
+    public static final String ARG_IS_TEMPORARY_PLAYER = "arg_is_temporary_player";
 
     private static final String PREFS_PLAYER_STATE = "player_state";
     private static final String PREF_PLAYBACK_POS_PREFIX = "yt_pos_";
@@ -217,6 +218,7 @@ public class SongPlayerFragment extends Fragment {
     private SharedPreferences settingsPrefs;
 
     private boolean userSeeking = false;
+    private boolean isTemporaryPlayer = false;
 
     private int currentIndex = 0;
     private boolean isPlaying = true;
@@ -345,7 +347,7 @@ public class SongPlayerFragment extends Fragment {
     private final Runnable localProgressTicker = new Runnable() {
         @Override
         public void run() {
-            if (!isAdded() || localExoMediaPlayer == null || !usingOfflineSource || userSeeking) {
+            if (!isAdded() || localExoMediaPlayer == null || userSeeking) {
                 return;
             }
 
@@ -402,7 +404,7 @@ public class SongPlayerFragment extends Fragment {
             @NonNull ArrayList<String> images,
             int selectedIndex
     ) {
-        return newInstance(videoIds, titles, artists, durations, images, selectedIndex, true);
+        return newInstance(videoIds, titles, artists, durations, images, selectedIndex, true, false);
     }
 
     @NonNull
@@ -415,6 +417,20 @@ public class SongPlayerFragment extends Fragment {
             int selectedIndex,
             boolean startPlaying
     ) {
+        return newInstance(videoIds, titles, artists, durations, images, selectedIndex, startPlaying, false);
+    }
+
+    @NonNull
+    public static SongPlayerFragment newInstance(
+            @NonNull ArrayList<String> videoIds,
+            @NonNull ArrayList<String> titles,
+            @NonNull ArrayList<String> artists,
+            @NonNull ArrayList<String> durations,
+            @NonNull ArrayList<String> images,
+            int selectedIndex,
+            boolean startPlaying,
+            boolean isTemporaryPlayer
+    ) {
         SongPlayerFragment fragment = new SongPlayerFragment();
         Bundle args = new Bundle();
         args.putStringArrayList(ARG_VIDEO_IDS, videoIds);
@@ -424,6 +440,7 @@ public class SongPlayerFragment extends Fragment {
         args.putStringArrayList(ARG_IMAGES, images);
         args.putInt(ARG_SELECTED_INDEX, selectedIndex);
         args.putBoolean(ARG_START_PLAYING, startPlaying);
+        args.putBoolean(ARG_IS_TEMPORARY_PLAYER, isTemporaryPlayer);
         fragment.setArguments(args);
         return fragment;
     }
@@ -717,7 +734,9 @@ public class SongPlayerFragment extends Fragment {
     public void onDestroyView() {
         cleanupAudioDeviceCallback();
         persistPositionForLoadedTrack();
-        persistPlaybackSnapshot(true);
+        if (!isTemporaryPlayer) {
+            persistPlaybackSnapshot(true);
+        }
         cancelAutoplayRecovery();
         cancelPlaybackErrorRetry();
         cancelDeferredBackdropLoad();
@@ -728,7 +747,13 @@ public class SongPlayerFragment extends Fragment {
         clearPlayerBackdropRequest();
         resetPlayerHeroContainerHeight();
         stopLocalProgressTicker();
-        releaseLocalExoMediaPlayer();
+        
+        // Si es un reproductor temporal (e.g., en SearchActivity), NO liberar el player
+        // Mantenerlo en su estado actual para que la reproducción continúe
+        if (!isTemporaryPlayer) {
+            releaseLocalExoMediaPlayer();
+        }
+        
         if (getActivity() instanceof MainActivity) {
             ((MainActivity) getActivity()).setContainerOverlayMode(false);
         }
@@ -1063,6 +1088,12 @@ public class SongPlayerFragment extends Fragment {
         lastErroredVideoId = "";
         sameTrackErrorCount = 0;
         lastReresolveVideoId = null;
+        if (!TextUtils.isEmpty(loadedVideoId)) {
+            Context ctx = getContext();
+            if (ctx != null) {
+                RestrictionHeuristics.processSuccess(ctx, loadedVideoId);
+            }
+        }
     }
 
     private void stopPlaybackAfterErrors(@NonNull String message) {
@@ -1074,6 +1105,16 @@ public class SongPlayerFragment extends Fragment {
         updatePlayPauseIcon();
         updateMediaSessionState();
         persistPlaybackSnapshot(false);
+        
+        if (isNetworkAvailable() && !TextUtils.isEmpty(loadedVideoId)) {
+            Context ctx = getContext();
+            if (ctx != null) {
+                boolean marked = RestrictionHeuristics.processFailure(ctx, loadedVideoId, false, false);
+                if (marked && isAdded()) {
+                    Log.w(TAG, "Track marked restricted after player errors: " + loadedVideoId);
+                }
+            }
+        }
         if (isAdded()) {
             
         }
@@ -1254,10 +1295,6 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
-        int resumeSeconds = currentSeconds; // preserve any position loaded by bindCurrentTrack(true)
-        currentSeconds = 0;
-        totalSeconds = 1;
-        
         if (currentIndex < 0 || currentIndex >= tracks.size()) {
             currentIndex = 0;
         }
@@ -1266,6 +1303,42 @@ public class SongPlayerFragment extends Fragment {
         if (track == null || TextUtils.isEmpty(track.videoId)) {
             return;
         }
+
+        PlaybackHistoryStore.Snapshot snapshot = PlaybackHistoryStore.load(requireContext());
+        androidx.media3.exoplayer.ExoPlayer sharedExoPlayer = ExoPlayerManager.INSTANCE.getSharedExoPlayer();
+        boolean isSharedPlayerActive = sharedExoPlayer != null 
+                && (sharedExoPlayer.getPlaybackState() == androidx.media3.exoplayer.ExoPlayer.STATE_READY 
+                    || sharedExoPlayer.getPlaybackState() == androidx.media3.exoplayer.ExoPlayer.STATE_BUFFERING)
+                && snapshot.currentTrack() != null 
+                && snapshot.currentTrack().videoId.equals(track.videoId);
+
+        if (isSharedPlayerActive && localExoMediaPlayer == null) {
+            Log.d(TAG, "playCurrentTrack: Attaching seamlessly to active playback for " + track.videoId);
+            bindCurrentTrackInternal(true, false); // Keep current time and UI intact
+            usingOfflineSource = true;
+            localSourcePreparing = false;
+            localExoMediaPlayer = new ExoMediaPlayer(requireContext().getApplicationContext(), sharedExoPlayer);
+            localExoMediaPlayer.setOnPreparedListener(mp -> {
+                localSourcePreparing = false;
+                loadNextUpTracks();
+            });
+            localExoMediaPlayer.setOnCompletionListener(mp -> handleLocalPlaybackCompletion());
+            localExoMediaPlayer.setOnErrorListener((mp, what, extra) -> {
+                Log.e(TAG, "Local ExoMediaPlayer error (seamless): " + what + ", " + extra);
+                handlePlaybackError();
+                return true;
+            });
+            loadedVideoId = track.videoId;
+            updatePlayPauseIcon();
+            startLocalProgressTicker();
+            loadNextUpTracks();
+            lastPlaybackStartRequestAtMs = android.os.SystemClock.elapsedRealtime();
+            return;
+        }
+
+        int resumeSeconds = currentSeconds; // preserve any position loaded by bindCurrentTrack(true)
+        currentSeconds = 0;
+        totalSeconds = 1;
 
         // Bind metadata. forceZero=true resets UI to 0, but we restore resume position after.
         // NOTE: Do NOT call showPlayerArtworkLoadingState() here — keep old cover visible
@@ -1334,6 +1407,31 @@ public class SongPlayerFragment extends Fragment {
 
         // Fresh online resolution
         resolveAndPlayOnlineTrack(track, requestToken);
+    }
+
+    private void handleLocalPlaybackCompletion() {
+        if (!isAdded()) {
+            return;
+        }
+        if (localCrossfadeInProgress && localCrossfadeIncomingPlayer != null) {
+            return;
+        }
+        Log.d(TAG, "onCompletion: seamless player completed track");
+        stopLocalProgressTicker();
+        handleTrackEnded();
+    }
+
+    private void handlePlaybackError() {
+        if (!isAdded()) {
+            return;
+        }
+        tryReresolveOrSkipCurrentTrack("Error en reproductor compartido. Reintentando.", false);
+    }
+
+    private void loadNextUpTracks() {
+        // Ignored for now or placeholder if you want to reuse existing logic
+        // This method was missing but might be a refactor leftover.
+        // It could just be empty or delegate if necessary.
     }
 
     private void resolveAndPlayOnlineTrack(@NonNull PlayerTrack track, long requestToken) {
@@ -1485,19 +1583,28 @@ public class SongPlayerFragment extends Fragment {
         localSourcePreparing = true;
         updatePlayerSurfaceForSource();
 
+        Context playbackAppContext = getPlaybackAppContext();
+        if (playbackAppContext == null) {
+            Log.w(TAG, "startMediaPlaybackFromSource: missing app context, aborting playback start");
+            localSourcePreparing = false;
+            usingOfflineSource = false;
+            onFailure.run();
+            return;
+        }
+
         // Try to use shared ExoPlayer to reduce startup latency
         ExoPlayer sharedExoPlayer = ExoPlayerManager.INSTANCE.getSharedExoPlayer();
         ExoMediaPlayer player;
         if (sharedExoPlayer != null) {
             try {
-                player = new ExoMediaPlayer(requireContext().getApplicationContext(), sharedExoPlayer);
+                player = new ExoMediaPlayer(playbackAppContext, sharedExoPlayer);
                 Log.d(TAG, "Using shared ExoPlayer instance");
             } catch (Exception e) {
                 Log.w(TAG, "Failed to use shared ExoPlayer, falling back", e);
-                player = new ExoMediaPlayer(requireContext().getApplicationContext());
+                player = new ExoMediaPlayer(playbackAppContext);
             }
         } else {
-            player = new ExoMediaPlayer(requireContext().getApplicationContext());
+            player = new ExoMediaPlayer(playbackAppContext);
         }
         localExoMediaPlayer = player;
         player.setAudioAttributes(new AudioAttributes.Builder()
@@ -1507,9 +1614,7 @@ public class SongPlayerFragment extends Fragment {
 
         // Re-affirm EQ on the global session (session 0) — no per-player sessionId needed.
         try {
-            if (isAdded()) {
-                AudioEffectsService.sendApply(requireContext().getApplicationContext());
-            }
+            AudioEffectsService.sendApply(playbackAppContext);
         } catch (Exception ignored) {
         }
 
@@ -1583,6 +1688,10 @@ public class SongPlayerFragment extends Fragment {
         });
 
         player.setOnCompletionListener(mp -> {
+            if (!isAdded()) {
+                Log.d(TAG, "onCompletion: fragment not attached, ignoring completion callback");
+                return;
+            }
             if (requestToken != activePlaybackRequestToken) {
                 return;
             }
@@ -1611,7 +1720,7 @@ public class SongPlayerFragment extends Fragment {
                 releaseSingleExoMediaPlayer(mp);
             }
 
-            if (requestToken != activePlaybackRequestToken) {
+            if (requestToken != activePlaybackRequestToken || !isAdded()) {
                 return true;
             }
 
@@ -1624,7 +1733,7 @@ public class SongPlayerFragment extends Fragment {
                 Map<String, String> headers = new HashMap<>();
                 headers.put("User-Agent", STREAM_HTTP_USER_AGENT);
                 headers.put("Accept", "*/*");
-                player.setDataSource(requireContext(), Uri.parse(source), headers);
+                player.setDataSource(playbackAppContext, Uri.parse(source), headers);
             } else {
                 player.setDataSource(source);
             }
@@ -1635,9 +1744,7 @@ public class SongPlayerFragment extends Fragment {
             cancelSourcePrepareTimeout();
             localSourcePreparing = false;
             Log.e(TAG, "startMediaPlaybackFromSource: ExoPlayer thread is dead, reinitializing manager", ise);
-            if (isAdded()) {
-                ExoPlayerManager.INSTANCE.reinitialize(requireContext().getApplicationContext());
-            }
+            ExoPlayerManager.INSTANCE.reinitialize(playbackAppContext);
             onFailure.run();
         } catch (Exception e) {
             cancelSourcePrepareTimeout();
@@ -2603,6 +2710,10 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void loadPlayerCover(@NonNull PlayerTrack track, boolean bootstrapArtwork, int animationDirection) {
+        if (!isAdded() || getActivity() == null || ivPlayerCover == null) {
+            return;
+        }
+
         loadMediaNotificationArtwork(track);
         String requestVideoId = track.videoId == null ? "" : track.videoId.trim();
         String fallbackImageUrl = track.imageUrl == null ? "" : track.imageUrl.trim();
@@ -2690,14 +2801,15 @@ public class SongPlayerFragment extends Fragment {
             }
         };
 
-        Glide.with(this)
+        com.bumptech.glide.RequestManager requestManager = Glide.with(this);
+        requestManager
                 .asBitmap()
                 .load(preferredImageUrl)
                 .transform(new YouTubeCropTransformation())
                 .format(DecodeFormat.PREFER_ARGB_8888)
                 .diskCacheStrategy(DiskCacheStrategy.ALL)
                 .error(
-                        Glide.with(this)
+                        requestManager
                                 .asBitmap()
                                 .load("https://i.ytimg.com/vi/" + Uri.encode(requestVideoId) + "/hqdefault.jpg")
                                 .transform(new YouTubeCropTransformation())
@@ -2707,7 +2819,7 @@ public class SongPlayerFragment extends Fragment {
                                         TextUtils.isEmpty(fallbackImageUrl)
                                                 || TextUtils.equals(preferredImageUrl, fallbackImageUrl)
                                                 ? null
-                                                : Glide.with(this)
+                                                : requestManager
                                                         .asBitmap()
                                                         .load(fallbackImageUrl)
                                                         .transform(new YouTubeCropTransformation())
@@ -2719,7 +2831,7 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void loadPlayerBackdrop(@NonNull PlayerTrack track, boolean bootstrapArtwork) {
-        if (ivPlayerBackdrop == null) {
+        if (!isAdded() || getActivity() == null || ivPlayerBackdrop == null) {
             completePlayerArtworkBootstrap();
             return;
         }
@@ -2778,7 +2890,8 @@ public class SongPlayerFragment extends Fragment {
             }
         };
 
-        Glide.with(this)
+        com.bumptech.glide.RequestManager requestManager = Glide.with(this);
+        requestManager
                 .asDrawable()
                 .load(preferredImageUrl)
                 .centerCrop()
@@ -2787,7 +2900,7 @@ public class SongPlayerFragment extends Fragment {
                         TextUtils.isEmpty(fallbackImageUrl)
                                 || TextUtils.equals(preferredImageUrl, fallbackImageUrl)
                                 ? null
-                                : Glide.with(this)
+                                : requestManager
                                         .asDrawable()
                                         .load(fallbackImageUrl)
                                         .centerCrop()
@@ -2831,6 +2944,11 @@ public class SongPlayerFragment extends Fragment {
 
     @Override
     public void onDestroy() {
+        cancelSourcePrepareTimeout();
+        cancelAutoplayRecovery();
+        cancelPlaybackErrorRetry();
+        stopLocalProgressTicker();
+        releaseLocalExoMediaPlayer();
         cancelPendingStreamResolver();
         streamResolverExecutor.shutdownNow();
         socialStatsExecutor.shutdownNow();
@@ -3348,43 +3466,30 @@ public class SongPlayerFragment extends Fragment {
 
         playerEnterAnimationRunning = true;
 
-        int initDistance = root.getHeight();
-        if (initDistance <= 0) {
-            initDistance = root.getResources().getDisplayMetrics().heightPixels;
+        // Use cached height or resources fallback for first frame
+        int distance = root.getHeight();
+        if (distance <= 0) {
+            distance = root.getResources().getDisplayMetrics().heightPixels;
         }
 
         root.animate().cancel();
         root.setVisibility(View.VISIBLE);
-        root.setTranslationY(initDistance);
         root.setAlpha(1f);
+        root.setTranslationY(distance);
 
-        root.post(() -> {
-            View v = getView();
-            if (v == null) {
-                playerEnterAnimationRunning = false;
-                return;
-            }
-
-            int distance = v.getHeight();
-            if (distance <= 0) {
-                distance = v.getResources().getDisplayMetrics().heightPixels;
-            }
-
-            v.animate().cancel();
-            v.setTranslationY(distance);
-            v.animate()
-                    .translationY(0f)
-                    .setDuration(300L)
-                    .setInterpolator(new android.view.animation.PathInterpolator(0.4f, 0f, 0.2f, 1f))
-                    .withEndAction(() -> {
-                        playerEnterAnimationRunning = false;
-                        View currentView = getView();
-                        if (currentView != null) {
-                            currentView.setTranslationY(0f);
-                        }
-                    })
-                    .start();
-        });
+        // Perform animation immediately
+        root.animate()
+                .translationY(0f)
+                .setDuration(280L)
+                .setInterpolator(new android.view.animation.PathInterpolator(0.4f, 0f, 0.2f, 1f))
+                .withEndAction(() -> {
+                    playerEnterAnimationRunning = false;
+                    View currentView = getView();
+                    if (currentView != null) {
+                        currentView.setTranslationY(0f);
+                    }
+                })
+                .start();
     }
 
     public void externalSetReturnTargetTag(@NonNull String targetTag) {
@@ -4099,6 +4204,7 @@ public class SongPlayerFragment extends Fragment {
         ArrayList<String> images = safeList(args.getStringArrayList(ARG_IMAGES));
         currentIndex = args.getInt(ARG_SELECTED_INDEX, 0);
         isPlaying = args.getBoolean(ARG_START_PLAYING, true);
+        isTemporaryPlayer = args.getBoolean(ARG_IS_TEMPORARY_PLAYER, false);
 
         int count = Math.min(ids.size(), Math.min(titles.size(), Math.min(artists.size(), Math.min(durations.size(), images.size()))));
         for (int i = 0; i < count; i++) {
@@ -4192,6 +4298,11 @@ public class SongPlayerFragment extends Fragment {
         }
 
         persistPlaybackSnapshot(false);
+        
+        // CRITICAL: Clear prefetch cache because the "next" song has changed
+        prefetchedNextVideoId = null;
+        prefetchedNextUrl = null;
+        
         syncMiniStateWithPlaylist();
     }
 
@@ -4431,12 +4542,6 @@ public class SongPlayerFragment extends Fragment {
         }
 
         boolean moveItem(int fromPosition, int toPosition) {
-            if (fromPosition < 0 || fromPosition >= items.size()) {
-                return false;
-            }
-            if (toPosition < 0 || toPosition >= items.size()) {
-                return false;
-            }
             if (fromPosition == toPosition) {
                 return false;
             }
@@ -4910,6 +5015,15 @@ public class SongPlayerFragment extends Fragment {
         }
         localExoMediaPlayer = null;
         usingOfflineSource = false;
+    }
+
+    @Nullable
+    private Context getPlaybackAppContext() {
+        Context currentContext = getContext();
+        if (currentContext != null) {
+            persistentAppContext = currentContext.getApplicationContext();
+        }
+        return persistentAppContext;
     }
 
     private void clearPlayerCoverRequest() {

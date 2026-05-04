@@ -205,6 +205,12 @@ object OfflineAudioStore {
     }
 
     @JvmStatic
+    fun getThumbnailUri(context: Context, trackId: String): android.net.Uri? {
+        val file = getExistingOfflineAudioFile(context, trackId)
+        return if (file.exists()) android.net.Uri.fromFile(file) else null
+    }
+
+    @JvmStatic
     fun clearOfflineAudioStateCache() {
         synchronized(OFFLINE_STATE_CACHE_LOCK) {
             OFFLINE_STATE_CACHE.clear()
