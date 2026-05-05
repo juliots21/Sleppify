@@ -3135,20 +3135,22 @@ public class PlaylistDetailFragment extends Fragment
         }
 
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
-        if (existingPlayer != null && existingPlayer.isAdded()) {
-            existingPlayer.externalSetReturnTargetTag(TAG_PLAYLIST_DETAIL);
-            if (existingPlayer.externalMatchesQueue(ids)) {
-                existingPlayer.externalPlayTrackFromStart(queueIndex);
-            } else {
-                existingPlayer.externalReplaceQueueFromStart(ids, titles, artists, durations, images, queueIndex, true);
-            }
+        if (existingPlayer != null) {
+            if (existingPlayer.isAdded()) {
+                existingPlayer.externalSetReturnTargetTag(TAG_PLAYLIST_DETAIL);
+                if (existingPlayer.externalMatchesQueue(ids)) {
+                    existingPlayer.externalPlayTrackFromStart(queueIndex);
+                } else {
+                    existingPlayer.externalReplaceQueueFromStart(ids, titles, artists, durations, images, queueIndex, true);
+                }
 
-            currentTrackIndex = position;
-            miniPlaying = true;
-            if (trackAdapter != null) {
-                trackAdapter.setActiveIndex(position);
+                currentTrackIndex = position;
+                miniPlaying = true;
+                if (trackAdapter != null) {
+                    trackAdapter.setActiveIndex(position);
+                }
+                updateMiniPlayerUi();
             }
-            updateMiniPlayerUi();
             return;
         }
 
@@ -3796,28 +3798,30 @@ public class PlaylistDetailFragment extends Fragment
         }
 
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
-        if (existingPlayer != null && existingPlayer.isAdded()) {
-            existingPlayer.externalSetReturnTargetTag(TAG_PLAYLIST_DETAIL);
-            if (existingPlayer.externalMatchesQueue(ids)) {
-                if (startFromBeginning) {
-                    existingPlayer.externalPlayTrackFromStart(queueIndex);
+        if (existingPlayer != null) {
+            if (existingPlayer.isAdded()) {
+                existingPlayer.externalSetReturnTargetTag(TAG_PLAYLIST_DETAIL);
+                if (existingPlayer.externalMatchesQueue(ids)) {
+                    if (startFromBeginning) {
+                        existingPlayer.externalPlayTrackFromStart(queueIndex);
+                    } else {
+                        existingPlayer.externalPlayTrack(queueIndex);
+                    }
                 } else {
-                    existingPlayer.externalPlayTrack(queueIndex);
+                    if (startFromBeginning) {
+                        existingPlayer.externalReplaceQueueFromStart(ids, titles, artists, durations, images, queueIndex, true);
+                    } else {
+                        existingPlayer.externalReplaceQueue(ids, titles, artists, durations, images, queueIndex, true);
+                    }
                 }
-            } else {
-                if (startFromBeginning) {
-                    existingPlayer.externalReplaceQueueFromStart(ids, titles, artists, durations, images, queueIndex, true);
-                } else {
-                    existingPlayer.externalReplaceQueue(ids, titles, artists, durations, images, queueIndex, true);
+
+                    showSongPlayerWithEnterAnimation(existingPlayer);
+
+                currentTrackIndex = position;
+                miniPlaying = true;
+                if (trackAdapter != null) {
+                    trackAdapter.setActiveIndex(position);
                 }
-            }
-
-                showSongPlayerWithEnterAnimation(existingPlayer);
-
-            currentTrackIndex = position;
-            miniPlaying = true;
-            if (trackAdapter != null) {
-                trackAdapter.setActiveIndex(position);
             }
             // Don't update mini-player UI - keep it hidden while full player is visible
             return;
@@ -3878,10 +3882,12 @@ public class PlaylistDetailFragment extends Fragment
         persistSnapshotPositionToPlayerState(snapshot);
 
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
-        if (existingPlayer != null && existingPlayer.isAdded()) {
-            existingPlayer.externalSetReturnTargetTag(TAG_PLAYLIST_DETAIL);
-            existingPlayer.externalReplaceQueue(ids, titles, artists, durations, images, snapshotIndex, startPlaying);
-            showSongPlayerWithEnterAnimation(existingPlayer);
+        if (existingPlayer != null) {
+            if (existingPlayer.isAdded()) {
+                existingPlayer.externalSetReturnTargetTag(TAG_PLAYLIST_DETAIL);
+                existingPlayer.externalReplaceQueue(ids, titles, artists, durations, images, snapshotIndex, startPlaying);
+                showSongPlayerWithEnterAnimation(existingPlayer);
+            }
         } else {
             SongPlayerFragment playerFragment = SongPlayerFragment.newInstance(
                     ids,
@@ -4059,20 +4065,22 @@ public class PlaylistDetailFragment extends Fragment
         images.add(image == null ? "" : image);
 
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
-        if (existingPlayer != null && existingPlayer.isAdded()) {
-            existingPlayer.externalSetReturnTargetTag(TAG_PLAYLIST_DETAIL);
-            existingPlayer.externalReplaceQueue(ids, titles, artists, durations, images, 0, startPlaying);
+        if (existingPlayer != null) {
+            if (existingPlayer.isAdded()) {
+                existingPlayer.externalSetReturnTargetTag(TAG_PLAYLIST_DETAIL);
+                existingPlayer.externalReplaceQueue(ids, titles, artists, durations, images, 0, startPlaying);
 
-            if (showPlayer) {
-                showSongPlayerWithEnterAnimation(existingPlayer);
-            }
+                if (showPlayer) {
+                    showSongPlayerWithEnterAnimation(existingPlayer);
+                }
 
-            currentTrackIndex = findTrackIndexByVideoId(currentTracks, videoId);
-            miniPlaying = startPlaying;
-            if (trackAdapter != null) {
-                trackAdapter.setActiveIndex(currentTrackIndex);
+                currentTrackIndex = findTrackIndexByVideoId(currentTracks, videoId);
+                miniPlaying = startPlaying;
+                if (trackAdapter != null) {
+                    trackAdapter.setActiveIndex(currentTrackIndex);
+                }
+                updateMiniPlayerUi();
             }
-            updateMiniPlayerUi();
             return true;
         }
 
@@ -4137,12 +4145,14 @@ public class PlaylistDetailFragment extends Fragment
         }
 
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
-        if (existingPlayer != null && existingPlayer.isAdded()) {
-            existingPlayer.externalSetReturnTargetTag(TAG_PLAYLIST_DETAIL);
-            if (startPlaying && !existingPlayer.externalIsPlaying()) {
-                existingPlayer.externalTogglePlayback();
+        if (existingPlayer != null) {
+            if (existingPlayer.isAdded()) {
+                existingPlayer.externalSetReturnTargetTag(TAG_PLAYLIST_DETAIL);
+                if (startPlaying && !existingPlayer.externalIsPlaying()) {
+                    existingPlayer.externalTogglePlayback();
+                }
+                updateMiniPlayerUi();
             }
-            updateMiniPlayerUi();
             return true;
         }
 

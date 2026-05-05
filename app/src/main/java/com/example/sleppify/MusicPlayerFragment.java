@@ -3926,19 +3926,21 @@ public class MusicPlayerFragment extends Fragment {
         durations.add(duration == null ? "" : duration);
         images.add(image == null ? "" : image);
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
-        if (existingPlayer != null && existingPlayer.isAdded()) {
-            existingPlayer.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
-            existingPlayer.externalReplaceQueue(ids, titles, artists, durations, images, 0, startPlaying);
-            if (showPlayer) {
-                getParentFragmentManager()
-                        .beginTransaction()
-                        .setReorderingAllowed(true)
-                        .show(existingPlayer)
-                        .runOnCommit(existingPlayer::externalAnimateEnterSlide)
-                        .commit();
+        if (existingPlayer != null) {
+            if (existingPlayer.isAdded()) {
+                existingPlayer.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
+                existingPlayer.externalReplaceQueue(ids, titles, artists, durations, images, 0, startPlaying);
+                if (showPlayer) {
+                    getParentFragmentManager()
+                            .beginTransaction()
+                            .setReorderingAllowed(true)
+                            .show(existingPlayer)
+                            .runOnCommit(existingPlayer::externalAnimateEnterSlide)
+                            .commit();
+                }
+                invalidateMiniSnapshotCache();
+                updateMiniPlayerUi();
             }
-            invalidateMiniSnapshotCache();
-            updateMiniPlayerUi();
             return true;
         }
         if (getParentFragmentManager().isStateSaved()) {
@@ -3997,11 +3999,13 @@ public class MusicPlayerFragment extends Fragment {
         int snapshotIndex = Math.max(0, Math.min(snapshot.currentIndex, ids.size() - 1));
         persistSnapshotPositionToPlayerState(snapshot);
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
-        if (existingPlayer != null && existingPlayer.isAdded()) {
-            existingPlayer.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
-            existingPlayer.externalReplaceQueue(ids, titles, artists, durations, images, snapshotIndex, startPlaying);
-            invalidateMiniSnapshotCache();
-            updateMiniPlayerUi();
+        if (existingPlayer != null) {
+            if (existingPlayer.isAdded()) {
+                existingPlayer.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
+                existingPlayer.externalReplaceQueue(ids, titles, artists, durations, images, snapshotIndex, startPlaying);
+                invalidateMiniSnapshotCache();
+                updateMiniPlayerUi();
+            }
             return true;
         }
         if (getParentFragmentManager().isStateSaved()) {
@@ -4557,15 +4561,17 @@ public class MusicPlayerFragment extends Fragment {
         }
         clearPersistedPositionForVideoId(ids.get(index));
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
-        if (existingPlayer != null && existingPlayer.isAdded()) {
-            existingPlayer.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
-            existingPlayer.externalReplaceQueueFromStart(ids, titles, artists, durations, images, index, true);
-            getParentFragmentManager()
-                    .beginTransaction()
-                    .setReorderingAllowed(true)
-                    .show(existingPlayer)
-                    .runOnCommit(existingPlayer::externalAnimateEnterSlide)
-                    .commit();
+        if (existingPlayer != null) {
+            if (existingPlayer.isAdded()) {
+                existingPlayer.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
+                existingPlayer.externalReplaceQueueFromStart(ids, titles, artists, durations, images, index, true);
+                getParentFragmentManager()
+                        .beginTransaction()
+                        .setReorderingAllowed(true)
+                        .show(existingPlayer)
+                        .runOnCommit(existingPlayer::externalAnimateEnterSlide)
+                        .commit();
+            }
         } else {
             SongPlayerFragment playerFragment = SongPlayerFragment.newInstance(
                     ids,

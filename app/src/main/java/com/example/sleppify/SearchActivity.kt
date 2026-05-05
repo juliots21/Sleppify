@@ -857,15 +857,17 @@ class SearchActivity : AppCompatActivity() {
         pendingContainerHide = null
 
         val existingPlayer = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER) as? SongPlayerFragment
-        if (existingPlayer != null && existingPlayer.isAdded) {
-            // Stop current audio immediately before loading the new track
-            existingPlayer.externalPause()
-            // Reuse existing player - replace queue and start playing the new track
-            existingPlayer.externalReplaceQueueFromStart(ids, titles, artists, durations, images, selectedIndex, true)
-            // Ensure container is visible
-            searchPlayerContainer.visibility = View.VISIBLE
-            if (!isPlayerVisible) {
-                existingPlayer.externalTryEnterMiniMode()
+        if (existingPlayer != null) {
+            if (existingPlayer.isAdded) {
+                // Stop current audio immediately before loading the new track
+                existingPlayer.externalPause()
+                // Reuse existing player - replace queue and start playing the new track
+                existingPlayer.externalReplaceQueueFromStart(ids, titles, artists, durations, images, selectedIndex, true)
+                // Ensure container is visible
+                searchPlayerContainer.visibility = View.VISIBLE
+                if (!isPlayerVisible) {
+                    existingPlayer.externalTryEnterMiniMode()
+                }
             }
         } else {
             // Remove any stale fragment first
@@ -1159,9 +1161,11 @@ class SearchActivity : AppCompatActivity() {
         pendingContainerHide = null
 
         val existingPlayer = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER) as? SongPlayerFragment
-        if (existingPlayer != null && existingPlayer.isAdded) {
-            // Show existing player full screen
-            showPlayerFullScreen(existingPlayer)
+        if (existingPlayer != null) {
+            if (existingPlayer.isAdded) {
+                // Show existing player full screen
+                showPlayerFullScreen(existingPlayer)
+            }
         } else {
             // Create player from persisted state
             val snapshot = PlaybackHistoryStore.load(this)

@@ -4020,6 +4020,11 @@ public class SongPlayerFragment extends Fragment {
         }
         // If we don't have a valid duration yet, just trust the saved value.
         // Otherwise, clamp it to ensure we don't start past the end.
+        if (maxSeconds > 5 && saved >= maxSeconds - 2) {
+            // Track was basically finished, start from beginning instead of instantly skipping
+            clearPersistedPositionFor(videoId);
+            return 0;
+        }
         if (maxSeconds <= 5) {
             return saved;
         }

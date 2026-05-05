@@ -242,7 +242,7 @@ class CloudSyncManager private constructor(context: Context) {
     ) {
         if (!TextUtils.equals(activeUserId, userId)) return
 
-        val pending = PendingSync(3) { success, message ->
+        val pending = PendingSync(4) { success, message ->
             if (!TextUtils.equals(activeUserId, userId)) return@PendingSync
 
             if (!success && isRecoverableSyncMessage(message)) {
@@ -265,6 +265,7 @@ class CloudSyncManager private constructor(context: Context) {
         syncEqFromCloudThenLocal(pending)
         syncSettingsFromCloudThenLocal(pending)
         syncStreamingFavoritesFromCloudThenLocal(pending)
+        syncPlaylistOverridesFromCloudThenLocal(pending)
     }
 
     fun onUserSignedOut() {
@@ -482,6 +483,41 @@ class CloudSyncManager private constructor(context: Context) {
 
     private fun syncStreamingFavoritesFromCloudThenLocal(pending: PendingSync) =
         syncBucketFromCloudThenLocal(pending, ::streamingDoc, ::handleStreamingSyncSnapshot)
+
+    private fun syncPlaylistOverridesFromCloudThenLocal(pending: PendingSync) {
+        val uid = activeUserId
+        if (uid.isNullOrEmpty()) {
+            pending.finish(true, null)
+            return
+        }
+
+        beginNetworkSync()
+
+        firestore.collection(USERS_COLLECTION).document(uid)
+            .collection(COLLECTION_PLAYLIST_OVERRIDES)
+            .get()
+            .addOnSuccessListener { documents ->
+                for (doc in documents) {
+                    val playlistId = doc.id
+                    @Suppress("UNCHECKED_CAST")
+                    val rawList = doc.get("overrides") as? List<Map<String, Any?>> ?: continue
+                    val parsed = ArrayList<PlaylistOverrideStore.Override>(rawList.size)
+                    for (m in rawList) {
+                        val o = PlaylistOverrideStore.Override.fromMap(m) ?: continue
+                        parsed.add(o)
+                    }
+                    if (parsed.isNotEmpty()) {
+                        PlaylistOverrideStore.mergeFromCloud(appContext, playlistId, parsed)
+                    }
+                }
+                endNetworkSync()
+                pending.finish(true, null)
+            }
+            .addOnFailureListener { serverError ->
+                endNetworkSync()
+                pending.finish(false, toUserFacingSyncError(serverError))
+            }
+    }
 
     private fun handleEqSyncSnapshot(
         snapshot: DocumentSnapshot,
