@@ -112,7 +112,6 @@ public class PlaylistDetailFragment extends Fragment
     private static final String PREF_CACHED_GOOGLE_PROFILE_PHOTO_URL = "cached_google_profile_photo_url";
     private static final String PREF_PLAYLIST_OFFLINE_AUTO_PREFIX = "playlist_offline_auto_";
     private static final String PREFS_PLAYER_STATE = "player_state";
-    private static final String PREF_PLAYBACK_POS_PREFIX = "yt_pos_";
     private static final String PREF_LAST_PLAYLIST_ID = "stream_last_playlist_id";
     private static final String PREF_LAST_PLAYLIST_TITLE = "stream_last_playlist_title";
     private static final String PREF_LAST_PLAYLIST_SUBTITLE = "stream_last_playlist_subtitle";
@@ -157,7 +156,7 @@ public class PlaylistDetailFragment extends Fragment
     private SwipeRefreshLayout swipePlaylistRefresh;
     private View playlistLoadingOverlay;
     private ProgressBar pbPlaylistLoading;
-    private ShapeableImageView ivMiniPlayerArt;
+    private ImageView ivMiniPlayerArt;
     private TextView tvMiniPlayerTitle;
     private TextView tvMiniPlayerSubtitle;
     private SeekBar sbMiniPlayerProgress;
@@ -208,8 +207,7 @@ public class PlaylistDetailFragment extends Fragment
     private String currentPlaylistThumbnail = "";
     @NonNull
     private String lastPersistedVideoId = "";
-    private int lastPersistedSecond = -1;
-    private boolean lastPersistedPlaying;
+    private boolean lastPersistedPlaying = false;
     @NonNull
     private String headerPlaylistTitle = "Lista";
     @NonNull
@@ -358,15 +356,6 @@ public class PlaylistDetailFragment extends Fragment
                 playlistLoadingOverlay.setBackgroundColor(Color.TRANSPARENT);
                 playlistLoadingOverlay.setClickable(false);
                 playlistLoadingOverlay.setFocusable(false);
-            }
-
-            // Aplicar margen extra a la izquierda para el buscador en TV
-            if (llLibraryHeaderRow != null) {
-                ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) llLibraryHeaderRow.getLayoutParams();
-                if (lp != null) {
-                    lp.setMarginStart((int) (32 * getResources().getDisplayMetrics().density));
-                    llLibraryHeaderRow.setLayoutParams(lp);
-                }
             }
 
             if (btnTvNext != null) {
@@ -1248,10 +1237,14 @@ public class PlaylistDetailFragment extends Fragment
     }
 
     private static void loadArtworkInto(@NonNull ImageView target, @Nullable String imageUrl) {
-        loadArtworkInto(target, imageUrl, 0);
+        loadArtworkInto(target, imageUrl, 0, false);
     }
 
     private static void loadArtworkInto(@NonNull ImageView target, @Nullable String imageUrl, int fixedSizeDp) {
+        loadArtworkInto(target, imageUrl, fixedSizeDp, false);
+    }
+
+    private static void loadArtworkInto(@NonNull ImageView target, @Nullable String imageUrl, int fixedSizeDp, boolean highQuality) {
         if (TextUtils.isEmpty(imageUrl)) {
             target.setTag(R.id.tag_artwork_signature, null);
             target.setImageDrawable(null);
@@ -1307,10 +1300,11 @@ public class PlaylistDetailFragment extends Fragment
         Glide.with(target)
             .load(safeUrl)
             .transform(new YouTubeCropTransformation())
-            .format(DecodeFormat.PREFER_RGB_565)
+            .format(highQuality ? DecodeFormat.PREFER_ARGB_8888 : DecodeFormat.PREFER_RGB_565)
             .diskCacheStrategy(DiskCacheStrategy.ALL)
             .onlyRetrieveFromCache(offlineOnly)
-            .override(Math.min(targetWidth, 160), Math.min(targetHeight, 160)) // Low quality constraint
+            .override(highQuality ? targetWidth : Math.min(targetWidth, 160), 
+                      highQuality ? targetHeight : Math.min(targetHeight, 160))
             .transition(com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions.withCrossFade())
             .into(target);
     }
@@ -2575,16 +2569,13 @@ public class PlaylistDetailFragment extends Fragment
         if (!isAdded() || tracks.isEmpty()) return;
         try {
             if (isFavorites) {
+                List<FavoritesPlaylistStore.FavoriteTrack> updated = new ArrayList<>(tracks.size());
                 for (PlaylistTrack track : tracks) {
-                    FavoritesPlaylistStore.upsertFavorite(
-                            requireContext(),
-                            track.videoId,
-                            track.title,
-                            track.artist,
-                            track.duration,
-                            track.imageUrl
-                    );
+                    updated.add(new FavoritesPlaylistStore.FavoriteTrack(
+                            track.videoId, track.title, track.artist, track.duration, track.imageUrl
+                    ));
                 }
+                FavoritesPlaylistStore.storeFavorites(requireContext(), updated);
             } else if (isCustomPlaylistContext(playlistId)) {
                 String name = playlistId.substring(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX.length());
                 List<FavoritesPlaylistStore.FavoriteTrack> updated = new ArrayList<>(tracks.size());
@@ -2654,13 +2645,27 @@ public class PlaylistDetailFragment extends Fragment
     }
 
     public void externalRefreshFavoritesIfActive() {
-        if (!isAdded() || !isFavoritesPlaylistContext(currentPlaylistId)) {
-            return;
-        }
+        externalRefreshFavoritesIfActive(null);
+    }
 
-        List<PlaylistTrack> refreshed = sanitizeTracksForPlaylist(currentPlaylistId, Collections.emptyList());
-        renderTracks(refreshed, currentPlaylistId, true);
-        replacePlayerQueueWithCurrentOrder();
+    public void externalRefreshFavoritesIfActive(@Nullable String videoId) {
+        if (!isAdded()) return;
+
+        if (isFavoritesPlaylistContext(currentPlaylistId)) {
+            List<PlaylistTrack> refreshed = sanitizeTracksForPlaylist(currentPlaylistId, Collections.emptyList());
+            renderTracks(refreshed, currentPlaylistId, true);
+            replacePlayerQueueWithCurrentOrder();
+        } else if (videoId != null && currentTracks != null) {
+            for (int i = 0; i < currentTracks.size(); i++) {
+                if (TextUtils.equals(currentTracks.get(i).videoId, videoId)) {
+                    if (trackAdapter != null) {
+                        trackAdapter.invalidateTrackStateCache(videoId);
+                        trackAdapter.notifyItemChanged(i);
+                    }
+                    break;
+                }
+            }
+        }
     }
 
     private void renderTracks(
@@ -2926,7 +2931,7 @@ public class PlaylistDetailFragment extends Fragment
     @NonNull
     private PlaybackHistoryStore.Snapshot loadPlaybackSnapshot() {
         if (!isAdded()) {
-            return new PlaybackHistoryStore.Snapshot(new ArrayList<>(), 0, 0, 1, false, 0L);
+            return new PlaybackHistoryStore.Snapshot(new ArrayList<>(), 0, 1, false, 0L);
         }
 
         long now = System.currentTimeMillis();
@@ -3137,6 +3142,13 @@ public class PlaylistDetailFragment extends Fragment
         if (existingPlayer != null) {
             if (existingPlayer.isAdded()) {
                 existingPlayer.externalSetReturnTargetTag(TAG_PLAYLIST_DETAIL);
+                
+                // If the selected track is already playing, just open the player
+                if (TextUtils.equals(selectedVideoId, existingPlayer.getLoadedVideoId())) {
+                    openPlayerFromMiniBar();
+                    return;
+                }
+
                 if (existingPlayer.externalMatchesQueue(ids)) {
                     existingPlayer.externalPlayTrackFromStart(queueIndex);
                 } else {
@@ -3376,7 +3388,7 @@ public class PlaylistDetailFragment extends Fragment
         LinearLayout row = new LinearLayout(context);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(12), dp(10), dp(12), dp(10));
+        row.setPadding(dp(8), dp(10), dp(8), dp(10));
 
         ImageView icon = new ImageView(context);
         LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(18), dp(18));
@@ -3555,6 +3567,11 @@ public class PlaylistDetailFragment extends Fragment
         if (FavoritesPlaylistStore.PLAYLIST_ID.equals(currentPlaylistId)) {
             currentTracks.remove(position);
             renderTracks(currentTracks, currentPlaylistId, false);
+        } else {
+            if (trackAdapter != null) {
+                trackAdapter.invalidateTrackStateCache(selected.videoId);
+                trackAdapter.notifyItemChanged(position);
+            }
         }
     }
 
@@ -3830,10 +3847,6 @@ public class PlaylistDetailFragment extends Fragment
         miniPlaying = true;
         trackAdapter.setActiveIndex(position);
 
-        if (startFromBeginning) {
-            clearPersistedPositionForVideoId(selectedVideoId);
-        }
-
         SongPlayerFragment playerFragment = SongPlayerFragment.newInstance(
                 ids,
                 titles,
@@ -3878,7 +3891,6 @@ public class PlaylistDetailFragment extends Fragment
         }
 
         int snapshotIndex = Math.max(0, Math.min(snapshot.currentIndex, ids.size() - 1));
-        persistSnapshotPositionToPlayerState(snapshot);
 
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
         if (existingPlayer != null) {
@@ -3955,7 +3967,6 @@ public class PlaylistDetailFragment extends Fragment
         }
 
         int snapshotIndex = Math.max(0, Math.min(snapshot.currentIndex, ids.size() - 1));
-        persistSnapshotPositionToPlayerState(snapshot);
 
         SongPlayerFragment playerFragment = SongPlayerFragment.newInstance(
                 ids,
@@ -3985,23 +3996,6 @@ public class PlaylistDetailFragment extends Fragment
         if (trackAdapter != null) {
             trackAdapter.setActiveIndex(displayIndex);
         }
-    }
-
-    private void persistSnapshotPositionToPlayerState(@NonNull PlaybackHistoryStore.Snapshot snapshot) {
-        if (!isAdded()) {
-            return;
-        }
-
-        PlaybackHistoryStore.QueueTrack current = snapshot.currentTrack();
-        if (current == null || TextUtils.isEmpty(current.videoId)) {
-            return;
-        }
-
-        requireContext()
-                .getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE)
-                .edit()
-                .putInt(PREF_PLAYBACK_POS_PREFIX + current.videoId, Math.max(0, snapshot.currentSeconds))
-                .apply();
     }
 
     private void toggleMiniPlayback() {
@@ -4176,7 +4170,6 @@ public class PlaylistDetailFragment extends Fragment
         }
 
         int snapshotIndex = Math.max(0, Math.min(snapshot.currentIndex, ids.size() - 1));
-        persistSnapshotPositionToPlayerState(snapshot);
 
         SongPlayerFragment playerFragment = SongPlayerFragment.newInstance(
                 ids,
@@ -4263,10 +4256,6 @@ public class PlaylistDetailFragment extends Fragment
             return false;
         }
 
-        if (startFromBeginning && !TextUtils.isEmpty(selectedVideoId)) {
-            clearPersistedPositionForVideoId(selectedVideoId);
-        }
-
         SongPlayerFragment playerFragment = SongPlayerFragment.newInstance(
                 ids,
                 titles,
@@ -4304,37 +4293,54 @@ public class PlaylistDetailFragment extends Fragment
                 || btnMiniPlayPause == null) {
             return;
         }
-
         SongPlayerFragment songPlayer = findSongPlayerFragment();
         boolean playerAttached = songPlayer != null && songPlayer.isAdded();
         String playerVideoId = "";
         PlaybackHistoryStore.Snapshot snapshot = loadPlaybackSnapshot();
         PlaybackHistoryStore.QueueTrack snapshotTrack = snapshot.currentTrack();
 
-        if (playerAttached && !currentTracks.isEmpty()) {
-            playerVideoId = songPlayer.externalGetCurrentVideoId();
-            int mappedIndex = findTrackIndexByVideoId(currentTracks, playerVideoId);
-            if (mappedIndex >= 0) {
-                currentTrackIndex = mappedIndex;
-            } else {
-                int snapshotMappedIndex = snapshotTrack == null
-                        ? -1
-                        : findTrackIndexByVideoId(currentTracks, snapshotTrack.videoId);
-                currentTrackIndex = snapshotMappedIndex >= 0 ? snapshotMappedIndex : -1;
-            }
+        int currentSeconds = 0;
+        int totalSeconds = 1;
+
+        if (playerAttached) {
             miniPlaying = songPlayer.externalIsPlaying();
-            if (trackAdapter != null) {
-                trackAdapter.setActiveIndex(currentTrackIndex);
+            currentSeconds = songPlayer.externalGetCurrentSeconds();
+            totalSeconds = Math.max(1, songPlayer.externalGetTotalSeconds());
+
+            if (!currentTracks.isEmpty()) {
+                playerVideoId = songPlayer.externalGetCurrentVideoId();
+                int mappedIndex = findTrackIndexByVideoId(currentTracks, playerVideoId);
+                if (mappedIndex >= 0) {
+                    currentTrackIndex = mappedIndex;
+                } else {
+                    int snapshotMappedIndex = snapshotTrack == null
+                            ? -1
+                            : findTrackIndexByVideoId(currentTracks, snapshotTrack.videoId);
+                    currentTrackIndex = snapshotMappedIndex >= 0 ? snapshotMappedIndex : -1;
+                }
+                if (trackAdapter != null) {
+                    trackAdapter.setActiveIndex(currentTrackIndex);
+                }
             }
-        } else if (!playerAttached && snapshotTrack != null) {
+        } else if (snapshotTrack != null) {
             miniPlaying = snapshot.isPlaying;
             int mappedIndex = currentTracks.isEmpty()
                     ? -1
                     : findTrackIndexByVideoId(currentTracks, snapshotTrack.videoId);
             currentTrackIndex = mappedIndex >= 0 ? mappedIndex : -1;
+            currentSeconds = 0;
+            totalSeconds = 1;
             if (trackAdapter != null) {
                 trackAdapter.setActiveIndex(currentTrackIndex);
             }
+        }
+
+        // Update progress bar
+        if (sbMiniPlayerProgress != null) {
+            int clampedCurrent = Math.max(0, Math.min(totalSeconds, currentSeconds));
+            int progress = Math.round((clampedCurrent / (float) Math.max(1, totalSeconds)) * 1000f);
+            int boundedProgress = Math.max(0, Math.min(1000, progress));
+            sbMiniPlayerProgress.setProgress(boundedProgress);
         }
 
         PlaylistTrack currentListTrack = null;
@@ -4365,50 +4371,15 @@ public class PlaylistDetailFragment extends Fragment
         String title;
         String subtitle;
         String imageUrl;
-        int total;
-        int saved;
 
         if (currentListTrack != null) {
             title = currentListTrack.title;
             subtitle = currentListTrack.artist;
             imageUrl = currentListTrack.imageUrl == null ? "" : currentListTrack.imageUrl.trim();
-            total = Math.max(1, parseDurationSeconds(currentListTrack.duration));
-            saved = getPersistedPositionSeconds(currentListTrack.videoId, total);
-
-            if (playerAttached && TextUtils.equals(playerVideoId, currentListTrack.videoId)) {
-                total = Math.max(1, songPlayer.externalGetTotalSeconds());
-                int playerSeconds = songPlayer.externalGetCurrentSeconds();
-                
-                // Position guard: if player shows 0 but snapshot has a position, use snapshot
-                if (playerSeconds == 0 && snapshot.currentSeconds > 0 && snapshotTrack != null
-                        && TextUtils.equals(playerVideoId, snapshotTrack.videoId)) {
-                    saved = Math.max(0, snapshot.currentSeconds);
-                } else {
-                    saved = Math.max(0, playerSeconds);
-                }
-            } else if (snapshotTrack != null && TextUtils.equals(snapshotTrack.videoId, currentListTrack.videoId)) {
-                total = Math.max(1, snapshot.totalSeconds);
-                saved = Math.max(0, snapshot.currentSeconds);
-            }
         } else if (snapshotTrack != null) {
             title = TextUtils.isEmpty(snapshotTrack.title) ? "Última reproducción" : snapshotTrack.title;
             subtitle = snapshotTrack.artist;
             imageUrl = snapshotTrack.imageUrl == null ? "" : snapshotTrack.imageUrl.trim();
-            if (playerAttached) {
-                total = Math.max(1, songPlayer.externalGetTotalSeconds());
-                int playerSeconds = songPlayer.externalGetCurrentSeconds();
-
-                // Position guard
-                if (playerSeconds == 0 && snapshot.currentSeconds > 0 
-                        && TextUtils.equals(songPlayer.externalGetCurrentVideoId(), snapshotTrack.videoId)) {
-                    saved = Math.max(0, snapshot.currentSeconds);
-                } else {
-                    saved = Math.max(0, playerSeconds);
-                }
-            } else {
-                total = Math.max(1, snapshot.totalSeconds);
-                saved = Math.max(0, snapshot.currentSeconds);
-            }
         } else if (playerAttached) {
             SharedPreferences prefs = getPlayerStatePrefs();
             String fallbackTitle = prefs.getString(PREF_LAST_TRACK_TITLE, "");
@@ -4418,22 +4389,10 @@ public class PlaylistDetailFragment extends Fragment
             title = TextUtils.isEmpty(fallbackTitle) ? "Reproduciendo" : fallbackTitle;
             subtitle = fallbackArtist == null ? "" : fallbackArtist;
             imageUrl = fallbackImage == null ? "" : fallbackImage.trim();
-            total = Math.max(1, songPlayer.externalGetTotalSeconds());
-            int playerSeconds = songPlayer.externalGetCurrentSeconds();
-            
-            // Position guard
-            if (playerSeconds == 0 && snapshot.currentSeconds > 0 && snapshotTrack != null
-                    && TextUtils.equals(songPlayer.externalGetCurrentVideoId(), snapshotTrack.videoId)) {
-                saved = Math.max(0, snapshot.currentSeconds);
-            } else {
-                saved = Math.max(0, playerSeconds);
-            }
         } else {
             title = "Selecciona una canción";
             subtitle = "";
             imageUrl = "";
-            total = 1;
-            saved = 0;
             miniPlaying = false;
         }
 
@@ -4448,12 +4407,6 @@ public class PlaylistDetailFragment extends Fragment
             tvTvPlayerTitle.setText(title);
             tvTvPlayerSubtitle.setText(subtitle);
             btnTvPlayPause.setImageResource(miniPlaying ? R.drawable.ic_player_pause : R.drawable.ic_player_play);
-            
-            if (sbTvProgress != null) {
-                int clampedCurrent = Math.max(0, Math.min(total, saved));
-                int progress = Math.round((clampedCurrent / (float) Math.max(1, total)) * 1000f);
-                sbTvProgress.setProgress(Math.max(0, Math.min(1000, progress)));
-            }
 
             if (currentTrackIndex != lastMiniArtTrackIndex || !TextUtils.equals(imageUrl, lastMiniArtUrl)) {
                 lastMiniArtTrackIndex = currentTrackIndex;
@@ -4480,14 +4433,8 @@ public class PlaylistDetailFragment extends Fragment
             }
         }
 
-        if (sbMiniPlayerProgress != null) {
-            int clamped = Math.max(0, Math.min(Math.max(1, total), saved));
-            int progress = Math.round((clamped / (float) Math.max(1, total)) * 1000f);
-            sbMiniPlayerProgress.setProgress(Math.max(0, Math.min(1000, progress)));
-        }
-
         if (currentListTrack != null) {
-            persistCurrentPlaybackState(currentListTrack, saved, miniPlaying);
+            persistCurrentPlaybackState(currentListTrack, miniPlaying);
         }
 
         int artTrackIndex = currentListTrack != null ? currentTrackIndex : -2;
@@ -4519,27 +4466,9 @@ public class PlaylistDetailFragment extends Fragment
         return ids;
     }
 
-    private int getPersistedPositionSeconds(@NonNull String videoId, int maxSeconds) {
-        if (!isAdded() || TextUtils.isEmpty(videoId)) {
-            return 0;
-        }
-        int saved = getPlayerStatePrefs().getInt(PREF_PLAYBACK_POS_PREFIX + videoId, 0);
-        if (saved < 0) {
-            return 0;
-        }
-        return Math.min(Math.max(maxSeconds - 1, 0), saved);
-    }
-
     @NonNull
     private SharedPreferences getPlayerStatePrefs() {
         return requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
-    }
-
-    private void clearPersistedPositionForVideoId(@Nullable String videoId) {
-        if (!isAdded() || TextUtils.isEmpty(videoId)) {
-            return;
-        }
-        getPlayerStatePrefs().edit().remove(PREF_PLAYBACK_POS_PREFIX + videoId).apply();
     }
 
     @NonNull
@@ -4558,22 +4487,18 @@ public class PlaylistDetailFragment extends Fragment
 
     private void persistCurrentPlaybackState(
             @NonNull PlaylistTrack current,
-            int currentSeconds,
             boolean playing
     ) {
         if (!isAdded() || TextUtils.isEmpty(currentPlaylistId) || TextUtils.isEmpty(current.videoId)) {
             return;
         }
 
-        int safeSeconds = Math.max(0, currentSeconds);
         if (TextUtils.equals(lastPersistedVideoId, current.videoId)
-                && lastPersistedSecond == safeSeconds
                 && lastPersistedPlaying == playing) {
             return;
         }
 
         lastPersistedVideoId = current.videoId;
-        lastPersistedSecond = safeSeconds;
         lastPersistedPlaying = playing;
 
         getPlayerStatePrefs().edit()
@@ -4587,7 +4512,6 @@ public class PlaylistDetailFragment extends Fragment
                 .putString(PREF_LAST_TRACK_IMAGE, current.imageUrl)
                 .putString(PREF_LAST_TRACK_DURATION, current.duration)
                 .putBoolean(PREF_LAST_IS_PLAYING, playing)
-                .putInt(PREF_PLAYBACK_POS_PREFIX + current.videoId, safeSeconds)
                 .apply();
     }
 
@@ -4873,8 +4797,8 @@ public class PlaylistDetailFragment extends Fragment
                 String expectedSig = headerPlaylistThumbnail.trim();
                 boolean coverChanged = currentCoverSig == null || !currentCoverSig.startsWith(expectedSig);
                 if (coverChanged) {
-                    loadArtworkInto(holder.ivPlaylistCover, headerPlaylistThumbnail, 300);
-                    loadArtworkInto(holder.ivPlaylistBackdrop, headerPlaylistThumbnail, 300);
+                    loadArtworkInto(holder.ivPlaylistCover, headerPlaylistThumbnail, 800, true);
+                    loadArtworkInto(holder.ivPlaylistBackdrop, headerPlaylistThumbnail, 800, true);
                 }
             } else {
                 holder.ivPlaylistCover.setImageResource(R.drawable.ic_music);
@@ -4947,7 +4871,7 @@ public class PlaylistDetailFragment extends Fragment
 
         final class HeaderViewHolder extends RecyclerView.ViewHolder {
             final LinearLayout llPlaylistHeaderRoot;
-            final FrameLayout flPlaylistHeaderContainer;
+            final ConstraintLayout flPlaylistHeaderContainer;
             final ImageView ivPlaylistCover;
             final ImageView ivPlaylistBackdrop;
             final View vPlaylistBackdropScrim;
@@ -5308,12 +5232,6 @@ public class PlaylistDetailFragment extends Fragment
         @Override
         public TrackViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
             View view = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_playlist_track, parent, false);
-            RecyclerView.LayoutParams params = (RecyclerView.LayoutParams) view.getLayoutParams();
-            int leftSide = Math.round(parent.getResources().getDisplayMetrics().density * 12f);
-            int rightSide = Math.round(parent.getResources().getDisplayMetrics().density * 8f);
-            params.leftMargin = leftSide;
-            params.rightMargin = rightSide;
-            view.setLayoutParams(params);
             return new TrackViewHolder(view);
         }
 

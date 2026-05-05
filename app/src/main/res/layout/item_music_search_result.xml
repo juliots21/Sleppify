@@ -8,11 +8,11 @@
     android:longClickable="true"
     android:focusable="true"
     android:foreground="?attr/selectableItemBackground"
-    android:layout_marginTop="4dp"
-    android:layout_marginBottom="4dp"
+    android:layout_marginTop="6dp"
+    android:layout_marginBottom="6dp"
     android:minHeight="60dp"
-    android:paddingStart="12dp"
-    android:paddingEnd="12dp">
+    android:paddingStart="8dp"
+    android:paddingEnd="8dp">
 
     <LinearLayout
         android:id="@+id/llContentRow"
@@ -23,8 +23,8 @@
         android:orientation="horizontal">
 
         <FrameLayout
-            android:layout_width="48dp"
-            android:layout_height="48dp">
+            android:layout_width="50dp"
+            android:layout_height="50dp">
 
             <View
                 android:id="@+id/vLikedBackground"
@@ -54,10 +54,10 @@
 
                 <com.example.sleppify.AnimatedEqualizerView
                     android:id="@+id/animatedEq"
-                    android:layout_width="18dp"
-                    android:layout_height="18dp"
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
                     android:layout_gravity="bottom|end"
-                    android:layout_margin="4dp"
+                    android:layout_margin="2dp"
                     app:barColor="@color/stitch_blue" />
             </FrameLayout>
         </FrameLayout>
@@ -74,11 +74,12 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:ellipsize="end"
-                android:fontFamily="sans-serif-bold"
+                android:fontFamily="sans-serif-black"
                 android:maxLines="1"
                 android:text="Título"
                 android:textColor="@color/text_primary"
-                android:textSize="14sp" />
+                android:textSize="14sp"
+                android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/tvTrackSubtitle"
@@ -90,7 +91,7 @@
                 android:maxLines="1"
                 android:text="Canción • Artista"
                 android:textColor="@color/text_secondary"
-                android:textSize="12sp" />
+                android:textSize="14sp" />
         </LinearLayout>
 
         <ImageView
@@ -120,7 +121,7 @@
             android:focusable="true"
             android:padding="8dp"
             android:src="@drawable/ic_more_vert"
-            app:tint="#D8FFFFFF" />
+            app:tint="@color/text_secondary" />
     </LinearLayout>
 
 </RelativeLayout>

@@ -104,7 +104,7 @@ class SearchActivity : AppCompatActivity() {
     
     // Mini Player components
     private lateinit var llMiniPlayer: LinearLayout
-    private lateinit var ivMiniPlayerArt: ShapeableImageView
+    private lateinit var ivMiniPlayerArt: ImageView
     private lateinit var tvMiniPlayerTitle: TextView
     private lateinit var tvMiniPlayerSubtitle: TextView
     private lateinit var btnMiniPlayPause: ImageButton
@@ -1143,14 +1143,7 @@ class SearchActivity : AppCompatActivity() {
             btnMiniPlayPause.setImageResource(R.drawable.ic_mini_play)
         }
 
-        val durationMs = snapshot.totalSeconds.toLong().coerceAtLeast(0L) * 1000L
-        val currentPositionMs = snapshot.currentSeconds.toLong().coerceAtLeast(0L) * 1000L
-        if (durationMs > 0) {
-            sbMiniPlayerProgress.max = durationMs.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-            sbMiniPlayerProgress.progress = currentPositionMs.coerceIn(0L, durationMs).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-        } else {
-            sbMiniPlayerProgress.progress = 0
-        }
+        sbMiniPlayerProgress.progress = 0
 
         loadArtworkInto(ivMiniPlayerArt, current?.imageUrl)
     }

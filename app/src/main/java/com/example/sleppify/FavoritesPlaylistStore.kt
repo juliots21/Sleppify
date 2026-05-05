@@ -88,6 +88,19 @@ object FavoritesPlaylistStore {
     }
 
     @JvmStatic
+    fun storeFavorites(context: Context, tracks: List<FavoriteTrack>) {
+        synchronized(CACHE_LOCK) {
+            val deduped = LinkedHashMap<String, FavoriteTrack>()
+            for (track in tracks) {
+                deduped[track.videoId] = track
+            }
+            val finalTracks = ArrayList(deduped.values)
+            updateCache(finalTracks)
+            saveFavorites(context, finalTracks)
+        }
+    }
+
+    @JvmStatic
     fun removeFavorite(context: Context, videoId: String): Boolean {
         val safeVideoId = safe(videoId)
         if (safeVideoId.isEmpty()) {
@@ -103,6 +116,7 @@ object FavoritesPlaylistStore {
 
             updateCache(tracks)
             saveFavorites(context, tracks)
+            OfflineAudioStore.deleteOfflineAudio(context, safeVideoId)
             return true
         }
     }

@@ -732,8 +732,25 @@ class CloudSyncManager private constructor(context: Context) {
         val uid = activeUserId
         if (uid.isNullOrEmpty()) return
 
+        val favorites = FavoritesPlaylistStore.loadFavorites(appContext)
+        val favoritesList = ArrayList<Map<String, Any?>>(favorites.size)
+        for (i in favorites.indices) {
+            val t = favorites[i]
+            favoritesList.add(
+                mapOf(
+                    "videoId" to t.videoId,
+                    "title" to t.title,
+                    "artist" to t.artist,
+                    "duration" to t.duration,
+                    "imageUrl" to t.imageUrl,
+                    "order" to i
+                )
+            )
+        }
+
         val payload = hashMapOf<String, Any>(
             FIELD_PREFS to encodeStreamingFavoritesPreferences(),
+            "tracks" to favoritesList,
             FIELD_UPDATED_AT to FieldValue.serverTimestamp()
         )
         beginNetworkSync()
@@ -1199,14 +1216,16 @@ class CloudSyncManager private constructor(context: Context) {
         if (uid.isNullOrEmpty()) return
 
         val tracksList = ArrayList<Map<String, Any?>>(tracks.size)
-        for (t in tracks) {
+        for (i in tracks.indices) {
+            val t = tracks[i]
             tracksList.add(
                 mapOf(
                     "videoId" to t.videoId,
                     "title" to t.title,
                     "artist" to t.artist,
                     "duration" to t.duration,
-                    "imageUrl" to t.imageUrl
+                    "imageUrl" to t.imageUrl,
+                    "order" to i
                 )
             )
         }
@@ -1303,7 +1322,8 @@ class CloudSyncManager private constructor(context: Context) {
                 for (doc in documents) {
                     val name = doc.id
                     @Suppress("UNCHECKED_CAST")
-                    val tracksData = doc.get("tracks") as? List<Map<String, Any?>> ?: continue
+                    val tracksDataRaw = doc.get("tracks") as? List<Map<String, Any?>> ?: continue
+                    val tracksData = tracksDataRaw.sortedBy { (it["order"] as? Number)?.toInt() ?: 0 }
 
                     val tracks = ArrayList<FavoritesPlaylistStore.FavoriteTrack>(tracksData.size)
                     for (m in tracksData) {

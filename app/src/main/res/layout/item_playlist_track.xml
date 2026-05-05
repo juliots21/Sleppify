@@ -9,11 +9,11 @@
     android:longClickable="true"
     android:focusable="true"
     android:foreground="?attr/selectableItemBackground"
-    android:layout_marginTop="4dp"
-    android:layout_marginBottom="4dp"
+    android:layout_marginTop="6dp"
+    android:layout_marginBottom="6dp"
     android:minHeight="60dp"
-    android:paddingStart="12dp"
-    android:paddingEnd="12dp">
+    android:paddingStart="8dp"
+    android:paddingEnd="8dp">
 
     <LinearLayout
         android:id="@+id/llMainTrackRow"
@@ -24,8 +24,8 @@
         android:orientation="horizontal">
 
         <FrameLayout
-            android:layout_width="48dp"
-            android:layout_height="48dp">
+            android:layout_width="50dp"
+            android:layout_height="50dp">
 
             <ImageView
                 android:id="@+id/ivTrackArt"
@@ -70,12 +70,14 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
+                    android:layout_marginEnd="16dp"
                     android:ellipsize="end"
-                    android:fontFamily="sans-serif-bold"
-                    android:maxLines="1"
+                    android:fontFamily="sans-serif-black"
+                    android:maxLines="2"
                     android:text="Canción"
                     android:textColor="@color/text_primary"
-                    android:textSize="14sp" />
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
             </LinearLayout>
 
             <TextView
@@ -88,7 +90,7 @@
                 android:maxLines="1"
                 android:text="Artista • 3:42"
                 android:textColor="@color/text_secondary"
-                android:textSize="12sp" />
+                android:textSize="14sp" />
         </LinearLayout>
 
         <LinearLayout

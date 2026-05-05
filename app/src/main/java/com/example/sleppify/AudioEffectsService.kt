@@ -114,7 +114,7 @@ class AudioEffectsService : Service() {
         if (!isForegroundStarted) return
         isForegroundStarted = false
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 stopForeground(STOP_FOREGROUND_REMOVE)
             } else {
                 @Suppress("DEPRECATION")

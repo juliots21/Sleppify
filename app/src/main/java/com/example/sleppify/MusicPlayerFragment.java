@@ -100,7 +100,6 @@ public class MusicPlayerFragment extends Fragment {
     private static final long LIBRARY_REFRESH_MIN_INTERVAL_MS = 90 * 1000L;
     private static final long TOKEN_CACHE_TTL_MS = 45 * 60 * 1000L;
     private static final String PREFS_PLAYER_STATE = "player_state";
-    private static final String PREF_PLAYBACK_POS_PREFIX = "yt_pos_";
     private static final String PREF_LAST_PLAYLIST_ID = "stream_last_playlist_id";
     private static final String PREF_LAST_PLAYLIST_TITLE = "stream_last_playlist_title";
     private static final String PREF_LAST_PLAYLIST_SUBTITLE = "stream_last_playlist_subtitle";
@@ -477,7 +476,7 @@ public class MusicPlayerFragment extends Fragment {
     private MaterialButton btnChipArtists;
     private MaterialButton btnChipPlaylists;
     private LinearLayout llMiniPlayer;
-    private ShapeableImageView ivMiniPlayerArt;
+    private ImageView ivMiniPlayerArt;
     private TextView tvMiniPlayerTitle;
     private TextView tvMiniPlayerSubtitle;
     private SeekBar sbMiniPlayerProgress;
@@ -770,14 +769,7 @@ public class MusicPlayerFragment extends Fragment {
                     llLibraryInlineSearch.setNextFocusLeftId(R.id.navigationRail);
                 }
                 if (llMiniPlayer != null) llMiniPlayer.setOnFocusChangeListener(tvFocusHighlight);
-                // Mas margen a la izquierda para el buscador (TV)
-                if (llLibraryHeaderRow != null) {
-                    ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) llLibraryHeaderRow.getLayoutParams();
-                    if (lp != null) {
-                        lp.setMarginStart((int) (32 * getResources().getDisplayMetrics().density));
-                        llLibraryHeaderRow.setLayoutParams(lp);
-                    }
-                }
+                // Use standard padding from XML (8dp)
                 // Apply correct background based on Amoled mode
                 if (isAmoledModeEnabled()) {
                     llTvPlayerPane.setBackgroundResource(R.drawable.bg_tv_player_pane_amoled);
@@ -1799,6 +1791,7 @@ public class MusicPlayerFragment extends Fragment {
         }
         // Controlar la visibilidad del RecyclerView a través de animación para evitar parpadeo
         if (rvMusicResults != null) {
+            rvMusicResults.scrollToPosition(0);
             rvMusicResults.animate().cancel();
             if (rvMusicResults.getVisibility() != View.VISIBLE) {
                 rvMusicResults.setAlpha(0f);
@@ -3826,7 +3819,7 @@ public class MusicPlayerFragment extends Fragment {
     @NonNull
     private PlaybackHistoryStore.Snapshot loadPlaybackSnapshot() {
         if (!isAdded()) {
-            return new PlaybackHistoryStore.Snapshot(new ArrayList<>(), 0, 0, 1, false, 0L);
+            return new PlaybackHistoryStore.Snapshot(new ArrayList<>(), 0, 1, false, 0L);
         }
         long now = System.currentTimeMillis();
         if (miniSnapshotCache != null && (now - miniSnapshotCacheReadAtMs) < MINI_SNAPSHOT_REFRESH_MS) {
@@ -4154,17 +4147,9 @@ public class MusicPlayerFragment extends Fragment {
         requireContext()
                 .getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE)
                 .edit()
-                .putInt(PREF_PLAYBACK_POS_PREFIX + current.videoId, Math.max(0, snapshot.currentSeconds))
-                .commit();
-    }
-    private void clearPersistedPositionForVideoId(@Nullable String videoId) {
-        if (!isAdded() || TextUtils.isEmpty(videoId)) {
-            return;
-        }
-        requireContext()
-                .getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE)
-                .edit()
-                .remove(PREF_PLAYBACK_POS_PREFIX + videoId)
+                .putString("stream_last_track_duration", current.duration)
+                .putString("stream_last_track_image", current.imageUrl)
+                .putBoolean("stream_last_is_playing", snapshot.isPlaying)
                 .apply();
     }
     private void updateMiniPlayerUi() {
@@ -4176,50 +4161,44 @@ public class MusicPlayerFragment extends Fragment {
         PlaybackHistoryStore.Snapshot snapshot = loadPlaybackSnapshot();
         SharedPreferences playerPrefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
         PlaybackHistoryStore.QueueTrack currentTrack = snapshot.currentTrack();
-        int currentSeconds = Math.max(0, snapshot.currentSeconds);
-        int totalSeconds = Math.max(1, snapshot.totalSeconds);
+        
+        String title;
+        String subtitle;
+        String imageUrl;
+        int totalSeconds = 1;
+        int currentSeconds = 0;
         boolean miniPlaying = snapshot.isPlaying;
-        if (currentTrack == null || TextUtils.isEmpty(currentTrack.videoId)) {
+
+        PlaybackHistoryStore.QueueTrack snapshotTrack = snapshot.currentTrack();
+
+        if (playerAttached) {
+            totalSeconds = Math.max(1, songPlayer.externalGetTotalSeconds());
+            currentSeconds = Math.max(0, songPlayer.externalGetCurrentSeconds());
+            title = songPlayer.externalGetCurrentTitle();
+            subtitle = songPlayer.externalGetCurrentArtist();
+            imageUrl = songPlayer.externalGetCurrentImageUrl();
+            miniPlaying = songPlayer.externalIsPlaying();
+        } else if (currentTrack != null) {
+            title = currentTrack.title;
+            subtitle = currentTrack.artist;
+            imageUrl = currentTrack.imageUrl;
+            totalSeconds = Math.max(1, parseDurationSeconds(currentTrack.duration));
+            currentSeconds = 0;
+        } else {
             String fallbackVideoId = playerPrefs.getString(PREF_LAST_VIDEO_ID, "");
             if (!TextUtils.isEmpty(fallbackVideoId)) {
-                String fallbackTitle = playerPrefs.getString(PREF_LAST_TRACK_TITLE, "");
-                String fallbackArtist = playerPrefs.getString(PREF_LAST_TRACK_ARTIST, "");
-                String fallbackDuration = playerPrefs.getString(PREF_LAST_TRACK_DURATION, "");
-                String fallbackImage = playerPrefs.getString(PREF_LAST_TRACK_IMAGE, "");
-                currentTrack = new PlaybackHistoryStore.QueueTrack(
-                        fallbackVideoId,
-                        TextUtils.isEmpty(fallbackTitle) ? "Última reproducción" : fallbackTitle,
-                        fallbackArtist == null ? "" : fallbackArtist,
-                        fallbackDuration == null ? "" : fallbackDuration,
-                        fallbackImage == null ? "" : fallbackImage
-                );
-                currentSeconds = Math.max(0, playerPrefs.getInt(PREF_PLAYBACK_POS_PREFIX + fallbackVideoId, currentSeconds));
-                totalSeconds = Math.max(1, parseDurationSeconds(fallbackDuration));
-                miniPlaying = playerPrefs.getBoolean(PREF_LAST_IS_PLAYING, false);
-            }
-        }
-        if (playerAttached) {
-            String playerVideoId = songPlayer.externalGetCurrentVideoId();
-            PlaybackHistoryStore.QueueTrack fromQueue = findSnapshotTrackByVideoId(snapshot, playerVideoId);
-            if (fromQueue != null) {
-                currentTrack = fromQueue;
-            } else if (!TextUtils.isEmpty(playerVideoId)) {
-                currentTrack = new PlaybackHistoryStore.QueueTrack(playerVideoId, "Reproduciendo", "", "", "");
-            }
-            int playerSeconds = songPlayer.externalGetCurrentSeconds();
-            // If player shows 0 but snapshot has a position, use snapshot (player hasn't loaded saved position yet)
-            PlaybackHistoryStore.QueueTrack snapshotTrack = snapshot.currentTrack();
-            if (playerSeconds == 0 && snapshot.currentSeconds > 0 && snapshotTrack != null
-                    && TextUtils.equals(playerVideoId, snapshotTrack.videoId)) {
-                currentSeconds = Math.max(0, snapshot.currentSeconds);
+                title = playerPrefs.getString(PREF_LAST_TRACK_TITLE, "Última reproducción");
+                subtitle = playerPrefs.getString(PREF_LAST_TRACK_ARTIST, "");
+                imageUrl = playerPrefs.getString("stream_last_track_image", "");
+                totalSeconds = Math.max(1, parseDurationSeconds(playerPrefs.getString("stream_last_track_duration", "")));
+                currentSeconds = 0;
+                miniPlaying = playerPrefs.getBoolean("stream_last_is_playing", false);
+                currentTrack = new PlaybackHistoryStore.QueueTrack(fallbackVideoId, title, subtitle, "", imageUrl);
             } else {
-                currentSeconds = Math.max(0, playerSeconds);
+                return;
             }
-            totalSeconds = Math.max(1, songPlayer.externalGetTotalSeconds());
-            miniPlaying = songPlayer.externalIsPlaying();
-        } else if (currentTrack != null && totalSeconds <= 1) {
-            totalSeconds = Math.max(1, parseDurationSeconds(currentTrack.duration));
         }
+        
         if (lastMiniPlayerIsPlaying != miniPlaying) {
             lastMiniPlayerIsPlaying = miniPlaying;
             if (adapter != null) {
@@ -4305,7 +4284,7 @@ public class MusicPlayerFragment extends Fragment {
                 lastMiniProgressValue = boundedProgress;
             }
         }
-        String imageUrl = currentTrack.imageUrl == null ? "" : currentTrack.imageUrl.trim();
+        imageUrl = currentTrack.imageUrl == null ? "" : currentTrack.imageUrl.trim();
         String trackId = currentTrack.videoId == null ? "" : currentTrack.videoId;
         if (!TextUtils.equals(lastMiniArtworkTrackId, trackId)
                 || !TextUtils.equals(lastMiniArtworkUrl, imageUrl)) {
@@ -4563,7 +4542,7 @@ public class MusicPlayerFragment extends Fragment {
                     llMiniPlayer.setVisibility(View.GONE);
                 }).start();
         }
-        clearPersistedPositionForVideoId(ids.get(index));
+        // Position persistence removed
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
         if (existingPlayer != null) {
             if (existingPlayer.isAdded()) {
@@ -4671,7 +4650,7 @@ public class MusicPlayerFragment extends Fragment {
         LinearLayout row = new LinearLayout(requireContext());
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(12), dp(10), dp(12), dp(10));
+        row.setPadding(dp(8), dp(10), dp(8), dp(10));
         ImageView icon = new ImageView(requireContext());
         LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(18), dp(18));
         icon.setLayoutParams(iconParams);
@@ -5509,6 +5488,11 @@ public class MusicPlayerFragment extends Fragment {
         }
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
         if (existingPlayer != null && existingPlayer.isAdded()) {
+            // If the selected track is already playing, just open the player
+            if (TextUtils.equals(selectedTrack.videoId, existingPlayer.getLoadedVideoId())) {
+                openPlayerFromMiniBar();
+                return;
+            }
             existingPlayer.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
             existingPlayer.externalReplaceQueueFromStart(ids, titles, artists, durations, images, selectedIndex, true);
             if (!startInMiniMode) {
@@ -5524,7 +5508,7 @@ public class MusicPlayerFragment extends Fragment {
             }
         } else {
             if (selectedIndex >= 0 && selectedIndex < ids.size()) {
-                clearPersistedPositionForVideoId(ids.get(selectedIndex));
+                // Position persistence removed
             }
             SongPlayerFragment playerFragment = SongPlayerFragment.newInstance(
                     ids,
@@ -6029,8 +6013,9 @@ public class MusicPlayerFragment extends Fragment {
                             holder.animatedEq.setAnimating(isActuallyPlaying);
                         }
                     }
-                    holder.tvTrackTitle.setTextColor(activeTitleColor);
+                    holder.itemView.setBackgroundResource(R.drawable.bg_playlist_track_active);
                 } else {
+                    holder.itemView.setBackgroundResource(R.drawable.bg_playlist_track_default);
                     if (holder.llNowPlayingOverlay != null) {
                         holder.llNowPlayingOverlay.setVisibility(View.GONE);
                         if (holder.animatedEq != null) {
@@ -6079,7 +6064,8 @@ public class MusicPlayerFragment extends Fragment {
             }
             int activeTitleColor = ContextCompat.getColor(holder.itemView.getContext(), R.color.stitch_blue_light);
             int defaultTitleColor = ContextCompat.getColor(holder.itemView.getContext(), R.color.text_primary);
-            holder.tvTrackTitle.setTextColor(isNowPlaying ? activeTitleColor : defaultTitleColor);
+            holder.tvTrackTitle.setTextColor(defaultTitleColor);
+            holder.itemView.setBackgroundResource(isNowPlaying ? R.drawable.bg_playlist_track_active : R.drawable.bg_playlist_track_default);
             String title = TextUtils.isEmpty(item.title) ? "Resultado" : item.title;
             holder.tvTrackTitle.setText(title);
             String typeLabel = searchTypeLabel(item);

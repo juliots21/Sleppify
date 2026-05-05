@@ -21,7 +21,6 @@ class PlaybackHistoryStore private constructor() {
     class Snapshot(
         queue: List<QueueTrack>,
         @JvmField val currentIndex: Int,
-        @JvmField val currentSeconds: Int,
         @JvmField val totalSeconds: Int,
         @JvmField val isPlaying: Boolean,
         @JvmField val updatedAtMs: Long
@@ -95,11 +94,10 @@ class PlaybackHistoryStore private constructor() {
             context: Context,
             queue: List<QueueTrack>,
             currentIndex: Int,
-            currentSeconds: Int,
             totalSeconds: Int,
             isPlaying: Boolean
         ) {
-            save(context, queue, currentIndex, currentSeconds, totalSeconds, isPlaying, false)
+            save(context, queue, currentIndex, totalSeconds, isPlaying, false)
         }
 
         @JvmStatic
@@ -107,7 +105,6 @@ class PlaybackHistoryStore private constructor() {
             context: Context,
             queue: List<QueueTrack>,
             currentIndex: Int,
-            currentSeconds: Int,
             totalSeconds: Int,
             isPlaying: Boolean,
             synchronous: Boolean
@@ -118,7 +115,6 @@ class PlaybackHistoryStore private constructor() {
 
             val appContext = context.applicationContext
             val safeIndex = currentIndex.coerceIn(0, queue.size - 1)
-            val safeCurrentSeconds = currentSeconds.coerceAtLeast(0)
             val safeTotalSeconds = totalSeconds.coerceAtLeast(1)
             val updatedAtMs = System.currentTimeMillis()
 
@@ -128,7 +124,6 @@ class PlaybackHistoryStore private constructor() {
                     val snapshot = Snapshot(
                         queueCopy,
                         safeIndex,
-                        safeCurrentSeconds,
                         safeTotalSeconds,
                         isPlaying,
                         updatedAtMs
@@ -197,7 +192,6 @@ class PlaybackHistoryStore private constructor() {
                 }
 
                 val currentIndex = root.optInt("currentIndex", 0)
-                val currentSeconds = root.optInt("currentSeconds", 0).coerceAtLeast(0)
                 val totalSeconds = root.optInt("totalSeconds", 1).coerceAtLeast(1)
                 val isPlaying = root.optBoolean("isPlaying", false)
                 val updatedAtMs = root.optLong("updatedAtMs", 0L)
@@ -206,7 +200,7 @@ class PlaybackHistoryStore private constructor() {
                     emptySnapshot()
                 } else {
                     val safeIndex = currentIndex.coerceIn(0, queue.size - 1)
-                    Snapshot(queue, safeIndex, currentSeconds, totalSeconds, isPlaying, updatedAtMs)
+                    Snapshot(queue, safeIndex, totalSeconds, isPlaying, updatedAtMs)
                 }
             } catch (_: Exception) {
                 emptySnapshot()
@@ -229,7 +223,6 @@ class PlaybackHistoryStore private constructor() {
                 val root = JSONObject()
                 root.put("queue", queueArray)
                 root.put("currentIndex", snapshot.currentIndex)
-                root.put("currentSeconds", snapshot.currentSeconds)
                 root.put("totalSeconds", snapshot.totalSeconds)
                 root.put("isPlaying", snapshot.isPlaying)
                 root.put("updatedAtMs", snapshot.updatedAtMs)
@@ -256,7 +249,7 @@ class PlaybackHistoryStore private constructor() {
         }
 
         private fun emptySnapshot(): Snapshot {
-            return Snapshot(emptyList(), 0, 0, 1, false, 0L)
+            return Snapshot(emptyList(), 0, 1, false, 0L)
         }
 
         private fun safe(value: String?): String {

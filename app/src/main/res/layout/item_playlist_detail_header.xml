@@ -8,56 +8,72 @@
     android:focusable="true"
     android:focusableInTouchMode="true">
 
-        <FrameLayout
+        <androidx.constraintlayout.widget.ConstraintLayout
             android:id="@+id/flPlaylistHeaderContainer"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="0dp"
+            android:layout_marginBottom="-30dp"
             android:clipChildren="false"
             android:clipToPadding="false">
 
             <ImageView
                 android:id="@+id/ivPlaylistBackdrop"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
                 android:alpha="1.0"
                 android:scaleType="centerCrop"
-                android:src="@drawable/ic_music" />
-
+                android:src="@drawable/ic_music"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent" />
+ 
             <View
                 android:id="@+id/vPlaylistBackdropScrim"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:background="@drawable/bg_playlist_backdrop_scrim" />
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:background="@drawable/bg_playlist_backdrop_scrim"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent" />
 
             <View
                 android:id="@+id/vPlaylistBackdropBottomFade"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:layout_gravity="bottom"
-                android:background="@drawable/bg_playlist_backdrop_bottom_fade" />
+                android:layout_width="0dp"
+                android:layout_height="280dp"
+                android:background="@drawable/bg_playlist_backdrop_bottom_fade"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent" />
 
             <View
                 android:id="@+id/vPlaylistBackdropAmoledFade"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:layout_gravity="bottom"
+                android:layout_width="0dp"
+                android:layout_height="280dp"
                 android:background="@drawable/bg_playlist_backdrop_amoled_fade"
-                android:visibility="gone" />
+                android:visibility="gone"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent" />
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center_horizontal"
                 android:orientation="vertical"
-                android:paddingTop="24dp"
-                android:paddingBottom="16dp">
+                android:paddingTop="8dp"
+                android:paddingBottom="40dp"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent">
 
                 <FrameLayout
-                    android:layout_width="260dp"
-                    android:layout_height="260dp"
-                    android:layout_marginTop="16dp"
-                    android:layout_marginBottom="16dp">
+                    android:layout_width="300dp"
+                    android:layout_height="300dp"
+                    android:layout_marginTop="14dp"
+                    android:layout_marginBottom="18dp">
 
                     <View
                         android:layout_width="match_parent"
@@ -78,7 +94,7 @@
                     android:id="@+id/tvPlaylistName"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
+                    android:layout_marginTop="4dp"
                     android:gravity="center"
                     android:maxLines="2"
                     android:text="Lista"
@@ -126,7 +142,7 @@
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="14dp"
+                    android:layout_marginTop="6dp"
                     android:clipChildren="false"
                     android:clipToPadding="false"
                     android:gravity="center"
@@ -171,7 +187,7 @@
                 </LinearLayout>
 
             </LinearLayout>
-        </FrameLayout>
+        </androidx.constraintlayout.widget.ConstraintLayout>
 
 
 </LinearLayout>

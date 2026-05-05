@@ -116,7 +116,6 @@ public class SongPlayerFragment extends Fragment {
     public static final String ARG_IS_TEMPORARY_PLAYER = "arg_is_temporary_player";
 
     private static final String PREFS_PLAYER_STATE = "player_state";
-    private static final String PREF_PLAYBACK_POS_PREFIX = "yt_pos_";
     private static final String PREF_SOCIAL_STATS_PREFIX = "yt_social_stats_";
     private static final String PREF_LAST_PLAYLIST_ID = "stream_last_playlist_id";
     private static final String PREF_LAST_PLAYLIST_TITLE = "stream_last_playlist_title";
@@ -228,7 +227,6 @@ public class SongPlayerFragment extends Fragment {
     }
     private int currentSeconds = 0;
     private int totalSeconds = 1;
-    private int lastPersistedSecond = -1;
     private boolean isRestoringPosition = false;
     private int lastSeekTargetSeconds = -1;
     private boolean pauseRequestedByUser = false;
@@ -382,11 +380,9 @@ public class SongPlayerFragment extends Fragment {
                 int progress = Math.round((Math.max(0, currentSeconds) / (float) Math.max(1, totalSeconds)) * 1000f);
                 sbPlaybackProgress.setProgress(Math.max(0, Math.min(1000, progress)));
 
-                if (currentSeconds != lastPersistedSecond && currentSeconds % 2 == 0) {
-                    lastPersistedSecond = currentSeconds;
-                    persistPositionForLoadedTrack();
-                    updateMediaSessionState();
+                if (currentSeconds % 2 == 0) {
                     persistPlaybackSnapshot(false);
+                    updateMediaSessionState();
                 }
             } catch (Exception ignored) {
             }
@@ -485,6 +481,7 @@ public class SongPlayerFragment extends Fragment {
         flPlayerHero = view.findViewById(R.id.flPlayerHero);
         playerArtworkBootstrapPending = true;
         tvPlayerTitle = view.findViewById(R.id.tvPlayerTitle);
+        tvPlayerTitle.setSelected(true);
         tvPlayerArtist = view.findViewById(R.id.tvPlayerArtist);
         actionLike = view.findViewById(R.id.actionLike);
         actionDislike = view.findViewById(R.id.actionDislike);
@@ -599,7 +596,6 @@ public class SongPlayerFragment extends Fragment {
 
                 int progress = Math.round((Math.max(0, currentSeconds) / (float) Math.max(1, totalSeconds)) * 1000f);
                 sbPlaybackProgress.setProgress(Math.max(0, Math.min(1000, progress)));
-                persistPositionForLoadedTrack();
                 updateMediaSessionState();
                 userSeeking = false;
             }
@@ -608,7 +604,6 @@ public class SongPlayerFragment extends Fragment {
 
     @Override
     public void onStop() {
-        persistPositionForLoadedTrack();
         persistPlaybackSnapshot(false, true);
         super.onStop();
     }
@@ -734,7 +729,6 @@ public class SongPlayerFragment extends Fragment {
     @Override
     public void onDestroyView() {
         cleanupAudioDeviceCallback();
-        persistPositionForLoadedTrack();
         if (!isTemporaryPlayer) {
             persistPlaybackSnapshot(true);
         }
@@ -819,7 +813,6 @@ public class SongPlayerFragment extends Fragment {
                     }
                 }
                 isPlaying = false;
-                persistPositionForLoadedTrack();
                 updatePlayPauseIcon();
                 updateMediaSessionState();
                 updateMediaNotification();
@@ -856,7 +849,6 @@ public class SongPlayerFragment extends Fragment {
                 tvCurrentTime.setText(formatSeconds(currentSeconds));
                 int progress = Math.round((Math.max(0, currentSeconds) / (float) Math.max(1, totalSeconds)) * 1000f);
                 sbPlaybackProgress.setProgress(Math.max(0, Math.min(1000, progress)));
-                persistPositionForLoadedTrack();
                 updateMediaSessionState();
             }
         });
@@ -888,13 +880,8 @@ public class SongPlayerFragment extends Fragment {
             cancelOfflineCrossfade();
         }
 
-        if (!fromCompletion) {
-            persistPositionForLoadedTrack();
-        }
-
         if (fromCompletion && repeatMode == REPEAT_MODE_ONE) {
             currentSeconds = 0;
-            lastPersistedSecond = -1;
             isPlaying = true;
             playCurrentTrack();
             scheduleAutoplayRecoveryForCurrentTrack();
@@ -922,12 +909,7 @@ public class SongPlayerFragment extends Fragment {
 
         currentIndex = targetIndex;
         isPlaying = true;
-        String targetVideoId = tracks.get(currentIndex).videoId;
-        if (!TextUtils.isEmpty(targetVideoId)) {
-            clearPersistedPositionFor(targetVideoId);
-        }
         currentSeconds = 0;
-        lastPersistedSecond = -1;
         playCurrentTrack();
         if (fromCompletion) {
             scheduleAutoplayRecoveryForCurrentTrack();
@@ -969,7 +951,6 @@ public class SongPlayerFragment extends Fragment {
 
             currentIndex = candidateIndex;
             currentSeconds = 0;
-            lastPersistedSecond = -1;
             isPlaying = true;
             bindCurrentTrack(true);
             playCurrentTrack();
@@ -994,7 +975,6 @@ public class SongPlayerFragment extends Fragment {
 
         lastHandledEndedVideoId = loadedVideoId;
         lastHandledEndedAtMs = now;
-        clearPersistedPositionFor(loadedVideoId);
         moveTrack(1, true);
     }
 
@@ -1133,7 +1113,6 @@ public class SongPlayerFragment extends Fragment {
                 }
                 stopLocalProgressTicker();
                 isPlaying = false;
-                persistPositionForLoadedTrack();
             } else {
                 pauseRequestedByUser = false;
                 isPlaying = true;
@@ -1155,7 +1134,6 @@ public class SongPlayerFragment extends Fragment {
         if (isPlaying) {
             pauseRequestedByUser = true;
             isPlaying = false;
-            persistPositionForLoadedTrack();
             updatePlayPauseIcon();
             updateMediaSessionState();
                 syncMiniStateWithPlaylist();
@@ -1293,18 +1271,15 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void playCurrentTrack() {
-        if (tracks.isEmpty()) {
+        if (!isAdded() || tracks.isEmpty()) {
             return;
         }
 
-        if (currentIndex < 0 || currentIndex >= tracks.size()) {
-            currentIndex = 0;
-        }
-
-        PlayerTrack track = tracks.get(currentIndex);
-        if (track == null || TextUtils.isEmpty(track.videoId)) {
-            return;
-        }
+        final PlayerTrack track = tracks.get(currentIndex);
+        loadedVideoId = track.videoId;
+        currentSeconds = 0;
+        lastSeekTargetSeconds = -1;
+        isRestoringPosition = false;
 
         PlaybackHistoryStore.Snapshot snapshot = PlaybackHistoryStore.load(requireContext());
         androidx.media3.exoplayer.ExoPlayer sharedExoPlayer = ExoPlayerManager.INSTANCE.getSharedExoPlayer();
@@ -1330,17 +1305,12 @@ public class SongPlayerFragment extends Fragment {
                 handlePlaybackError();
                 return true;
             });
-            loadedVideoId = track.videoId;
             updatePlayPauseIcon();
             startLocalProgressTicker();
             loadNextUpTracks();
             lastPlaybackStartRequestAtMs = android.os.SystemClock.elapsedRealtime();
             return;
         }
-
-        int resumeSeconds = currentSeconds; // preserve any position loaded by bindCurrentTrack(true)
-        currentSeconds = 0;
-        totalSeconds = 1;
 
         // Bind metadata. forceZero=true resets UI to 0, but we restore resume position after.
         // NOTE: Do NOT call showPlayerArtworkLoadingState() here — keep old cover visible
@@ -1349,15 +1319,6 @@ public class SongPlayerFragment extends Fragment {
         // Reset state BEFORE restoring resumeSeconds
         cancelOfflineCrossfade();
         resetPlaybackStateForNewTrack();
-        
-        if (resumeSeconds > 0) {
-            currentSeconds = resumeSeconds;
-            isRestoringPosition = true;
-            lastSeekTargetSeconds = resumeSeconds;
-        } else {
-            isRestoringPosition = false;
-            lastSeekTargetSeconds = -1;
-        }
         
         lastPlaybackStartRequestAtMs = SystemClock.elapsedRealtime();
 
@@ -1372,7 +1333,6 @@ public class SongPlayerFragment extends Fragment {
         }
         cancelPendingStreamResolver();
 
-        loadedVideoId = track.videoId;
         long requestToken = ++activePlaybackRequestToken;
 
         boolean hasOfflineLocal = isAdded()
@@ -1648,20 +1608,6 @@ public class SongPlayerFragment extends Fragment {
                     : Math.max(1, parseDurationSeconds(track.duration));
 
             totalSeconds = resolvedTotal;
-
-            if (currentSeconds > 0) {
-                Log.d(TAG, "onPrepared: seeking to " + currentSeconds + "s for videoId=" + track.videoId);
-                isRestoringPosition = true;
-                lastSeekTargetSeconds = currentSeconds;
-                try {
-                    mp.seekTo(currentSeconds * 1000);
-                } catch (Exception ignored) {
-                }
-            } else {
-                isRestoringPosition = false;
-                lastSeekTargetSeconds = -1;
-                Log.d(TAG, "onPrepared: starting from 0s (no seek) for videoId=" + track.videoId);
-            }
 
             if (isPlaying) {
                 try {
@@ -2647,7 +2593,6 @@ public class SongPlayerFragment extends Fragment {
         pauseRequestedByUser = false;
         isPlaying = true;
         currentSeconds = 0;
-        lastPersistedSecond = -1;
 
         PlayerTrack track = tracks.get(currentIndex);
         loadedVideoId = track.videoId;
@@ -3000,13 +2945,7 @@ public class SongPlayerFragment extends Fragment {
         refreshFavoriteActionForCurrentTrack();
 
         totalSeconds = Math.max(1, parseDurationSeconds(track.duration));
-        if (forceZero) {
-            currentSeconds = 0;
-        } else if (allowResume) {
-            currentSeconds = getPersistedPositionFor(track.videoId, totalSeconds);
-        } else {
-            currentSeconds = Math.min(currentSeconds, totalSeconds);
-        }
+        currentSeconds = 0;
 
         tvCurrentTime.setText(formatSeconds(currentSeconds));
         tvTotalTime.setText(TextUtils.isEmpty(track.duration) ? formatSeconds(totalSeconds) : track.duration);
@@ -3042,9 +2981,7 @@ public class SongPlayerFragment extends Fragment {
             refreshNextUp();
         }
         syncMiniStateWithPlaylist();
-        if (!forceZero) {
-            persistPlaybackSnapshot(false);
-        }
+        persistPlaybackSnapshot(false);
     }
 
     private void setupSocialActions() {
@@ -3104,9 +3041,14 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
+        String videoId = null;
+        if (!tracks.isEmpty() && currentIndex >= 0 && currentIndex < tracks.size()) {
+            videoId = tracks.get(currentIndex).videoId;
+        }
+
         Fragment playlist = getParentFragmentManager().findFragmentByTag("playlist_detail");
         if (playlist instanceof PlaylistDetailFragment) {
-            ((PlaylistDetailFragment) playlist).externalRefreshFavoritesIfActive();
+            ((PlaylistDetailFragment) playlist).externalRefreshFavoritesIfActive(videoId);
         }
     }
 
@@ -3426,10 +3368,6 @@ public class SongPlayerFragment extends Fragment {
         boolean sameAsLoaded = !TextUtils.isEmpty(targetVideoId)
                 && TextUtils.equals(targetVideoId, loadedVideoId);
 
-        if (!sameAsLoaded) {
-            persistPositionForLoadedTrack();
-        }
-
         if (!startFromBeginning
                 && sameAsLoaded
                 && currentIndex == index
@@ -3437,12 +3375,6 @@ public class SongPlayerFragment extends Fragment {
             syncMiniStateWithPlaylist();
             persistPlaybackSnapshot(false);
             return;
-        }
-
-        if (startFromBeginning && !TextUtils.isEmpty(targetVideoId)) {
-            clearPersistedPositionFor(targetVideoId);
-            currentSeconds = 0;
-            lastPersistedSecond = -1;
         }
 
         currentIndex = index;
@@ -3474,7 +3406,6 @@ public class SongPlayerFragment extends Fragment {
         pauseRequestedByUser = true;
         cancelAutoplayRecovery();
         cancelPendingStreamResolver();
-        persistPositionForLoadedTrack();
         stopLocalProgressTicker();
         releaseLocalExoMediaPlayer();
         isPlaying = false;
@@ -3534,7 +3465,6 @@ public class SongPlayerFragment extends Fragment {
 
 
     public void externalSnapshotForNavigation() {
-        persistPositionForLoadedTrack();
         persistPlaybackSnapshot(false);
     }
 
@@ -3572,6 +3502,30 @@ public class SongPlayerFragment extends Fragment {
             return "";
         }
         String value = tracks.get(currentIndex).videoId;
+        return value == null ? "" : value;
+    }
+
+    public String externalGetCurrentTitle() {
+        if (currentIndex < 0 || currentIndex >= tracks.size()) {
+            return "";
+        }
+        String value = tracks.get(currentIndex).title;
+        return value == null ? "" : value;
+    }
+
+    public String externalGetCurrentArtist() {
+        if (currentIndex < 0 || currentIndex >= tracks.size()) {
+            return "";
+        }
+        String value = tracks.get(currentIndex).artist;
+        return value == null ? "" : value;
+    }
+
+    public String externalGetCurrentImageUrl() {
+        if (currentIndex < 0 || currentIndex >= tracks.size()) {
+            return "";
+        }
+        String value = tracks.get(currentIndex).imageUrl;
         return value == null ? "" : value;
     }
 
@@ -3734,7 +3688,6 @@ public class SongPlayerFragment extends Fragment {
 
         // ALWAYS stop previous audio before starting new playback to prevent overlap
         if (!sameAsLoaded) {
-            persistPositionForLoadedTrack();
             // Stop any playing audio immediately to prevent mixing
             stopLocalProgressTicker();
             releaseLocalExoMediaPlayer();
@@ -3770,7 +3723,6 @@ public class SongPlayerFragment extends Fragment {
         // This prevents the current song from RESTARTING when only the rest of the queue changed.
         if (!sameAsLoaded || startFromBeginning) {
             loadedVideoId = "";
-            lastPersistedSecond = -1;
         }
 
         cacheOriginalQueueOrder();
@@ -3779,10 +3731,6 @@ public class SongPlayerFragment extends Fragment {
         }
 
         if (startFromBeginning) {
-            String selectedVideoId = tracks.get(currentIndex).videoId;
-            if (!TextUtils.isEmpty(selectedVideoId)) {
-                clearPersistedPositionFor(selectedVideoId);
-            }
             currentSeconds = 0;
         }
 
@@ -3870,7 +3818,6 @@ public class SongPlayerFragment extends Fragment {
         }
 
         collapsingToMiniMode = true;
-        persistPositionForLoadedTrack();
         persistPlaybackSnapshot(false);
         syncMiniStateWithPlaylist();
         Fragment target = resolveReturnTarget(fm);
@@ -3962,7 +3909,6 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
-        persistPositionForLoadedTrack();
         persistPlaybackSnapshot(false);
         syncMiniStateWithPlaylist();
 
@@ -4037,53 +3983,6 @@ public class SongPlayerFragment extends Fragment {
         if (playlist instanceof PlaylistDetailFragment) {
             ((PlaylistDetailFragment) playlist).syncMiniStateFromPlayer(currentIndex, isEffectivePlaying());
         }
-    }
-
-    private int getPersistedPositionFor(@NonNull String videoId, int maxSeconds) {
-        if (playerStatePrefs == null || TextUtils.isEmpty(videoId)) {
-            return 0;
-        }
-        int saved = playerStatePrefs.getInt(PREF_PLAYBACK_POS_PREFIX + videoId, 0);
-        if (saved <= 0) {
-            return 0;
-        }
-        // If we don't have a valid duration yet, just trust the saved value.
-        // Otherwise, clamp it to ensure we don't start past the end.
-        if (maxSeconds > 5 && saved >= maxSeconds - 2) {
-            // Track was basically finished, start from beginning instead of instantly skipping
-            clearPersistedPositionFor(videoId);
-            return 0;
-        }
-        if (maxSeconds <= 5) {
-            return saved;
-        }
-        return Math.min(maxSeconds, saved);
-    }
-
-    private void persistPositionForLoadedTrack() {
-        if (playerStatePrefs == null || TextUtils.isEmpty(loadedVideoId)) {
-            return;
-        }
-        int safeMax = Math.max(1, externalGetTotalSeconds());
-        int safeCurrent = Math.max(0, Math.min(safeMax - 1, externalGetCurrentSeconds()));
-        
-        final String vid = loadedVideoId;
-        final int pos = safeCurrent;
-        
-        persistenceExecutor.execute(() -> {
-            try {
-                playerStatePrefs.edit()
-                        .putInt(PREF_PLAYBACK_POS_PREFIX + vid, pos)
-                        .commit();
-            } catch (Exception ignored) {}
-        });
-    }
-
-    private void clearPersistedPositionFor(@NonNull String videoId) {
-        if (playerStatePrefs == null || TextUtils.isEmpty(videoId)) {
-            return;
-        }
-        playerStatePrefs.edit().remove(PREF_PLAYBACK_POS_PREFIX + videoId).apply();
     }
 
     private void updatePlayPauseIcon() {
@@ -4384,7 +4283,6 @@ public class SongPlayerFragment extends Fragment {
                         context,
                         queue,
                         safeIndex,
-                        Math.max(0, current),
                         Math.max(1, total),
                         effectivelyPlaying,
                         synchronous
@@ -4404,7 +4302,6 @@ public class SongPlayerFragment extends Fragment {
                             .putString("stream_last_track_duration", currentTrack.duration != null ? currentTrack.duration : "")
                             .putString("stream_last_track_image", currentTrack.imageUrl != null ? currentTrack.imageUrl : "")
                             .putBoolean("stream_last_is_playing", effectivelyPlaying)
-                            .putInt("yt_pos_" + currentTrack.videoId, Math.max(0, current))
                             .commit();
                 }
                 // Notify listeners that the playback snapshot was persisted
@@ -4610,37 +4507,15 @@ public class SongPlayerFragment extends Fragment {
                 holder.tvNextUpArtist.setTextColor(Color.parseColor("#A0A0A0")); // Default gray
             }
 
+            holder.ivNextUpArt.setImageDrawable(null);
             if (!TextUtils.isEmpty(item.imageUrl)) {
-            String imageUrl = item.imageUrl.trim();
-            ViewGroup.LayoutParams params = holder.ivNextUpArt.getLayoutParams();
-            int rawWidth = holder.ivNextUpArt.getWidth() > 0
-                ? holder.ivNextUpArt.getWidth()
-                : (params == null ? 0 : params.width);
-            int rawHeight = holder.ivNextUpArt.getHeight() > 0
-                ? holder.ivNextUpArt.getHeight()
-                : (params == null ? 0 : params.height);
-
-            if (rawWidth > 0 && rawHeight > 0) {
-                int targetWidth;
-                int targetHeight;
+                String imageUrl = item.imageUrl.trim();
                 Glide.with(holder.itemView)
                     .load(imageUrl)
                     .transform(new YouTubeCropTransformation())
                     .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL)
-                    .placeholder(R.drawable.ic_music)
-                    .error(R.drawable.ic_music)
+                    .transition(com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions.withCrossFade())
                     .into(holder.ivNextUpArt);
-            } else {
-                com.bumptech.glide.RequestBuilder<Drawable> nextUpRequest = Glide.with(holder.itemView)
-                    .load(imageUrl)
-                    .transform(new YouTubeCropTransformation())
-                    .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL)
-                    .placeholder(R.drawable.ic_music)
-                    .error(R.drawable.ic_music);
-                nextUpRequest.into(holder.ivNextUpArt);
-            }
-            } else {
-                holder.ivNextUpArt.setImageResource(R.drawable.ic_music);
             }
 
             holder.itemView.setOnClickListener(v -> {
@@ -4796,13 +4671,9 @@ public class SongPlayerFragment extends Fragment {
                 if (realIdx != -1) {
                     int previousIndex = currentIndex;
                     pendingTrackChangeDirection = realIdx >= previousIndex ? 1 : -1;
-                    if (!TextUtils.equals(tapped.videoId, loadedVideoId)) {
-                        persistPositionForLoadedTrack();
-                    }
                     currentIndex = realIdx;
                     isPlaying = true;
                     currentSeconds = 0;
-                    lastPersistedSecond = -1;
                     bindCurrentTrack(false);
                     playCurrentTrack();
                     bottomSheetDialog.dismiss();
