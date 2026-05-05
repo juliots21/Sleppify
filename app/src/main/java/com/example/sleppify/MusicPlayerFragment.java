@@ -677,18 +677,6 @@ public class MusicPlayerFragment extends Fragment {
                     handleWebSessionAuthSuccess(result.getData());
                 }
         );
-        searchActivityLauncher = registerForActivityResult(
-                new ActivityResultContracts.StartActivityForResult(),
-                result -> {
-                    if (!isAdded()) {
-                        return;
-                    }
-                    if (result.getData() == null) {
-                        return;
-                    }
-                    handleSearchActivityResult(result.getResultCode(), result.getData());
-                }
-        );
     }
     @Nullable
     @Override
@@ -5257,18 +5245,7 @@ public class MusicPlayerFragment extends Fragment {
     }
     private void launchSearchActivity() {
         if (getActivity() instanceof MainActivity) {
-            ((MainActivity) getActivity()).showModuleLoadingOverlay();
-        }
-        Intent intent = new Intent(requireContext(), SearchActivity.class);
-        intent.addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION);
-        androidx.core.app.ActivityOptionsCompat options = 
-            androidx.core.app.ActivityOptionsCompat.makeCustomAnimation(
-                requireContext(), R.anim.fade_in, R.anim.fade_out);
-        searchActivityLauncher.launch(intent, options);
-    }
-    private void handleSearchActivityResult(int resultCode, @NonNull Intent data) {
-        if (resultCode == SearchActivity.RESULT_TRACK_SELECTED || resultCode == SearchActivity.RESULT_PLAYLIST_SELECTED) {
-            playTrackFromSearchInternal(data);
+            ((MainActivity) getActivity()).openSearchFragment();
         }
     }
     public void playTrackFromSearch(@NonNull Intent data) {
@@ -5276,13 +5253,13 @@ public class MusicPlayerFragment extends Fragment {
         playTrackFromSearchInternal(data);
     }
     private void playTrackFromSearchInternal(@NonNull Intent data) {
-        String resultType = data.getStringExtra(SearchActivity.EXTRA_RESULT_TYPE);
-        String videoId = data.getStringExtra(SearchActivity.EXTRA_RESULT_VIDEO_ID);
-        String contentId = data.getStringExtra(SearchActivity.EXTRA_RESULT_CONTENT_ID);
-        String title = data.getStringExtra(SearchActivity.EXTRA_RESULT_TITLE);
-        String subtitle = data.getStringExtra(SearchActivity.EXTRA_RESULT_SUBTITLE);
-        String thumbnailUrl = data.getStringExtra(SearchActivity.EXTRA_RESULT_THUMBNAIL);
-        String queueJson = data.getStringExtra(SearchActivity.EXTRA_RESULT_TRACKS_JSON);
+        String resultType = data.getStringExtra(SearchFragment.EXTRA_RESULT_TYPE);
+        String videoId = data.getStringExtra(SearchFragment.EXTRA_RESULT_VIDEO_ID);
+        String contentId = data.getStringExtra(SearchFragment.EXTRA_RESULT_CONTENT_ID);
+        String title = data.getStringExtra(SearchFragment.EXTRA_RESULT_TITLE);
+        String subtitle = data.getStringExtra(SearchFragment.EXTRA_RESULT_SUBTITLE);
+        String thumbnailUrl = data.getStringExtra(SearchFragment.EXTRA_RESULT_THUMBNAIL);
+        String queueJson = data.getStringExtra(SearchFragment.EXTRA_RESULT_TRACKS_JSON);
         YouTubeMusicService.TrackResult track = new YouTubeMusicService.TrackResult(
                 resultType, contentId, title, subtitle, thumbnailUrl);
         // Populate tracks for queue finding
@@ -5308,10 +5285,10 @@ public class MusicPlayerFragment extends Fragment {
         openTrack(track, true);
     }
     public void playNextFromSearch(@NonNull Intent data) {
-        String videoId = data.getStringExtra(SearchActivity.EXTRA_RESULT_VIDEO_ID);
-        String title = data.getStringExtra(SearchActivity.EXTRA_RESULT_TITLE);
-        String subtitle = data.getStringExtra(SearchActivity.EXTRA_RESULT_SUBTITLE);
-        String thumbnailUrl = data.getStringExtra(SearchActivity.EXTRA_RESULT_THUMBNAIL);
+        String videoId = data.getStringExtra(SearchFragment.EXTRA_RESULT_VIDEO_ID);
+        String title = data.getStringExtra(SearchFragment.EXTRA_RESULT_TITLE);
+        String subtitle = data.getStringExtra(SearchFragment.EXTRA_RESULT_SUBTITLE);
+        String thumbnailUrl = data.getStringExtra(SearchFragment.EXTRA_RESULT_THUMBNAIL);
         SongPlayerFragment player = findSongPlayerFragment();
         if (player != null && player.isAdded()) {
             player.externalInsertNext(videoId, title, subtitle, "", thumbnailUrl);
@@ -5319,10 +5296,10 @@ public class MusicPlayerFragment extends Fragment {
         }
     }
     public void addToQueueFromSearch(@NonNull Intent data) {
-        String videoId = data.getStringExtra(SearchActivity.EXTRA_RESULT_VIDEO_ID);
-        String title = data.getStringExtra(SearchActivity.EXTRA_RESULT_TITLE);
-        String subtitle = data.getStringExtra(SearchActivity.EXTRA_RESULT_SUBTITLE);
-        String thumbnailUrl = data.getStringExtra(SearchActivity.EXTRA_RESULT_THUMBNAIL);
+        String videoId = data.getStringExtra(SearchFragment.EXTRA_RESULT_VIDEO_ID);
+        String title = data.getStringExtra(SearchFragment.EXTRA_RESULT_TITLE);
+        String subtitle = data.getStringExtra(SearchFragment.EXTRA_RESULT_SUBTITLE);
+        String thumbnailUrl = data.getStringExtra(SearchFragment.EXTRA_RESULT_THUMBNAIL);
         SongPlayerFragment player = findSongPlayerFragment();
         if (player != null && player.isAdded()) {
             player.externalEnqueue(videoId, title, subtitle, "", thumbnailUrl);

@@ -12,4 +12,19 @@
     </style>
 
     <style name="Theme.Sleppify" parent="Base.Theme.Sleppify" />
+
+    <style name="ShapeAppearance.Sleppify.Rounded12" parent="ShapeAppearance.Material3.MediumComponent">
+        <item name="cornerSize">12dp</item>
+    </style>
+
+    <style name="ShapeAppearance.Sleppify.Circular" parent="ShapeAppearance.Material3.MediumComponent">
+        <item name="cornerSize">50%</item>
+    </style>
+
+    <!-- Compact styles for Bottom Navigation -->
+    <style name="BottomNavLabel" parent="TextAppearance.Material3.LabelSmall">
+        <item name="android:textSize">11sp</item>
+        <item name="android:letterSpacing">0.02</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
 </resources>

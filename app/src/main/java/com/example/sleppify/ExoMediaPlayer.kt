@@ -16,6 +16,8 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import java.util.concurrent.CopyOnWriteArrayList
+import java.lang.ref.WeakReference
 
 /**
  * Thin adapter around ExoPlayer (Media3) that mimics the relevant subset of
@@ -44,6 +46,36 @@ class ExoMediaPlayer {
 
     companion object {
         private const val TAG = "ExoMediaPlayer"
+
+        // Registry of all active ExoMediaPlayer instances in the app
+        private val activeInstances = CopyOnWriteArrayList<WeakReference<ExoMediaPlayer>>()
+
+        /**
+         * Pauses all other playing instances that are not part of a crossfade.
+         */
+        @JvmStatic
+        private fun stopOthers(current: ExoMediaPlayer) {
+            val iterator = activeInstances.iterator()
+            while (iterator.hasNext()) {
+                val ref = iterator.next()
+                val other = ref.get()
+                if (other == null) {
+                    activeInstances.remove(ref)
+                    continue
+                }
+                if (other !== current && other.isPlaying()) {
+                    // Allow overlap if one of them is a crossfade component
+                    if (!current.isCrossfadeComponent && !other.isCrossfadeComponent) {
+                        Log.d(TAG, "stopOthers: pausing competing player instance")
+                        try {
+                            other.pause()
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to pause other instance", e)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private val appContext: Context
@@ -64,6 +96,13 @@ class ExoMediaPlayer {
     private var audioSessionId: Int = 0
     private var leftVolume = 1f
     private var rightVolume = 1f
+    
+    /**
+     * Mark this instance as part of a crossfade transition.
+     * Crossfade components are allowed to overlap with other players briefly.
+     */
+    @JvmField
+    var isCrossfadeComponent: Boolean = false
 
     constructor(context: Context) {
         this.appContext = context.applicationContext
@@ -80,6 +119,7 @@ class ExoMediaPlayer {
         this.ownsPlayer = true
         this.audioSessionId = player.audioSessionId
         player.addListener(playerListener)
+        activeInstances.add(WeakReference(this))
     }
 
     /**
@@ -93,6 +133,7 @@ class ExoMediaPlayer {
         this.ownsPlayer = false
         this.audioSessionId = sharedExoPlayer.audioSessionId
         sharedExoPlayer.addListener(playerListener)
+        activeInstances.add(WeakReference(this))
     }
 
     private val playerListener = object : Player.Listener {
@@ -217,6 +258,10 @@ class ExoMediaPlayer {
     fun start() {
         if (released) return
         val player = exoPlayer ?: return
+        
+        // Enforce single-playback policy (Global Guardian)
+        stopOthers(this)
+        
         player.playWhenReady = true
         if (player.playbackState == Player.STATE_IDLE) {
             player.prepare()

@@ -2312,6 +2312,7 @@ public class SongPlayerFragment extends Fragment {
         }
 
         ExoMediaPlayer incoming = new ExoMediaPlayer(requireContext().getApplicationContext());
+        incoming.isCrossfadeComponent = true;
         try {
             incoming.setAudioAttributes(new AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -2428,6 +2429,7 @@ public class SongPlayerFragment extends Fragment {
         }
 
         ExoMediaPlayer incoming = new ExoMediaPlayer(requireContext().getApplicationContext());
+        incoming.isCrossfadeComponent = true;
         try {
             incoming.setAudioAttributes(new AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -2588,6 +2590,9 @@ public class SongPlayerFragment extends Fragment {
         }
 
         localExoMediaPlayer = incoming;
+        if (localExoMediaPlayer != null) {
+            localExoMediaPlayer.isCrossfadeComponent = false;
+        }
         usingOfflineSource = true;
         currentIndex = nextIndex;
         pauseRequestedByUser = false;
@@ -3552,6 +3557,7 @@ public class SongPlayerFragment extends Fragment {
     }
 
     public void externalInsertNext(
+
             @NonNull String videoId,
             @NonNull String title,
             @NonNull String artist,
@@ -3835,17 +3841,13 @@ public class SongPlayerFragment extends Fragment {
                     .show(target);
             transaction.commit();
         } else {
-            if (getActivity() instanceof SearchActivity) {
-                requireActivity().onBackPressed();
-            } else {
-                transaction
-                        .setCustomAnimations(
-                                R.anim.hold,
-                                R.anim.player_screen_exit
-                        )
-                        .remove(this);
-                transaction.commit();
-            }
+            transaction
+                    .setCustomAnimations(
+                            R.anim.hold,
+                            R.anim.player_screen_exit
+                    )
+                    .remove(this);
+            transaction.commit();
         }
 
         collapsingToMiniMode = false;
@@ -4850,8 +4852,6 @@ public class SongPlayerFragment extends Fragment {
                                             if (isAdded()) {
                                                 if (getActivity() instanceof MainActivity) {
                                                     ((MainActivity) getActivity()).externalClosePlayerImmediately();
-                                                } else if (getActivity() instanceof SearchActivity) {
-                                                    requireActivity().onBackPressed();
                                                 }
                                             }
                                         })
@@ -4911,6 +4911,7 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void releaseLocalExoMediaPlayer() {
+        cancelOfflineCrossfade();
         if (localExoMediaPlayer == null) {
             return;
         }

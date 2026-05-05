@@ -16,4 +16,6 @@
     <color name="text_primary">#e2e2eb</color>
     <color name="text_secondary">#c3c6d5</color>
     <color name="alert_red">#FF4D4D</color>
+    <color name="primary">#AEC7FD</color>
+    <color name="surface_dark_variant">#1A1D26</color>
 </resources>

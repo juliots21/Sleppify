@@ -58,7 +58,8 @@ class MainActivity : AppCompatActivity() {
         private const val TAG_MODULE_MUSIC = "module_music"
         private const val TAG_MODULE_SCANNER = "module_scanner"
         private const val TAG_MODULE_EQUALIZER = "module_equalizer"
-        private const val TAG_MODULE_SETTINGS = "module_settings"
+        const val TAG_MODULE_SETTINGS = "module_settings"
+        const val TAG_MODULE_SEARCH = "module_search"
         private const val TAG_PLAYLIST_DETAIL = "playlist_detail"
         private const val TAG_SONG_PLAYER = "song_player"
 
@@ -82,7 +83,6 @@ class MainActivity : AppCompatActivity() {
         const val ACTION_OPEN_CURRENT_PLAYER = "com.example.sleppify.ACTION_OPEN_CURRENT_PLAYER"
         const val ACTION_TOGGLE_CURRENT_PLAYBACK = "com.example.sleppify.ACTION_TOGGLE_CURRENT_PLAYBACK"
         const val ACTION_PAUSE_CURRENT_PLAYBACK = "com.example.sleppify.ACTION_PAUSE_CURRENT_PLAYBACK"
-        const val EXTRA_OPENED_FROM_SEARCH_ACTIVITY = "com.example.sleppify.EXTRA_OPENED_FROM_SEARCH_ACTIVITY"
         private const val REQUEST_CODE_RECORD_AUDIO = 4107
         private const val AMOLED_APPLY_DEBOUNCE_MS = 1500L
 
@@ -119,7 +119,7 @@ class MainActivity : AppCompatActivity() {
     private var forceInitialOauthGate = false
     private var loginGateAuthInProgress = false
     private var isNavigating = false
-    private var openedFromSearchActivity = false
+
 
     private val authManagerLazy: AuthManager by lazy { AuthManager.getInstance(this) }
 
@@ -132,6 +132,7 @@ class MainActivity : AppCompatActivity() {
     private var scannerFragment: Fragment? = null
     private var equalizerFragment: Fragment? = null
     private var settingsFragment: Fragment? = null
+    private var searchFragment: Fragment? = null
     private var playlistDetailFragment: Fragment? = null
     private var songPlayerFragment: Fragment? = null
 
@@ -397,8 +398,7 @@ class MainActivity : AppCompatActivity() {
         inSettings = savedInstanceState.getBoolean("in_settings", false)
     }
 
-    private fun handlePlayFromSearchIntent(intent: Intent) {
-        openedFromSearchActivity = intent.getBooleanExtra(EXTRA_OPENED_FROM_SEARCH_ACTIVITY, false)
+    fun handlePlayFromSearchIntent(intent: Intent) {
 
         if (currentMainNavItemId != R.id.nav_music) {
             bottomNav.selectedItemId = R.id.nav_music
@@ -855,7 +855,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun resolveHeaderSettingsTypeface() = headerSettingsTypeface ?: ResourcesCompat.getFont(this, R.font.inter_variable).also { headerSettingsTypeface = it } ?: Typeface.DEFAULT_BOLD
 
-    private fun enterSettings() {
+    fun enterSettings() {
         if (inSettings) return
         if (bottomNav.selectedItemId == R.id.nav_music) markStreamingEntryAsLibrary()
 
@@ -918,11 +918,98 @@ class MainActivity : AppCompatActivity() {
     }
 
 
+    fun findSongPlayerFragment(): SongPlayerFragment? {
+        return supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER) as? SongPlayerFragment
+    }
+
+    fun openSongPlayer() {
+        val player = findSongPlayerFragment() ?: return
+        if (player.isAdded) {
+            supportFragmentManager.beginTransaction()
+                .setCustomAnimations(R.anim.player_screen_enter, R.anim.hold)
+                .show(player)
+                .setMaxLifecycle(player, Lifecycle.State.RESUMED)
+                .commit()
+        }
+    }
+
+    fun openSearchFragment() {
+        if (isFinishing || isDestroyed) return
+        showModuleLoadingOverlay()
+        
+        val target = searchFragment ?: SearchFragment.newInstance().also { searchFragment = it }
+        val isNew = !target.isAdded
+        
+        supportFragmentManager.beginTransaction().apply {
+            setReorderingAllowed(true)
+            playlistDetailFragment = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL)
+            songPlayerFragment = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER)
+            val current = getMainModuleFragment(currentMainNavItemId)
+            
+            hideIfVisible(this, current, target)
+            hideIfVisible(this, playlistDetailFragment, target)
+            hideIfVisible(this, songPlayerFragment, target)
+            hideIfVisible(this, settingsFragment, target)
+            
+            if (target.isAdded) show(target) else add(R.id.fragmentContainer, target, TAG_MODULE_SEARCH).addToBackStack(TAG_MODULE_SEARCH)
+            setMaxLifecycle(target, Lifecycle.State.RESUMED)
+            commit()
+        }
+
+        topAppBar.visibility = View.GONE
+        
+        lifecycleScope.launch {
+            delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
+            revealModuleContent()
+        }
+    }
+
+    fun closeSearchFragment() {
+        showModuleLoadingOverlay()
+        
+        val selectedId = bottomNav.selectedItemId
+        val target = getMainModuleFragment(selectedId) ?: getOrCreateMainModuleFragment(selectedId)
+        val isNew = target?.isAdded == false
+
+        supportFragmentManager.popBackStackImmediate(TAG_MODULE_SEARCH, androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE)
+
+        supportFragmentManager.beginTransaction().apply {
+            setReorderingAllowed(true)
+            searchFragment?.let { if (it.isAdded) { hide(it); setMaxLifecycle(it, Lifecycle.State.STARTED) } }
+            
+            // Si el playlist detail estaba activo, lo restauramos si sigue en el backstack, 
+            // de lo contrario volvemos al módulo principal.
+            val playlistDetail = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL)
+            if (playlistDetail != null && playlistDetail.isAdded && !playlistDetail.isHidden) {
+                // Ya se mostrará correctamente por el popBackStack
+            } else {
+                target?.let { 
+                    if (it.isAdded) show(it) else moduleTagForItem(selectedId)?.let { tag -> add(R.id.fragmentContainer, it, tag) }
+                    setMaxLifecycle(it, Lifecycle.State.RESUMED)
+                }
+            }
+            commit()
+        }
+
+        topAppBar.visibility = View.VISIBLE
+        configureHeaderActionForMainModules()
+        applyTvModeLayout()
+        
+        // If playlist detail is active, we don't need to change the header title since it hides the header anyway.
+        updateHeaderTitleForModule(selectedId)
+        
+        lifecycleScope.launch {
+            delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
+            revealModuleContent()
+        }
+    }
+
     private fun restoreMainModuleReferences() {
         musicFragment = supportFragmentManager.findFragmentByTag(TAG_MODULE_MUSIC)
         scannerFragment = supportFragmentManager.findFragmentByTag(TAG_MODULE_SCANNER)
         equalizerFragment = supportFragmentManager.findFragmentByTag(TAG_MODULE_EQUALIZER)
         settingsFragment = supportFragmentManager.findFragmentByTag(TAG_MODULE_SETTINGS)
+        searchFragment = supportFragmentManager.findFragmentByTag(TAG_MODULE_SEARCH)
         playlistDetailFragment = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL)
         songPlayerFragment = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER)
     }
@@ -1069,10 +1156,7 @@ class MainActivity : AppCompatActivity() {
     private fun handleSongPlayerBackPressed(): Boolean {
         val player = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER) as? SongPlayerFragment ?: return false
         if (!player.isAdded || player.isHidden) return false
-        if (openedFromSearchActivity) {
-            finish()
-            return true
-        }
+
         if (player.externalTryEnterMiniMode()) return true
 
         snapshotStreamingScreenBeforeNavigation()
@@ -1098,10 +1182,7 @@ class MainActivity : AppCompatActivity() {
         val player = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER) as? SongPlayerFragment ?: return
         if (!player.isAdded || player.isHidden) return
 
-        if (openedFromSearchActivity) {
-            finish()
-            return
-        }
+
 
         val fallback = resolveSongPlayerReturnTarget(player.externalGetReturnTargetTag())
         supportFragmentManager.beginTransaction().apply {

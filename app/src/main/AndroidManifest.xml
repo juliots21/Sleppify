@@ -77,10 +77,6 @@
             </intent-filter>
         </activity>
 
-        <activity
-            android:name=".SearchActivity"
-            android:exported="false"
-            android:windowSoftInputMode="stateVisible|adjustResize" />
 
         <activity
             android:name=".YouTubeMusicWebSessionActivity"

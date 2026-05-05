@@ -268,6 +268,9 @@ public class PlaylistDetailFragment extends Fragment
             if (player == null || !player.isVisible()) {
                 updateMiniPlayerUi();
                 refreshActiveEqualizerState();
+                if (trackAdapter != null) {
+                    trackAdapter.notifyDataSetChanged();
+                }
             }
 
             miniProgressHandler.postDelayed(this, MINI_PROGRESS_TICK_MS);
@@ -2100,7 +2103,7 @@ public class PlaylistDetailFragment extends Fragment
             return;
         }
 
-        String observeTag = currentPlaylistOfflineTag();
+        String observeTag = uniqueName;
 
         if (TextUtils.equals(observingOfflineUniqueName, observeTag) && offlineDownloadObserver != null) {
             if (notifyTerminalToasts) {
@@ -2119,10 +2122,11 @@ public class PlaylistDetailFragment extends Fragment
             }
 
             if (workInfos == null || workInfos.isEmpty()) {
-                setOfflineDownloadVisualState(false, "");
-                offlineDownloadQueued = false;
-                notifyHeaderChanged();
-                maybeUpdateOfflineReadyState();
+                if (!offlineDownloadQueued) {
+                    setOfflineDownloadVisualState(false, "");
+                    notifyHeaderChanged();
+                    maybeUpdateOfflineReadyState();
+                }
                 return;
             }
 
@@ -2817,13 +2821,19 @@ public class PlaylistDetailFragment extends Fragment
         }
 
         List<PlaylistTrack> remaining = new ArrayList<>(base);
-        List<PlaylistTrack> ordered = new ArrayList<>(base.size());
+        List<PlaylistTrack> ordered = new ArrayList<>();
         for (String videoId : queueVideoIds) {
-            int index = findTrackIndexByVideoId(remaining, videoId == null ? "" : videoId);
-            if (index < 0) {
-                continue;
+            if (videoId == null) continue;
+            int index = findTrackIndexByVideoId(remaining, videoId);
+            if (index >= 0) {
+                ordered.add(remaining.remove(index));
+            } else {
+                // If not in remaining anymore (duplicate), find in base to get metadata
+                int baseIdx = findTrackIndexByVideoId(base, videoId);
+                if (baseIdx >= 0) {
+                    ordered.add(base.get(baseIdx));
+                }
             }
-            ordered.add(remaining.remove(index));
         }
 
         if (!remaining.isEmpty()) {
@@ -3466,19 +3476,7 @@ public class PlaylistDetailFragment extends Fragment
         }
 
         int currentQueueIndex = resolveCurrentQueueIndex();
-        int existingIndex = findTrackIndexByVideoId(playbackQueueTracks, selected.videoId);
-        if (existingIndex == currentQueueIndex && currentQueueIndex >= 0) {
-            
-            return;
-        }
-
-        PlaylistTrack movingTrack = existingIndex >= 0
-                ? playbackQueueTracks.remove(existingIndex)
-                : selected;
-
-        if (existingIndex >= 0 && currentQueueIndex >= 0 && existingIndex < currentQueueIndex) {
-            currentQueueIndex--;
-        }
+        PlaylistTrack movingTrack = selected;
 
         int insertIndex = Math.max(0, Math.min(currentQueueIndex + 1, playbackQueueTracks.size()));
         playbackQueueTracks.add(insertIndex, movingTrack);
@@ -3507,22 +3505,7 @@ public class PlaylistDetailFragment extends Fragment
             return;
         }
 
-        int currentQueueIndex = resolveCurrentQueueIndex();
-        int existingIndex = findTrackIndexByVideoId(playbackQueueTracks, selected.videoId);
-        if (existingIndex == currentQueueIndex && currentQueueIndex >= 0) {
-            
-            return;
-        }
-
-        if (existingIndex == playbackQueueTracks.size() - 1 && existingIndex >= 0) {
-            
-            return;
-        }
-
-        PlaylistTrack movingTrack = existingIndex >= 0
-                ? playbackQueueTracks.remove(existingIndex)
-                : selected;
-
+        PlaylistTrack movingTrack = selected;
         playbackQueueTracks.add(movingTrack);
 
         SongPlayerFragment player = findSongPlayerFragment();
@@ -3579,10 +3562,7 @@ public class PlaylistDetailFragment extends Fragment
         ensurePlaybackQueue();
         SongPlayerFragment player = findSongPlayerFragment();
         if (player != null && player.isAdded()) {
-            int playerQueueIndex = findTrackIndexByVideoId(playbackQueueTracks, player.externalGetCurrentVideoId());
-            if (playerQueueIndex >= 0) {
-                return playerQueueIndex;
-            }
+            return player.externalGetCurrentIndex();
         }
 
         int localIndex = findTrackIndexByVideoId(playbackQueueTracks, getCurrentTrackVideoId());
@@ -5225,7 +5205,9 @@ public class PlaylistDetailFragment extends Fragment
             if (position < 0 || position >= items.size()) {
                 return RecyclerView.NO_ID;
             }
-            return items.get(position).videoId.hashCode();
+            // Use both videoId hash and position to ensure uniqueness even with duplicates
+            PlaylistTrack track = items.get(position);
+            return ((long) track.videoId.hashCode() << 32) | (position & 0xFFFFFFFFL);
         }
 
         @NonNull
@@ -5323,13 +5305,16 @@ public class PlaylistDetailFragment extends Fragment
                         ? R.drawable.bg_playlist_track_active
                         : R.drawable.bg_playlist_track_default);
             }
-            holder.llNowPlayingOverlay.setVisibility(isActive ? View.VISIBLE : View.GONE);
-            if (isActive && holder.animatedEq != null) {
-                SongPlayerFragment songPlayer = findSongPlayerFragment();
-                boolean isActuallyPlaying = songPlayer != null && songPlayer.isPlaying();
-                holder.animatedEq.setAnimating(isActuallyPlaying);
-            } else if (holder.animatedEq != null) {
-                holder.animatedEq.setAnimating(false);
+            SongPlayerFragment songPlayer = findSongPlayerFragment();
+            boolean isActuallyPlaying = songPlayer != null && songPlayer.isPlaying();
+            String currentVideoId = songPlayer != null ? songPlayer.getLoadedVideoId() : "";
+            
+            // Extra safety: only show overlay if active AND matches player state
+            boolean shouldShowOverlay = isActive && !TextUtils.isEmpty(currentVideoId) && TextUtils.equals(currentVideoId, track.videoId);
+            
+            holder.llNowPlayingOverlay.setVisibility(shouldShowOverlay ? View.VISIBLE : View.GONE);
+            if (holder.animatedEq != null) {
+                holder.animatedEq.setAnimating(shouldShowOverlay && isActuallyPlaying);
             }
             holder.tvTrackTitle.setTextColor(defaultTitleColor);
 
@@ -5427,8 +5412,9 @@ public class PlaylistDetailFragment extends Fragment
 
     private void launchSearchActivity() {
         if (!isAdded()) return;
-        Intent intent = new Intent(requireContext(), SearchActivity.class);
-        startActivity(intent);
+        if (getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).openSearchFragment();
+        }
     }
 
     private void updateLibraryInlineClearButton() {
