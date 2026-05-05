@@ -18,8 +18,6 @@ import androidx.appcompat.app.AppCompatActivity
 class YouTubeMusicWebSessionActivity : AppCompatActivity() {
 
     private var webView: WebView? = null
-    private var btnFinish: Button? = null
-    private var tvStatus: TextView? = null
     private var lastCookieHeader: String = ""
     private var lastAutoLoginClickAtMs: Long = 0L
     private var autoConnectTriggered: Boolean = false
@@ -30,16 +28,6 @@ class YouTubeMusicWebSessionActivity : AppCompatActivity() {
         setContentView(R.layout.activity_youtube_web_session)
 
         webView = findViewById(R.id.webSessionView)
-        btnFinish = findViewById(R.id.btnSessionFinish)
-        val btnClose: Button = findViewById(R.id.btnSessionClose)
-        tvStatus = findViewById(R.id.tvSessionStatus)
-
-        btnFinish?.isEnabled = false
-        btnFinish?.setOnClickListener { completeWithSession() }
-        btnClose.setOnClickListener {
-            setResult(RESULT_CANCELED)
-            finish()
-        }
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
@@ -80,15 +68,11 @@ class YouTubeMusicWebSessionActivity : AppCompatActivity() {
         val cookie = CookieManager.getInstance().getCookie("https://music.youtube.com/")
 
         if (cookie.isNullOrBlank()) {
-            tvStatus?.text = "Inicia sesion en YouTube Music para continuar."
-            btnFinish?.isEnabled = false
             lastCookieHeader = ""
             return
         }
 
         if (looksLikeAuthenticatedCookie(cookie)) {
-            tvStatus?.text = "Sesion detectada. Conectando..."
-            btnFinish?.isEnabled = true
             lastCookieHeader = cookie
             Log.i(TAG_STREAMING_WEB, "authenticated_cookie_detected length=" + cookie.length)
             if (!autoConnectTriggered) {
@@ -98,8 +82,6 @@ class YouTubeMusicWebSessionActivity : AppCompatActivity() {
             return
         }
 
-        tvStatus?.text = "Sesion aun no validada. Completa el inicio de sesion."
-        btnFinish?.isEnabled = false
         lastCookieHeader = ""
     }
 

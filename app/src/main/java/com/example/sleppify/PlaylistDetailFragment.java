@@ -1254,7 +1254,7 @@ public class PlaylistDetailFragment extends Fragment
     private static void loadArtworkInto(@NonNull ImageView target, @Nullable String imageUrl, int fixedSizeDp) {
         if (TextUtils.isEmpty(imageUrl)) {
             target.setTag(R.id.tag_artwork_signature, null);
-            target.setImageResource(R.drawable.ic_music);
+            target.setImageDrawable(null);
             return;
         }
 
@@ -1303,16 +1303,15 @@ public class PlaylistDetailFragment extends Fragment
 
         boolean offlineOnly = !hasValidatedInternet(context);
 
+        target.setImageDrawable(null); // Clear previous recycled image
         Glide.with(target)
             .load(safeUrl)
             .transform(new YouTubeCropTransformation())
             .format(DecodeFormat.PREFER_RGB_565)
             .diskCacheStrategy(DiskCacheStrategy.ALL)
             .onlyRetrieveFromCache(offlineOnly)
-            .placeholder(R.drawable.ic_music)
-            .error(R.drawable.ic_music)
-            .override(targetWidth, targetHeight)
-            .dontAnimate()
+            .override(Math.min(targetWidth, 160), Math.min(targetHeight, 160)) // Low quality constraint
+            .transition(com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions.withCrossFade())
             .into(target);
     }
 
@@ -5414,7 +5413,7 @@ public class PlaylistDetailFragment extends Fragment
             } else if (holder.animatedEq != null) {
                 holder.animatedEq.setAnimating(false);
             }
-            holder.tvTrackTitle.setTextColor(isActive ? activeTitleColor : defaultTitleColor);
+            holder.tvTrackTitle.setTextColor(defaultTitleColor);
 
             ViewGroup.LayoutParams layoutParams = holder.itemView.getLayoutParams();
             if (layoutParams instanceof RecyclerView.LayoutParams) {

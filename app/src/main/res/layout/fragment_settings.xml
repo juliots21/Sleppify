@@ -321,7 +321,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="12dp"
-                android:text="AJUSTES DE APLICACIONES"
+                android:text="APARIENCIA Y SISTEMA"
                 android:textColor="@color/text_secondary"
                 android:textSize="11sp"
                 android:textStyle="bold"
@@ -375,58 +375,6 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:checked="false" />
-                </LinearLayout>
-
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:layout_marginHorizontal="16dp"
-                    android:background="#0AFFFFFF" />
-
-                <LinearLayout
-                    android:id="@+id/rowAppsWhitelist"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:foreground="?attr/selectableItemBackground"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:padding="16dp">
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="@string/settings_apps_whitelist_row_title"
-                            android:textColor="@color/text_primary"
-                            android:textSize="14sp" />
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="2dp"
-                            android:text="@string/settings_apps_whitelist_row_subtitle"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="11sp" />
-                    </LinearLayout>
-
-                    <TextView
-                        android:id="@+id/tvAppsWhitelistValue"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/settings_apps_whitelist_none"
-                        android:textColor="@color/stitch_blue_light"
-                        android:textSize="12sp"
-                        android:textStyle="bold" />
-
-                        android:src="@drawable/ic_chevron_right"
-                        app:tint="@color/text_secondary" />
                 </LinearLayout>
 
                 <View

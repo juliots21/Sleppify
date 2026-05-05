@@ -12,8 +12,4 @@
         android:id="@+id/nav_equalizer"
         android:icon="@drawable/ic_equalizer"
         android:title="Equalizer" />
-    <item
-        android:id="@+id/nav_apps"
-        android:icon="@drawable/ic_apps"
-        android:title="Apps" />
 </menu>

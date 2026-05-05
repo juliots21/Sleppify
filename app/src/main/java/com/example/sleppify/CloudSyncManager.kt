@@ -1004,8 +1004,7 @@ class CloudSyncManager private constructor(context: Context) {
 
     private fun isDeprecatedSettingsKey(key: String?): Boolean {
         if (key.isNullOrEmpty()) return false
-        if (LEGACY_APPS_TURBO_MODE == key) return true
-        return key.startsWith("schedule_ai_") || key.startsWith("apps_ai_")
+        return key.startsWith("schedule_ai_")
     }
 
     private fun isStreamingFavoritesKey(key: String?): Boolean {
@@ -1360,8 +1359,6 @@ class CloudSyncManager private constructor(context: Context) {
         @JvmField val KEY_DEFAULT_DURATION_MINUTES = "default_duration_minutes"
         @JvmField val KEY_NOTIFICATION_LEAD_MINUTES = "notification_lead_minutes"
         @JvmField val KEY_DAILY_SUMMARY_INTERVAL_HOURS = "daily_summary_interval_hours"
-        @JvmField val KEY_APPS_SHOW_SYSTEM_INFO = "apps_show_system_info"
-        @JvmField val KEY_APPS_WHITELIST_PACKAGES = "apps_whitelist_packages"
         @JvmField val KEY_PLAYER_VIDEO_MODE_ENABLED = "player_video_mode_enabled"
         @JvmField val KEY_PLAYER_SHUFFLE_ENABLED = "player_shuffle_enabled"
         @JvmField val KEY_PLAYER_REPEAT_MODE = "player_repeat_mode"
@@ -1396,7 +1393,6 @@ class CloudSyncManager private constructor(context: Context) {
         private const val LEGACY_AI_EQ_DISMISSED_SESSION_PREFIX = "ai_eq_dismissed_session_"
         private const val LEGACY_AI_EQ_PENDING_JSON_PREFIX = "ai_eq_pending_json_"
         private const val DEBUG_EQ_PREFIX = "debug_"
-        private const val LEGACY_APPS_TURBO_MODE = "apps_stop_turbo_mode"
 
         private val FAVORITES_TRACKS_UPDATED_AT_KEY =
             "playlist_tracks_updated_at_" + FavoritesPlaylistStore.PLAYLIST_ID

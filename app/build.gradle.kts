@@ -69,7 +69,7 @@ dependencies {
     implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
     implementation("androidx.work:work-runtime:2.9.1")
     implementation("androidx.media:media:1.7.0")
-    val media3Version = "1.4.1"
+    val media3Version = "1.6.0"
     implementation("androidx.media3:media3-exoplayer:$media3Version")
     implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
     implementation("androidx.media3:media3-datasource:$media3Version")
@@ -77,8 +77,8 @@ dependencies {
     implementation("androidx.media3:media3-common:$media3Version")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     // pierfrancescosoffritti YouTube iframe player removed — playback is ExoPlayer only.
-    // NewPipeExtractor - v0.25.2 estable en JitPack
-    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.25.2") {
+    // NewPipeExtractor - v0.26.1 estable en JitPack
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.1") {
         exclude(group = "com.google.protobuf", module = "protobuf-javalite")
     }
     // Requerido por NewPipeExtractor

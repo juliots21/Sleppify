@@ -238,6 +238,7 @@ public class SongPlayerFragment extends Fragment {
     private boolean playerEnterAnimationRunning = false;
     private int swipeDismissTouchSlopPx = 12;
     private int swipeDismissMinDistancePx = 120;
+    private int consecutiveStreamFailures = 0;
     private long lastBackgroundResumeAttemptMs = 0L;
     @Nullable
     private ActivityResultLauncher<String> notificationPermissionLauncher;
@@ -883,6 +884,7 @@ public class SongPlayerFragment extends Fragment {
         pendingTrackChangeDirection = fromCompletion ? 1 : (delta >= 0 ? 1 : -1);
 
         if (!fromCompletion) {
+            consecutiveStreamFailures = 0; // Manual track change by user resets the loop protector
             cancelOfflineCrossfade();
         }
 
@@ -1665,6 +1667,7 @@ public class SongPlayerFragment extends Fragment {
                 try {
                     mp.setVolume(1f, 1f);
                     mp.start();
+                    consecutiveStreamFailures = 0; // Reset counter on successful playback
                     Log.d(TAG, "onPrepared: playback started videoId=" + track.videoId
                             + " durationSec=" + totalSeconds);
                     startLocalProgressTicker();
@@ -1733,6 +1736,10 @@ public class SongPlayerFragment extends Fragment {
                 Map<String, String> headers = new HashMap<>();
                 headers.put("User-Agent", STREAM_HTTP_USER_AGENT);
                 headers.put("Accept", "*/*");
+                Map<String, String> authHeaders = InnertubeResolver.getHeadersFor(track.videoId);
+                if (authHeaders != null) {
+                    headers.putAll(authHeaders);
+                }
                 player.setDataSource(playbackAppContext, Uri.parse(source), headers);
             } else {
                 player.setDataSource(source);
@@ -1841,6 +1848,14 @@ public class SongPlayerFragment extends Fragment {
         if (!isAdded() || !isNetworkAvailable()) {
             return false;
         }
+        
+        consecutiveStreamFailures++;
+        if (consecutiveStreamFailures >= 3 && !forceAttempt) {
+            Log.e(TAG, "Too many consecutive failures (" + consecutiveStreamFailures + "). Pausing playback to avoid API bans.");
+            markPlaybackUnavailable("Múltiples fallos consecutivos. Reproducción pausada para evitar bloqueos del servidor.");
+            return true;
+        }
+
         if (tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) {
             return false;
         }
@@ -2361,6 +2376,11 @@ public class SongPlayerFragment extends Fragment {
                 Map<String, String> headers = new HashMap<>();
                 headers.put("User-Agent", STREAM_HTTP_USER_AGENT);
                 headers.put("Accept", "*/*");
+                String videoId = nextIndex >= 0 && nextIndex < tracks.size() && tracks.get(nextIndex) != null ? tracks.get(nextIndex).videoId : null;
+                Map<String, String> authHeaders = InnertubeResolver.getHeadersFor(videoId);
+                if (authHeaders != null) {
+                    headers.putAll(authHeaders);
+                }
                 incoming.setDataSource(requireContext().getApplicationContext(), Uri.parse(nextUrl), headers);
             } else {
                 incoming.setDataSource(nextUrl);
@@ -2472,6 +2492,11 @@ public class SongPlayerFragment extends Fragment {
                 Map<String, String> headers = new HashMap<>();
                 headers.put("User-Agent", STREAM_HTTP_USER_AGENT);
                 headers.put("Accept", "*/*");
+                String videoId = nextIndex >= 0 && nextIndex < tracks.size() && tracks.get(nextIndex) != null ? tracks.get(nextIndex).videoId : null;
+                Map<String, String> authHeaders = InnertubeResolver.getHeadersFor(videoId);
+                if (authHeaders != null) {
+                    headers.putAll(authHeaders);
+                }
                 incoming.setDataSource(requireContext().getApplicationContext(), Uri.parse(nextUrl), headers);
             } else {
                 incoming.setDataSource(nextUrl);
@@ -3395,6 +3420,8 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
+        consecutiveStreamFailures = 0; // Reset failures on explicit user action
+
         String targetVideoId = tracks.get(index).videoId;
         boolean sameAsLoaded = !TextUtils.isEmpty(targetVideoId)
                 && TextUtils.equals(targetVideoId, loadedVideoId);
@@ -3693,6 +3720,8 @@ public class SongPlayerFragment extends Fragment {
         if (!isAdded()) {
             return;
         }
+
+        consecutiveStreamFailures = 0; // Reset failures on external queue replacement
 
         int targetIndexFromArgs = Math.max(0, selectedIndex);
         String targetVideoId = targetIndexFromArgs < videoIds.size()

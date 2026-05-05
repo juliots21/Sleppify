@@ -3,12 +3,16 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:background="@drawable/bg_playlist_track_default"
     android:clickable="true"
+    android:longClickable="true"
     android:focusable="true"
     android:foreground="?attr/selectableItemBackground"
-    android:minHeight="88dp"
-    android:paddingStart="2dp"
-    android:paddingEnd="2dp">
+    android:layout_marginTop="4dp"
+    android:layout_marginBottom="4dp"
+    android:minHeight="60dp"
+    android:paddingStart="12dp"
+    android:paddingEnd="12dp">
 
     <LinearLayout
         android:id="@+id/llContentRow"
@@ -19,8 +23,8 @@
         android:orientation="horizontal">
 
         <FrameLayout
-            android:layout_width="64dp"
-            android:layout_height="64dp">
+            android:layout_width="48dp"
+            android:layout_height="48dp">
 
             <View
                 android:id="@+id/vLikedBackground"
@@ -70,11 +74,11 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:ellipsize="end"
-                android:fontFamily="@font/manrope_variable"
-                android:maxLines="2"
+                android:fontFamily="sans-serif-bold"
+                android:maxLines="1"
                 android:text="Título"
                 android:textColor="@color/text_primary"
-                android:textSize="15sp" />
+                android:textSize="14sp" />
 
             <TextView
                 android:id="@+id/tvTrackSubtitle"
@@ -118,14 +122,5 @@
             android:src="@drawable/ic_more_vert"
             app:tint="#D8FFFFFF" />
     </LinearLayout>
-
-    <View
-        android:id="@+id/vTrackDivider"
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:layout_below="@id/llContentRow"
-        android:layout_marginStart="76dp"
-        android:layout_marginTop="8dp"
-        android:background="#16FFFFFF" />
 
 </RelativeLayout>

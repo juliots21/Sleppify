@@ -58,7 +58,6 @@ class MainActivity : AppCompatActivity() {
         private const val TAG_MODULE_MUSIC = "module_music"
         private const val TAG_MODULE_SCANNER = "module_scanner"
         private const val TAG_MODULE_EQUALIZER = "module_equalizer"
-        private const val TAG_MODULE_APPS = "module_apps"
         private const val TAG_MODULE_SETTINGS = "module_settings"
         private const val TAG_PLAYLIST_DETAIL = "playlist_detail"
         private const val TAG_SONG_PLAYER = "song_player"
@@ -132,7 +131,6 @@ class MainActivity : AppCompatActivity() {
     private var musicFragment: Fragment? = null
     private var scannerFragment: Fragment? = null
     private var equalizerFragment: Fragment? = null
-    private var appsFragment: Fragment? = null
     private var settingsFragment: Fragment? = null
     private var playlistDetailFragment: Fragment? = null
     private var songPlayerFragment: Fragment? = null
@@ -924,7 +922,6 @@ class MainActivity : AppCompatActivity() {
         musicFragment = supportFragmentManager.findFragmentByTag(TAG_MODULE_MUSIC)
         scannerFragment = supportFragmentManager.findFragmentByTag(TAG_MODULE_SCANNER)
         equalizerFragment = supportFragmentManager.findFragmentByTag(TAG_MODULE_EQUALIZER)
-        appsFragment = supportFragmentManager.findFragmentByTag(TAG_MODULE_APPS)
         settingsFragment = supportFragmentManager.findFragmentByTag(TAG_MODULE_SETTINGS)
         playlistDetailFragment = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL)
         songPlayerFragment = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER)
@@ -936,7 +933,6 @@ class MainActivity : AppCompatActivity() {
             R.id.nav_music -> MusicPlayerFragment()
             R.id.nav_scanner -> ScannerFragment()
             R.id.nav_equalizer -> EqualizerFragment()
-            R.id.nav_apps -> AppsFragment()
             else -> null
         }
         fragment?.let {
@@ -944,7 +940,6 @@ class MainActivity : AppCompatActivity() {
                 R.id.nav_music -> musicFragment = it
                 R.id.nav_scanner -> scannerFragment = it
                 R.id.nav_equalizer -> equalizerFragment = it
-                R.id.nav_apps -> appsFragment = it
             }
         }
         return fragment
@@ -954,7 +949,6 @@ class MainActivity : AppCompatActivity() {
         R.id.nav_music -> musicFragment
         R.id.nav_scanner -> scannerFragment
         R.id.nav_equalizer -> equalizerFragment
-        R.id.nav_apps -> appsFragment
         else -> null
     }
 
@@ -962,7 +956,6 @@ class MainActivity : AppCompatActivity() {
         R.id.nav_music -> TAG_MODULE_MUSIC
         R.id.nav_scanner -> TAG_MODULE_SCANNER
         R.id.nav_equalizer -> TAG_MODULE_EQUALIZER
-        R.id.nav_apps -> TAG_MODULE_APPS
         else -> null
     }
 

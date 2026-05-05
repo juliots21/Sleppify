@@ -15,8 +15,8 @@
 
     <ImageView
         android:id="@+id/ivNextUpArt"
-        android:layout_width="64dp"
-        android:layout_height="64dp"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
         android:scaleType="centerCrop"
         android:src="@drawable/ic_music" />
 
@@ -32,7 +32,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:ellipsize="end"
-            android:fontFamily="@font/manrope_variable"
+            android:fontFamily="sans-serif-bold"
             android:maxLines="1"
             android:text="Cancion"
             android:textColor="@color/text_primary"

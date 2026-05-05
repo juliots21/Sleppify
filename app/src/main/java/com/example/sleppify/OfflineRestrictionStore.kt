@@ -88,6 +88,21 @@ object OfflineRestrictionStore {
     }
 
     @JvmStatic
+    fun clearAllRestrictions(context: Context) {
+        val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val editor = prefs.edit()
+        
+        // Remove ALL restrictions and auto-failure counters
+        editor.clear()
+        editor.apply()
+        
+        // Notify listeners with empty to maybe trigger refresh if needed
+        for (l in listeners) {
+            try { l.onRestrictionChanged("", false) } catch (_: Exception) {}
+        }
+    }
+
+    @JvmStatic
     fun markRestricted(context: Context, videoId: String) {
         val safeVideoId = sanitize(videoId)
         if (safeVideoId.isEmpty()) {

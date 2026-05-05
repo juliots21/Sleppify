@@ -49,7 +49,18 @@ class NewPipeHttpDownloader private constructor() : Downloader() {
             readTimeout = READ_TIMEOUT_MS
             useCaches = false
             instanceFollowRedirects = true
-            setRequestProperty("User-Agent", USER_AGENT)
+            val hasUserAgent = request.headers().keys.any { it?.equals("User-Agent", ignoreCase = true) == true }
+            if (!hasUserAgent) {
+                setRequestProperty("User-Agent", USER_AGENT)
+            }
+            
+            val isYoutube = url.host.contains("youtube.com") || url.host.contains("youtu.be") || url.host.contains("youtubei.googleapis.com") || url.host.contains("youtube")
+            if (isYoutube) {
+                val cookie = InnertubeResolver.getAuthCookieHeader()
+                if (cookie.isNotEmpty()) {
+                    setRequestProperty("Cookie", cookie)
+                }
+            }
         }
 
         for ((name, values) in request.headers()) {
@@ -62,6 +73,16 @@ class NewPipeHttpDownloader private constructor() : Downloader() {
                 if (value == null) {
                     continue
                 }
+                
+                // Si la cookie la seteamos nosotros previamente, no la sobreescribimos, solo agregamos.
+                if (name.equals("Cookie", ignoreCase = true) && connection.getRequestProperty("Cookie") != null) {
+                    val existing = connection.getRequestProperty("Cookie")
+                    if (!existing.contains(value)) {
+                        connection.setRequestProperty("Cookie", "$existing; $value")
+                    }
+                    continue
+                }
+
                 if (first) {
                     connection.setRequestProperty(name, value)
                     first = false

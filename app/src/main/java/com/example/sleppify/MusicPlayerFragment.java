@@ -1199,6 +1199,11 @@ public class MusicPlayerFragment extends Fragment {
         }
         setLibraryPullRefreshState(true);
         lastLibrarySyncAtMs = 0L;
+        
+        // Limpiamos cualquier restriccion que haya en OfflineRestrictionStore
+        OfflineRestrictionStore.clearAllRestrictions(requireContext());
+        Log.i(TAG_STREAMING, "Todas las restricciones de tracks se han borrado manualmente.");
+        
         if (!isNetworkAvailable()) {
             setLibraryLoading(false, "Sin internet. No se pudo refrescar la biblioteca.");
             return;
@@ -3392,7 +3397,7 @@ public class MusicPlayerFragment extends Fragment {
     private void loadArtworkInto(@NonNull ImageView target, @Nullable String imageUrl) {
         if (TextUtils.isEmpty(imageUrl)) {
             target.setTag(R.id.tag_artwork_signature, null);
-            target.setImageResource(R.drawable.ic_music);
+            target.setImageDrawable(null);
             return;
         }
         String safeUrl = imageUrl.trim();
@@ -3423,16 +3428,15 @@ public class MusicPlayerFragment extends Fragment {
         }
         target.setTag(R.id.tag_artwork_signature, signature);
         boolean offlineOnly = !isNetworkAvailable();
+        target.setImageDrawable(null); // Clear previous image
         Glide.with(target)
             .load(safeUrl)
             .transform(new YouTubeCropTransformation())
             .format(com.bumptech.glide.load.DecodeFormat.PREFER_RGB_565)
             .diskCacheStrategy(DiskCacheStrategy.ALL)
             .onlyRetrieveFromCache(offlineOnly)
-            .placeholder(R.drawable.ic_music)
-            .error(R.drawable.ic_music)
-            .override(targetWidth, targetHeight)
-            .dontAnimate()
+            .override(Math.min(targetWidth, 160), Math.min(targetHeight, 160)) // Res lower bound
+            .transition(com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions.withCrossFade())
             .into(target);
     }
     private void bindFeaturedTrack(@NonNull YouTubeMusicService.TrackResult track) {
@@ -5973,7 +5977,6 @@ public class MusicPlayerFragment extends Fragment {
             if (!specialPlaylistStyle) {
                 loadArtworkInto(holder.ivTrackThumb, item.thumbnailUrl);
             }
-            holder.vTrackDivider.setVisibility(position == getItemCount() - 1 ? View.GONE : View.VISIBLE);
             boolean isPlaylistItem = "playlist".equals(item.resultType);
             holder.ivTrackMore.setVisibility(isPlaylistItem ? View.VISIBLE : View.GONE);
             holder.ivPlaylistOfflineAll.setVisibility(isPlaylistItem ? View.VISIBLE : View.GONE);
@@ -6083,7 +6086,6 @@ public class MusicPlayerFragment extends Fragment {
             String subtitle = TextUtils.isEmpty(item.subtitle) ? typeLabel : item.subtitle;
             holder.tvTrackSubtitle.setText(subtitle);
             loadArtworkInto(holder.ivTrackThumb, item.thumbnailUrl);
-            holder.vTrackDivider.setVisibility(position == getItemCount() - 1 ? View.GONE : View.VISIBLE);
             holder.ivTrackMore.setVisibility(View.VISIBLE);
             holder.ivTrackMore.setOnClickListener(v -> showSearchTrackOptions(item, holder.ivTrackMore));
             holder.itemView.setOnLongClickListener(v -> {
@@ -6164,7 +6166,6 @@ public class MusicPlayerFragment extends Fragment {
             final TextView tvTrackTitle;
             final TextView tvTrackSubtitle;
             final ImageView ivTrackMore;
-            final View vTrackDivider;
             final View llNowPlayingOverlay;
             final AnimatedEqualizerView animatedEq;
             TrackViewHolder(@NonNull View itemView) {
@@ -6176,7 +6177,6 @@ public class MusicPlayerFragment extends Fragment {
                 tvTrackTitle = itemView.findViewById(R.id.tvTrackTitle);
                 tvTrackSubtitle = itemView.findViewById(R.id.tvTrackSubtitle);
                 ivTrackMore = itemView.findViewById(R.id.ivTrackMore);
-                vTrackDivider = itemView.findViewById(R.id.vTrackDivider);
                 llNowPlayingOverlay = itemView.findViewById(R.id.llNowPlayingOverlay);
                 animatedEq = itemView.findViewById(R.id.animatedEq);
             }

@@ -1364,7 +1364,6 @@ class SearchActivity : AppCompatActivity() {
                 holder.offlineIndicator.visibility = View.GONE
             }
             
-            holder.divider.visibility = if (position == data.size - 1) View.GONE else View.VISIBLE
             holder.itemView.setOnClickListener { onClick(item) }
             holder.itemView.setOnLongClickListener {
                 onMoreClick(item, it)
@@ -1379,7 +1378,6 @@ class SearchActivity : AppCompatActivity() {
             val thumb: ImageView = v.findViewById(R.id.ivTrackThumb)
             val title: TextView = v.findViewById(R.id.tvTrackTitle)
             val subtitle: TextView = v.findViewById(R.id.tvTrackSubtitle)
-            val divider: View = v.findViewById(R.id.vTrackDivider)
             val more: ImageView = v.findViewById(R.id.ivTrackMore)
             val offlineIndicator: ImageView = v.findViewById(R.id.ivOfflineIndicator)
         }

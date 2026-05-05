@@ -84,7 +84,7 @@ object InnertubeResolver {
             val info = StreamInfo.getInfo(YouTube, "https://www.youtube.com/watch?v=$videoId")
             val audioStream = info.audioStreams.maxByOrNull { it.bitrate }
 
-            val url = audioStream?.url
+            val url = audioStream?.content
             if (!url.isNullOrEmpty()) {
                 urlCache[videoId] = CachedUrl(url, System.currentTimeMillis())
                 Log.d(TAG, "Éxito: $videoId - ${audioStream?.format} @ ${audioStream?.bitrate}bps")
