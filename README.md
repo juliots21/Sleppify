@@ -13,6 +13,20 @@ La app combina:
 
 Sleppify busca reducir el cambio de contexto entre "organizar el dia" y "ejecutarlo": la misma app administra tareas, apoyo inteligente y consumo multimedia, con sincronizacion de estado en nube para usuarios autenticados.
 
+## Capturas de Pantalla
+
+### Lista de Playlists
+![Lista de Playlists](lista_playlists.png)
+
+### Detalles de la Playlist
+![Detalles de la Playlist](detalles_playlist.png)
+
+### Buscador de Música
+![Buscador de Música](buscador_musica.png)
+
+### Ecualizador Avanzado
+![Módulo Equalizer](modulo_equalizer.png)
+
 ## Funcionalidades principales
 
 1. Agenda
