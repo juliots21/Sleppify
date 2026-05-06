@@ -167,23 +167,13 @@ class SearchFragment : Fragment() {
 
         root.findViewById<View>(R.id.btnFeaturedPlay).setOnClickListener { featuredTrack?.let { onTrackClicked(it) } }
         
-        root.findViewById<View>(R.id.btnSettings).setOnClickListener {
-            if (requireActivity() is MainActivity) {
-                (requireActivity() as MainActivity).enterSettings()
+        (requireActivity() as? MainActivity)?.let { mainActivity ->
+            mainActivity.findViewById<View>(R.id.btnSettings)?.setOnClickListener {
+                mainActivity.enterSettings()
             }
-        }
-
-        root.findViewById<TextView>(R.id.tvModuleTitle).apply {
-            setOnClickListener {
-                if (requireActivity() is MainActivity) {
-                    (requireActivity() as MainActivity).closeSearchFragment()
-                }
+            mainActivity.findViewById<TextView>(R.id.tvModuleTitle)?.setOnClickListener {
+                mainActivity.closeSearchFragment()
             }
-            
-            // Match MainActivity brand styling
-            typeface = ResourcesCompat.getFont(context, R.font.manrope_variable) ?: Typeface.DEFAULT_BOLD
-            letterSpacing = 0.08f
-            isAllCaps = true
         }
 
         root.findViewById<View>(R.id.btnFeaturedShare).setOnClickListener {

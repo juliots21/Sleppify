@@ -89,7 +89,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:ellipsize="marquee"
-                    android:fadingEdge="horizontal"
+                    android:requiresFadingEdge="none"
                     android:focusable="true"
                     android:focusableInTouchMode="true"
                     android:fontFamily="sans-serif-black"
@@ -104,7 +104,7 @@
                     android:id="@+id/tvPlayerArtist"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
+                    android:layout_marginTop="2dp"
                     android:ellipsize="end"
                     android:fontFamily="@font/inter_variable"
                     android:maxLines="1"
@@ -203,6 +203,7 @@
                 android:id="@+id/sbPlaybackProgress"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
+                android:minHeight="48dp"
                 android:layout_marginTop="18dp"
                 android:max="1000"
                 android:progress="0"
@@ -323,20 +324,21 @@
                     android:paddingEnd="4dp"
                     android:layout_marginEnd="12dp">
 
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:fontFamily="sans-serif-black"
-                        android:text="Cola"
-                        android:textColor="@color/text_primary"
-                        android:textSize="14sp" />
-
                     <ImageView
                         android:layout_width="18dp"
                         android:layout_height="18dp"
-                        android:layout_marginStart="3dp"
+                        android:layout_marginEnd="5dp"
                         android:src="@drawable/ic_stream_queue_add"
                         app:tint="@color/text_primary" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/inter_variable"
+                        android:text="Ver Cola"
+                        android:textColor="@color/text_primary"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
                 </LinearLayout>
             </LinearLayout>
         </androidx.constraintlayout.widget.ConstraintLayout>

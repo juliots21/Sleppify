@@ -101,7 +101,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class PlaylistDetailFragment extends Fragment
-        implements RestrictedTrackReplacementSheet.OnReplacementConfirmedListener {
+        implements RestrictedTrackReplacementSheet.OnReplacementConfirmedListener,
+                   RestrictedTrackReplacementSheet.OnReplacementUndoneListener {
 
     private static final String PREFS_STREAMING_CACHE = "streaming_cache";
     private static final long TRACKS_CACHE_TTL_MS = 24 * 60 * 60 * 1000L;
@@ -144,6 +145,7 @@ public class PlaylistDetailFragment extends Fragment
     private static final int ARTWORK_PREFETCH_BATCH_SIZE = 8;
     private static final long ARTWORK_PREFETCH_BATCH_DELAY_MS = 90L;
     private static final long ARTWORK_PREFETCH_INITIAL_DELAY_MS = 650L;
+    private static final long OFFLINE_STATE_LOOKUP_DEBOUNCE_MS = 120L;
     private static final long PLAYLIST_INITIAL_CONTENT_FADE_MS = 220L;
 
     public static final String ARG_PLAYLIST_ID = "arg_playlist_id";
@@ -250,6 +252,11 @@ public class PlaylistDetailFragment extends Fragment
     @NonNull
     private String lastMiniArtUrl = "";
     private int artworkPrefetchGeneration;
+    private boolean isScrolling = false;
+    private boolean pendingOfflineToggle = false;
+    private final Map<String, Long> lastOfflineStateLookupTimeByTrack = new HashMap<>();
+    private SongPlayerFragment cachedSongPlayer = null;
+    private long lastCachedSongPlayerTime = 0;
     @Nullable
     private PlaybackHistoryStore.Snapshot miniSnapshotCache;
     private long miniSnapshotCacheReadAtMs;
@@ -268,8 +275,11 @@ public class PlaylistDetailFragment extends Fragment
             if (player == null || !player.isVisible()) {
                 updateMiniPlayerUi();
                 refreshActiveEqualizerState();
-                if (trackAdapter != null) {
-                    trackAdapter.notifyDataSetChanged();
+                // ✅ OPTIMIZACIÓN: Usar setActiveIndex en lugar de notifyDataSetChanged()
+                // notifyDataSetChanged() causa re-render completo de toda la lista
+                // setActiveIndex solo actualiza el track activo - mucho más eficiente
+                if (trackAdapter != null && currentTrackIndex >= 0) {
+                    trackAdapter.setActiveIndex(currentTrackIndex);
                 }
             }
 
@@ -669,6 +679,12 @@ public class PlaylistDetailFragment extends Fragment
     private void setupPlaylistLoadMoreScroll(@NonNull LinearLayoutManager layoutManager) {
         rvPlaylistContent.addOnScrollListener(new RecyclerView.OnScrollListener() {
             @Override
+            public void onScrollStateChanged(@NonNull RecyclerView recyclerView, int newState) {
+                super.onScrollStateChanged(recyclerView, newState);
+                isScrolling = newState != RecyclerView.SCROLL_STATE_IDLE;
+            }
+
+            @Override
             public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
                 if (dy <= 0 || !playlistTracksCanLoadMore || playlistTracksLoadMoreInFlight) {
                     return;
@@ -970,6 +986,11 @@ public class PlaylistDetailFragment extends Fragment
             return;
         }
 
+        if (currentTracks.isEmpty()) {
+            pendingOfflineToggle = true;
+            return;
+        }
+
         if (!isCurrentPlaylistOfflineAutoEnabled()) {
             setCurrentPlaylistOfflineAutoEnabled(true);
             notifyHeaderChanged();
@@ -1175,6 +1196,14 @@ public class PlaylistDetailFragment extends Fragment
             return;
         }
 
+        if (isScrolling) {
+            miniProgressHandler.postDelayed(
+                () -> scheduleArtworkPrefetchBatch(imageUrls, startIndex, generation),
+                150L
+            );
+            return;
+        }
+
         int end = Math.min(startIndex + ARTWORK_PREFETCH_BATCH_SIZE, imageUrls.size());
         for (int i = startIndex; i < end; i++) {
             prefetchImageForOffline(imageUrls.get(i));
@@ -1300,15 +1329,30 @@ public class PlaylistDetailFragment extends Fragment
         boolean offlineOnly = !hasValidatedInternet(context);
 
         target.setImageDrawable(null); // Clear previous recycled image
+        
+        // ✅ OPTIMIZACIÓN GLIDE:
+        // - skipMemoryCache(false) asegura que se reutilicen imágenes en memoria
+        // - priority(Priority.HIGH) para imágenes visibles
+        // - RGB_565 reduce consumo de memoria 50% sin perder calidad visible
+        // - override con tamaño bucketizado evita múltiples redimensionamientos
+        // ✅ Use NORMAL priority for prefetch (HIGH saturates thread pool)
+        // Only use HIGH for visible images in viewport
+        com.bumptech.glide.Priority priority = com.bumptech.glide.Priority.NORMAL;
+        if (fixedSizeDp > 0 && fixedSizeDp <= 64) {
+            priority = com.bumptech.glide.Priority.HIGH;
+        }
+        
         Glide.with(target)
             .load(safeUrl)
             .transform(new YouTubeCropTransformation())
             .format(highQuality ? DecodeFormat.PREFER_ARGB_8888 : DecodeFormat.PREFER_RGB_565)
             .diskCacheStrategy(DiskCacheStrategy.ALL)
+            .skipMemoryCache(false)
+            .priority(priority)
             .onlyRetrieveFromCache(offlineOnly)
             .override(highQuality ? targetWidth : Math.min(targetWidth, 160), 
                       highQuality ? targetHeight : Math.min(targetHeight, 160))
-            .transition(com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions.withCrossFade())
+            .transition(com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions.withCrossFade(150))
             .into(target);
     }
 
@@ -1549,9 +1593,9 @@ public class PlaylistDetailFragment extends Fragment
                 playlistTracksCanLoadMore = tracks.size() >= requestedLimit
                         && requestedLimit < PLAYLIST_TRACKS_FETCH_MAX_LIMIT;
 
-                List<PlaylistTrack> mapped = sanitizeTracksForPlaylist(playlistId, mapTracks(tracks));
-                mapped = mergeTrackMetadataFromCache(playlistId, mapped);
-                cacheTracks(playlistId, mapped, isFetchResultComplete(tracks.size(), requestedLimit));
+                List<PlaylistTrack> raw = mergeTrackMetadataFromCache(playlistId, mapTracks(tracks));
+                cacheTracks(playlistId, raw, isFetchResultComplete(tracks.size(), requestedLimit));
+                List<PlaylistTrack> mapped = sanitizeTracksForPlaylist(playlistId, raw);
                 renderTracks(mapped, playlistId, false);
                 if (forceRefresh) {
                     setPlaylistPullRefreshState(false);
@@ -1926,6 +1970,16 @@ public class PlaylistDetailFragment extends Fragment
     }
 
     @Override
+    public void onReplacementUndone(@NonNull String playlistId, @NonNull String originalVideoId) {
+        if (!isAdded()) return;
+        Context ctx = requireContext();
+        PlaylistOverrideStore.INSTANCE.removeOverride(ctx, playlistId, originalVideoId);
+        invalidateTracksCache(playlistId);
+        triggerPlaylistPullRefresh();
+        android.widget.Toast.makeText(ctx, "Reemplazo deshecho", android.widget.Toast.LENGTH_SHORT).show();
+    }
+
+    @Override
     public void onReplacementConfirmed(
             @NonNull String playlistId,
             @NonNull String playlistType,
@@ -1952,10 +2006,9 @@ public class PlaylistDetailFragment extends Fragment
         //    so re-opening the playlist won't treat the slot as restricted.
         //    The override store handles the replacement transparently.
 
-        // 3. Refresh the track list in-place
-        List<PlaylistTrack> refreshed = sanitizeTracksForPlaylist(currentPlaylistId, currentTracks);
-        renderTracks(refreshed, currentPlaylistId, false);
-        replacePlayerQueueWithCurrentOrder();
+        // 3. Invalidate the local cache (which may contain the old replacement id) and re-fetch
+        invalidateTracksCache(playlistId);
+        triggerPlaylistPullRefresh();
 
         // 4. Auto-download if offline subscription is active
         if (isCurrentPlaylistOfflineAutoEnabled()) {
@@ -2688,6 +2741,11 @@ public class PlaylistDetailFragment extends Fragment
         currentTracks.clear();
         currentTracks.addAll(originalTracks);
 
+        if (pendingOfflineToggle && !currentTracks.isEmpty()) {
+            pendingOfflineToggle = false;
+            onOfflineTogglePressed();
+        }
+
         String firstTrackArtwork = "";
         for (PlaylistTrack track : currentTracks) {
             if (track == null || TextUtils.isEmpty(track.imageUrl)) {
@@ -2976,6 +3034,15 @@ public class PlaylistDetailFragment extends Fragment
         return loadCachedTracksInternal(playlistId, true);
     }
 
+    private void invalidateTracksCache(@NonNull String playlistId) {
+        if (!isAdded() || playlistId.isEmpty()) return;
+        getCachePrefs().edit()
+                .remove(PREF_TRACKS_DATA_PREFIX + playlistId)
+                .remove(PREF_TRACKS_UPDATED_AT_PREFIX + playlistId)
+                .remove(PREF_TRACKS_FULL_CACHE_PREFIX + playlistId)
+                .commit();
+    }
+
     @NonNull
     private List<PlaylistTrack> loadCachedTracksInternal(@NonNull String playlistId, boolean allowStale) {
         List<PlaylistTrack> result = new ArrayList<>();
@@ -3074,6 +3141,9 @@ public class PlaylistDetailFragment extends Fragment
         if (fragment instanceof SongPlayerFragment) {
             return (SongPlayerFragment) fragment;
         }
+        // Invalidate cache on change
+        cachedSongPlayer = null;
+        lastCachedSongPlayerTime = 0;
         return null;
     }
 
@@ -3110,6 +3180,8 @@ public class PlaylistDetailFragment extends Fragment
         if (!TextUtils.isEmpty(tappedTrack.videoId) && isRestrictedTrack(tappedTrack.videoId)) {
             String playlistType = resolvePlaylistType(currentPlaylistId);
             boolean offlineSub = isCurrentPlaylistOfflineAutoEnabled();
+            boolean hasOverride = PlaylistOverrideStore.INSTANCE.getOverrides(requireContext(), currentPlaylistId)
+                    .containsKey(tappedTrack.videoId);
             RestrictedTrackReplacementSheet.show(
                     getChildFragmentManager(),
                     currentPlaylistId,
@@ -3119,7 +3191,8 @@ public class PlaylistDetailFragment extends Fragment
                     tappedTrack.artist,
                     tappedTrack.duration,
                     tappedTrack.imageUrl,
-                    offlineSub
+                    offlineSub,
+                    hasOverride
             );
             return;
         }
@@ -3184,26 +3257,9 @@ public class PlaylistDetailFragment extends Fragment
         }
 
         anchor.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
-        anchor.animate().cancel();
-        anchor.animate()
-                .scaleX(0.92f)
-                .scaleY(0.92f)
-                .alpha(0.85f)
-                .setDuration(80L)
-                .withEndAction(() -> anchor.animate()
-                        .scaleX(1f)
-                        .scaleY(1f)
-                        .alpha(1f)
-                        .setDuration(120L)
-                        .start())
-                .start();
-
-        // Small delay to let the scale-down be visible before the BottomSheet covers it
-        anchor.postDelayed(() -> {
-            if (isAdded()) {
-                showTrackActionPopup(anchor, position);
-            }
-        }, 60);
+        if (isAdded()) {
+            showTrackActionPopup(anchor, position);
+        }
     }
 
     private void showTrackActionPopup(@NonNull View anchor, int position) {
@@ -3337,6 +3393,34 @@ public class PlaylistDetailFragment extends Fragment
             dialog.dismiss();
             showAddToLocalPlaylistDialog(selectedTrack);
         });
+
+        // Replace track (always available)
+        View btnReplace = view.findViewById(R.id.btnBsReplace);
+        btnReplace.setVisibility(View.VISIBLE);
+        ImageView ivReplace = view.findViewById(R.id.ivBsReplace);
+        TextView tvReplace = view.findViewById(R.id.tvBsReplace);
+        ivReplace.setImageResource(R.drawable.ic_stream_play_next);
+        tvReplace.setText("Reemplazar");
+        btnReplace.setOnClickListener(v -> {
+            dialog.dismiss();
+            String playlistType = resolvePlaylistType(currentPlaylistId);
+            boolean offlineSub = isCurrentPlaylistOfflineAutoEnabled();
+            boolean hasOverride = PlaylistOverrideStore.INSTANCE.getOverrides(requireContext(), currentPlaylistId)
+                    .containsKey(selectedTrack.videoId);
+            RestrictedTrackReplacementSheet.show(
+                    getChildFragmentManager(),
+                    currentPlaylistId,
+                    playlistType,
+                    selectedTrack.videoId,
+                    selectedTrack.title,
+                    selectedTrack.artist,
+                    selectedTrack.duration,
+                    selectedTrack.imageUrl,
+                    offlineSub,
+                    hasOverride
+            );
+        });
+
 
         View parent = (View) view.getParent();
         if (parent != null) {
@@ -4800,8 +4884,6 @@ public class PlaylistDetailFragment extends Fragment
                 holder.ivGoogleProfile.setImageResource(android.R.drawable.ic_menu_myplaces);
             }
 
-            holder.btnDownload.setOnClickListener(v -> onOfflineTogglePressed());
-
             // TV Focus navigation setup
             if (isTv) {
                 // El root del header no debe ser focusable para no atrapar el foco.
@@ -4837,11 +4919,6 @@ public class PlaylistDetailFragment extends Fragment
                 holder.btnDownload.setOnFocusChangeListener(tvHighlight);
             }
 
-            holder.btnListenNow.setOnClickListener(v -> {
-                if (!currentTracks.isEmpty()) {
-                    onTrackSelected(0); // Play first track
-                }
-            });
         }
 
         @Override
@@ -4879,6 +4956,12 @@ public class PlaylistDetailFragment extends Fragment
                 tvPlaylistInfo = itemView.findViewById(R.id.tvPlaylistInfo);
                 btnListenNow = itemView.findViewById(R.id.btnListenNow);
                 btnDownload = itemView.findViewById(R.id.btnDownload);
+                btnDownload.setOnClickListener(v -> onOfflineTogglePressed());
+                btnListenNow.setOnClickListener(v -> {
+                    if (!currentTracks.isEmpty()) {
+                        onTrackSelected(0);
+                    }
+                });
             }
         }
     }
@@ -4957,6 +5040,7 @@ public class PlaylistDetailFragment extends Fragment
         private final Map<String, Boolean> offlineAvailabilityCache = new HashMap<>();
         private final Map<String, Boolean> restrictedTrackCache = new HashMap<>();
         private int activeIndex = -1;
+        private int submitGeneration = 0;
         private boolean offlineDownloadRunning;
         @NonNull
         private final Set<String> downloadingTrackIds = new HashSet<>();
@@ -4972,6 +5056,7 @@ public class PlaylistDetailFragment extends Fragment
         void submitTracks(@NonNull List<PlaylistTrack> newItems) {
             final List<PlaylistTrack> previous = new ArrayList<>(items);
             final List<PlaylistTrack> incoming = new ArrayList<>(newItems);
+            final int generation = ++submitGeneration;
 
             // Offload DiffUtil to background thread to avoid UI stutter on large lists during playback
             new Thread(() -> {
@@ -5007,6 +5092,7 @@ public class PlaylistDetailFragment extends Fragment
 
                 new Handler(Looper.getMainLooper()).post(() -> {
                     if (!isAdded()) return;
+                    if (generation != submitGeneration) return;
 
                     items.clear();
                     items.addAll(incoming);
@@ -5162,14 +5248,23 @@ public class PlaylistDetailFragment extends Fragment
                 return cached;
             }
             
-            offlineAvailabilityCache.put(normalized, false); // Prevent duplicate checks
+            long now = System.currentTimeMillis();
+            Long lastLookup = lastOfflineStateLookupTimeByTrack.get(normalized);
+            if (lastLookup != null && now - lastLookup < OFFLINE_STATE_LOOKUP_DEBOUNCE_MS) {
+                return false;
+            }
+            lastOfflineStateLookupTimeByTrack.put(normalized, now);
+            
+            offlineAvailabilityCache.put(normalized, false);
             trackStateLookupExecutor.execute(() -> {
                 boolean available = OfflineAudioStore.hasValidatedOfflineAudio(context, normalized, expectedDuration);
                 new Handler(Looper.getMainLooper()).post(() -> {
                     Boolean current = offlineAvailabilityCache.get(normalized);
                     if (current == null || current != available) {
                         offlineAvailabilityCache.put(normalized, available);
-                        notifyItemChanged(position);
+                        if (!isScrolling) {
+                            notifyItemChanged(position);
+                        }
                     }
                 });
             });
@@ -5186,14 +5281,23 @@ public class PlaylistDetailFragment extends Fragment
                 return cached;
             }
             
-            restrictedTrackCache.put(normalized, false); // Prevent duplicate checks
+            long now = System.currentTimeMillis();
+            Long lastLookup = lastOfflineStateLookupTimeByTrack.get(normalized);
+            if (lastLookup != null && now - lastLookup < OFFLINE_STATE_LOOKUP_DEBOUNCE_MS) {
+                return false;
+            }
+            lastOfflineStateLookupTimeByTrack.put(normalized, now);
+            
+            restrictedTrackCache.put(normalized, false);
             trackStateLookupExecutor.execute(() -> {
                 boolean restricted = OfflineRestrictionStore.isRestricted(context, normalized);
                 new Handler(Looper.getMainLooper()).post(() -> {
                     Boolean current = restrictedTrackCache.get(normalized);
                     if (current == null || current != restricted) {
                         restrictedTrackCache.put(normalized, restricted);
-                        notifyItemChanged(position);
+                        if (!isScrolling) {
+                            notifyItemChanged(position);
+                        }
                     }
                 });
             });
@@ -5305,7 +5409,12 @@ public class PlaylistDetailFragment extends Fragment
                         ? R.drawable.bg_playlist_track_active
                         : R.drawable.bg_playlist_track_default);
             }
-            SongPlayerFragment songPlayer = findSongPlayerFragment();
+            long now = System.currentTimeMillis();
+            if (now - lastCachedSongPlayerTime > 500L) {
+                cachedSongPlayer = findSongPlayerFragment();
+                lastCachedSongPlayerTime = now;
+            }
+            SongPlayerFragment songPlayer = cachedSongPlayer;
             boolean isActuallyPlaying = songPlayer != null && songPlayer.isPlaying();
             String currentVideoId = songPlayer != null ? songPlayer.getLoadedVideoId() : "";
             
@@ -5356,7 +5465,7 @@ public class PlaylistDetailFragment extends Fragment
         }
 
         final class TrackViewHolder extends RecyclerView.ViewHolder {
-            final RelativeLayout rootTrackRow;
+            final ViewGroup rootTrackRow;
             final ImageView ivTrackArt;
             final FrameLayout llNowPlayingOverlay;
             final AnimatedEqualizerView animatedEq;

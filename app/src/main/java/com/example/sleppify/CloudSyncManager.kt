@@ -1291,8 +1291,11 @@ class CloudSyncManager private constructor(context: Context) {
     }
 
     private fun sanitizePlaylistDocId(playlistId: String): String {
-        // Firestore doc ids may not contain '/'. Replace defensively.
-        return playlistId.trim().replace('/', '_')
+        // Firestore doc ids may not contain '/' and must not start/end with '__' (reserved).
+        return playlistId.trim()
+            .replace('/', '_')
+            .replace(Regex("^_+|_+$"), "")
+            .ifEmpty { "playlist" }
     }
 
     fun deleteCloudPlaylist(playlistName: String) {

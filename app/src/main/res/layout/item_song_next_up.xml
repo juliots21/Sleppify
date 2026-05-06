@@ -33,11 +33,13 @@
             android:layout_height="wrap_content"
             android:layout_marginEnd="30dp"
             android:ellipsize="end"
-            android:fontFamily="sans-serif-bold"
+            android:fontFamily="sans-serif-black"
             android:maxLines="2"
             android:text="Cancion"
             android:textColor="@color/text_primary"
-            android:textSize="14sp" />
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:includeFontPadding="false" />
 
         <TextView
             android:id="@+id/tvNextUpArtist"
@@ -49,7 +51,8 @@
             android:maxLines="1"
             android:text="Artista"
             android:textColor="@color/text_secondary"
-            android:textSize="14sp" />
+            android:textSize="14sp"
+            android:includeFontPadding="false" />
     </LinearLayout>
 
     <ImageView

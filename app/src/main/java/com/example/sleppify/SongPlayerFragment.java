@@ -475,6 +475,7 @@ public class SongPlayerFragment extends Fragment {
             ((MainActivity) getActivity()).setContainerOverlayMode(true);
         }
 
+        // ✅ CRITICAL: Only findViewById here (fast path)
         ivPlayerCover = view.findViewById(R.id.ivPlayerCover);
         ivPlayerBackdrop = view.findViewById(R.id.ivPlayerBackdrop);
         animatedEqPlayer = view.findViewById(R.id.animatedEqPlayer);
@@ -503,102 +504,71 @@ public class SongPlayerFragment extends Fragment {
         btnPlayPause = view.findViewById(R.id.btnPlayPause);
         llQueueTrigger = view.findViewById(R.id.llQueueTrigger);
         llQueueTrigger.setOnClickListener(v -> showQueueBottomSheet());
-
-        playerStatePrefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
-        settingsPrefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Activity.MODE_PRIVATE);
-        loadPlaybackModesFromSettings();
-        setupSocialActions();
-        updatePlayerSurfaceForSource();
-
-        hydrateTracksFromArgs();
-        setupMediaSession();
-
         tvDeviceName = view.findViewById(R.id.tvDeviceName);
         ivDeviceIcon = view.findViewById(R.id.ivDeviceIcon);
-        setupAudioDeviceCallback();
-        // Defer non-critical setup to post-inflation to speed up fragment entry
+
+        // ✅ DEFERRED PHASE 1: Setup (happens while animation is starting)
         view.post(() -> {
             if (!isAdded()) return;
+
+            playerStatePrefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
+            settingsPrefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Activity.MODE_PRIVATE);
             loadPlaybackModesFromSettings();
             setupSocialActions();
             updatePlayerSurfaceForSource();
-            updateDeviceInfo();
+
+            hydrateTracksFromArgs();
+            setupMediaSession();
+            setupAudioDeviceCallback();
+            setupSwipeToDismiss(view);
+            setupBackPressToMiniMode();
+            resetPlayerScrollToTop();
+
+            view.findViewById(R.id.btnPrev).setOnClickListener(v -> moveTrack(-1));
+            view.findViewById(R.id.btnNext).setOnClickListener(v -> moveTrack(1));
+            btnShuffle.setOnClickListener(v -> toggleShuffleMode());
+            btnRepeat.setOnClickListener(v -> cycleRepeatMode());
+            btnPlayPause.setOnClickListener(v -> togglePlayback());
             updatePlaybackModeButtons();
-        });
 
-
-
-
-
-
-
-
-
-
-
-        setupSwipeToDismiss(view);
-        setupBackPressToMiniMode();
-        resetPlayerScrollToTop();
-
-        currentIndex = Math.max(0, Math.min(currentIndex, tracks.size() - 1));
-        bindCurrentTrack(true);
-
-        if (isAdded()) {
-            playCurrentTrack();
-        }
-
-        view.findViewById(R.id.btnPrev).setOnClickListener(v -> moveTrack(-1));
-        view.findViewById(R.id.btnNext).setOnClickListener(v -> moveTrack(1));
-        btnShuffle.setOnClickListener(v -> toggleShuffleMode());
-        btnRepeat.setOnClickListener(v -> cycleRepeatMode());
-        btnPlayPause.setOnClickListener(v -> togglePlayback());
-        updatePlaybackModeButtons();
-
-        sbPlaybackProgress.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                if (!fromUser || totalSeconds <= 0) {
-                    return;
-                }
-                currentSeconds = Math.max(0, Math.min(totalSeconds, Math.round((progress / 1000f) * totalSeconds)));
-                tvCurrentTime.setText(formatSeconds(currentSeconds));
-            }
-
-            @Override
-            public void onStartTrackingTouch(SeekBar seekBar) {
-                userSeeking = true;
-            }
-
-            @Override
-            public void onStopTrackingTouch(SeekBar seekBar) {
-                boolean shouldRecover = false;
-                if (usingOfflineSource && localExoMediaPlayer != null) {
-                    try {
-                        localExoMediaPlayer.seekTo(Math.max(0, currentSeconds) * 1000);
-                    } catch (Exception ignored) {
-                        shouldRecover = true;
+            sbPlaybackProgress.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                @Override
+                public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                    if (!fromUser || totalSeconds <= 0) {
+                        return;
                     }
-                    if (isPlaying) {
+                    currentSeconds = Math.max(0, Math.min(totalSeconds, Math.round((progress / 1000f) * totalSeconds)));
+                    tvCurrentTime.setText(formatSeconds(currentSeconds));
+                }
+
+                @Override
+                public void onStartTrackingTouch(SeekBar seekBar) {
+                    userSeeking = true;
+                }
+
+                @Override
+                public void onStopTrackingTouch(SeekBar seekBar) {
+                    userSeeking = false;
+                    if (usingOfflineSource && localExoMediaPlayer != null) {
                         try {
-                            localExoMediaPlayer.start();
-                            startLocalProgressTicker();
+                            localExoMediaPlayer.seekTo(currentSeconds * 1000);
                         } catch (Exception ignored) {
-                            shouldRecover = true;
                         }
                     }
-                } else if (isPlaying) {
-                    shouldRecover = true;
+                    if (isPlaying) {
+                        ensureActivePlaybackIfExpected("seek-bar-seekTo");
+                    }
                 }
+            });
 
-                if (isPlaying && shouldRecover) {
-                    ensureActivePlaybackIfExpected("seekbar-stop");
-                }
-
-                int progress = Math.round((Math.max(0, currentSeconds) / (float) Math.max(1, totalSeconds)) * 1000f);
-                sbPlaybackProgress.setProgress(Math.max(0, Math.min(1000, progress)));
-                updateMediaSessionState();
-                userSeeking = false;
-            }
+            // ✅ DEFERRED PHASE 2: Bind and playback (after animation is visible)
+            // Defer by 400ms to ensure animation is in progress and won't stutter
+            view.postDelayed(() -> {
+                if (!isAdded()) return;
+                currentIndex = Math.max(0, Math.min(currentIndex, tracks.size() - 1));
+                bindCurrentTrack(true);
+                playCurrentTrack();
+            }, 400L);
         });
     }
 
@@ -1335,40 +1305,53 @@ public class SongPlayerFragment extends Fragment {
 
         long requestToken = ++activePlaybackRequestToken;
 
-        boolean hasOfflineLocal = isAdded()
-                && OfflineAudioStore.hasOfflineAudio(requireContext(), track.videoId);
-        
-        if (shouldSkipRestrictedTrack(track.videoId, hasOfflineLocal)) {
-            Log.d(TAG, "playCurrentTrack: restricted track skipped in queue. videoId=" + track.videoId);
-            if (skipRestrictedTrackInQueue()) {
+        // ✅ ASYNC: Move offline check to background thread to avoid IO lag on main thread
+        streamResolverExecutor.submit(() -> {
+            if (!isAdded() || requestToken != activePlaybackRequestToken) {
                 return;
             }
-        }
-
-        if (hasOfflineLocal) {
-            Log.d(TAG, "playCurrentTrack: prioritizing local offline audio. videoId=" + track.videoId);
-            List<String> directSources = buildDirectSourceCandidates(track);
-            attemptPlaybackFromSources(track, directSources, 0, requestToken, 0);
-            return;
-        }
-
-        // Check if we have a prefetched URL for THIS track
-        if (TextUtils.equals(track.videoId, prefetchedNextVideoId) && !TextUtils.isEmpty(prefetchedNextUrl)) {
-            Log.d(TAG, "playCurrentTrack: using prefetched stream for videoId=" + track.videoId);
-            String url = prefetchedNextUrl;
-            // Clear prefetch after use
-            prefetchedNextVideoId = null;
-            prefetchedNextUrl = null;
             
-            startMediaPlaybackFromSource(track, url, requestToken, () -> {
-                // If prefetched URL fails, try fresh resolution
+            boolean hasOfflineLocal = OfflineAudioStore.hasOfflineAudio(requireContext(), track.videoId);
+            
+            localProgressHandler.post(() -> {
+                if (!isAdded() || requestToken != activePlaybackRequestToken) {
+                    return;
+                }
+                
+                if (shouldSkipRestrictedTrack(track.videoId, hasOfflineLocal)) {
+                    Log.d(TAG, "playCurrentTrack: restricted track skipped in queue. videoId=" + track.videoId);
+                    if (skipRestrictedTrackInQueue()) {
+                        return;
+                    }
+                }
+
+                if (hasOfflineLocal) {
+                    Log.d(TAG, "playCurrentTrack: prioritizing local offline audio. videoId=" + track.videoId);
+                    List<String> directSources = buildDirectSourceCandidates(track);
+                    attemptPlaybackFromSources(track, directSources, 0, requestToken, 0);
+                    return;
+                }
+
+                // Check if we have a prefetched URL for THIS track
+                if (TextUtils.equals(track.videoId, prefetchedNextVideoId) && !TextUtils.isEmpty(prefetchedNextUrl)) {
+                    Log.d(TAG, "playCurrentTrack: using prefetched stream for videoId=" + track.videoId);
+                    String url = prefetchedNextUrl;
+                    // Clear prefetch after use
+                    prefetchedNextVideoId = null;
+                    prefetchedNextVideoId = null;
+                    prefetchedNextUrl = null;
+                    
+                    startMediaPlaybackFromSource(track, url, requestToken, () -> {
+                        // If prefetched URL fails, try fresh resolution
+                        resolveAndPlayOnlineTrack(track, requestToken);
+                    });
+                    return;
+                }
+
+                // Fresh online resolution
                 resolveAndPlayOnlineTrack(track, requestToken);
             });
-            return;
-        }
-
-        // Fresh online resolution
-        resolveAndPlayOnlineTrack(track, requestToken);
+        });
     }
 
     private void handleLocalPlaybackCompletion() {
@@ -2689,7 +2672,6 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
-        loadMediaNotificationArtwork(track);
         String requestVideoId = track.videoId == null ? "" : track.videoId.trim();
         String fallbackImageUrl = track.imageUrl == null ? "" : track.imageUrl.trim();
         String preferredImageUrl = resolveHighResCoverUrl(requestVideoId, fallbackImageUrl);
@@ -2866,11 +2848,14 @@ public class SongPlayerFragment extends Fragment {
         };
 
         com.bumptech.glide.RequestManager requestManager = Glide.with(this);
+        // ✅ OPTIMIZATION: Use LOW priority and skip memory cache for backdrop
         requestManager
                 .asDrawable()
                 .load(preferredImageUrl)
+                .priority(com.bumptech.glide.Priority.LOW)
                 .centerCrop()
                 .diskCacheStrategy(DiskCacheStrategy.ALL)
+                .skipMemoryCache(true)
                 .error(
                         TextUtils.isEmpty(fallbackImageUrl)
                                 || TextUtils.equals(preferredImageUrl, fallbackImageUrl)
@@ -2878,8 +2863,10 @@ public class SongPlayerFragment extends Fragment {
                                 : requestManager
                                         .asDrawable()
                                         .load(fallbackImageUrl)
+                                        .priority(com.bumptech.glide.Priority.LOW)
                                         .centerCrop()
                                         .diskCacheStrategy(DiskCacheStrategy.ALL)
+                                        .skipMemoryCache(true)
                 )
                 .into(playerBackdropTarget);
     }
@@ -2971,8 +2958,23 @@ public class SongPlayerFragment extends Fragment {
                 ivPlayerCover.animate().alpha(0f).setDuration(180).start();
             }
         }
+        
+        // ✅ PRIORITY 1: Load cover art (visible immediately)
         loadPlayerCover(track, bootstrapArtwork, coverAnimationDirection);
-        scheduleBackdropLoad(track, bootstrapArtwork);
+        
+        // ✅ DEFERRED: Backdrop and notification artwork (not immediately visible)
+        // Defer by 500ms to avoid saturating Glide thread pool while cover is loading
+        if (getView() != null) {
+            getView().postDelayed(() -> {
+                if (!isAdded()) return;
+                scheduleBackdropLoad(track, bootstrapArtwork);
+            }, 500L);
+            // Defer notification artwork loading
+            getView().postDelayed(() -> {
+                if (!isAdded()) return;
+                loadMediaNotificationArtwork(track);
+            }, 600L);
+        }
 
         updateMediaSessionMetadata();
         updateMediaSessionState();
@@ -5145,12 +5147,15 @@ public class SongPlayerFragment extends Fragment {
             }
         };
 
+        // ✅ OPTIMIZATION: Use LOW priority and skip memory cache for notification artwork
         Glide.with(persistentAppContext)
                 .asBitmap()
                 .load(preferredImageUrl)
+                .priority(com.bumptech.glide.Priority.LOW)
                 .transform(new YouTubeCropTransformation())
                 .format(DecodeFormat.PREFER_RGB_565)
                 .diskCacheStrategy(DiskCacheStrategy.ALL)
+                .skipMemoryCache(true)
                 .into(notificationArtworkTarget);
     }
 

@@ -17,13 +17,13 @@
         android:background="@drawable/bg_drag_handle"
         android:layout_marginBottom="12dp" />
 
-    <!-- Header: "Canción restringida" -->
+    <!-- Header: "Canción actual:" -->
     <TextView
         android:id="@+id/tvRestrictedHeader"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Canción restringida"
-        android:textColor="#FF5252"
+        android:text="Canción actual:"
+        android:textColor="#FFFFFF"
         android:textSize="16sp"
         android:textStyle="bold"
         android:paddingStart="20dp"
@@ -132,5 +132,23 @@
             android:paddingEnd="16dp"
             android:background="?attr/selectableItemBackground" />
     </LinearLayout>
+
+    <!-- Undo replacement button -->
+    <TextView
+        android:id="@+id/btnUndoReplacement"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="4dp"
+        android:layout_marginBottom="4dp"
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp"
+        android:text="Deshacer reemplazo"
+        android:textColor="#888888"
+        android:textSize="13sp"
+        android:background="?attr/selectableItemBackground"
+        android:visibility="gone" />
 
 </LinearLayout>

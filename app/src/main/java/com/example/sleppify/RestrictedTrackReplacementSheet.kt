@@ -39,7 +39,12 @@ class RestrictedTrackReplacementSheet : BottomSheetDialogFragment() {
         )
     }
 
+    fun interface OnReplacementUndoneListener {
+        fun onReplacementUndone(playlistId: String, originalVideoId: String)
+    }
+
     private var replacementListener: OnReplacementConfirmedListener? = null
+    private var undoListener: OnReplacementUndoneListener? = null
 
     private var llLoadingState: LinearLayout? = null
     private var rvCandidates: RecyclerView? = null
@@ -51,12 +56,16 @@ class RestrictedTrackReplacementSheet : BottomSheetDialogFragment() {
 
     override fun onAttach(context: Context) {
         super.onAttach(context)
-        // Try to get the listener from the parent fragment first, then the activity.
         val parent = parentFragment
         if (parent is OnReplacementConfirmedListener) {
             replacementListener = parent
         } else if (context is OnReplacementConfirmedListener) {
             replacementListener = context
+        }
+        if (parent is OnReplacementUndoneListener) {
+            undoListener = parent
+        } else if (context is OnReplacementUndoneListener) {
+            undoListener = context
         }
     }
 
@@ -71,8 +80,16 @@ class RestrictedTrackReplacementSheet : BottomSheetDialogFragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // Force black background on the bottom sheet
+        // Rounded top corners + transparent container
         (view.parent as? View)?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        val shapeModel = com.google.android.material.shape.ShapeAppearanceModel.builder()
+            .setTopLeftCorner(com.google.android.material.shape.CornerFamily.ROUNDED, 56f)
+            .setTopRightCorner(com.google.android.material.shape.CornerFamily.ROUNDED, 56f)
+            .build()
+        val materialShape = com.google.android.material.shape.MaterialShapeDrawable(shapeModel).apply {
+            fillColor = android.content.res.ColorStateList.valueOf(android.graphics.Color.BLACK)
+        }
+        view.background = materialShape
 
         llLoadingState = view.findViewById(R.id.llLoadingState)
         rvCandidates = view.findViewById(R.id.rvReplacementCandidates)
@@ -80,12 +97,14 @@ class RestrictedTrackReplacementSheet : BottomSheetDialogFragment() {
         btnRetry = view.findViewById(R.id.btnRetry)
         tvOriginalTrackInfo = view.findViewById(R.id.tvOriginalTrackInfo)
         val ivOriginalTrackThumbnail: ImageView? = view.findViewById(R.id.ivOriginalTrackThumbnail)
+        val btnUndo: TextView? = view.findViewById(R.id.btnUndoReplacement)
 
         val args = arguments ?: return
         val title = args.getString(ARG_TITLE, "")
         val artist = args.getString(ARG_ARTIST, "")
         val originalVideoId = args.getString(ARG_VIDEO_ID, "")
         val imageUrl = args.getString(ARG_IMAGE_URL, "")
+        val hasOverride = args.getBoolean(ARG_HAS_OVERRIDE, false)
 
         val infoText = buildString {
             if (title.isNotEmpty()) append(title)
@@ -107,6 +126,17 @@ class RestrictedTrackReplacementSheet : BottomSheetDialogFragment() {
         }
 
         rvCandidates?.layoutManager = LinearLayoutManager(requireContext())
+
+        if (hasOverride && btnUndo != null) {
+            btnUndo.visibility = View.VISIBLE
+            btnUndo.setOnClickListener {
+                val a = arguments ?: return@setOnClickListener
+                val pid = a.getString(ARG_PLAYLIST_ID, "")
+                val oid = a.getString(ARG_VIDEO_ID, "")
+                undoListener?.onReplacementUndone(pid, oid)
+                dismissAllowingStateLoss()
+            }
+        }
 
         btnRetry?.setOnClickListener { searchCandidates() }
         searchCandidates()
@@ -243,6 +273,7 @@ class RestrictedTrackReplacementSheet : BottomSheetDialogFragment() {
         private const val ARG_DURATION = "duration"
         private const val ARG_IMAGE_URL = "image_url"
         private const val ARG_DOWNLOAD_SUBSCRIBED = "download_subscribed"
+        private const val ARG_HAS_OVERRIDE = "has_override"
 
         @JvmStatic
         fun show(
@@ -254,7 +285,8 @@ class RestrictedTrackReplacementSheet : BottomSheetDialogFragment() {
             artist: String,
             duration: String,
             imageUrl: String,
-            downloadSubscribed: Boolean
+            downloadSubscribed: Boolean,
+            hasOverride: Boolean = false
         ) {
             val sheet = RestrictedTrackReplacementSheet()
             sheet.arguments = Bundle().apply {
@@ -266,6 +298,7 @@ class RestrictedTrackReplacementSheet : BottomSheetDialogFragment() {
                 putString(ARG_DURATION, duration)
                 putString(ARG_IMAGE_URL, imageUrl)
                 putBoolean(ARG_DOWNLOAD_SUBSCRIBED, downloadSubscribed)
+                putBoolean(ARG_HAS_OVERRIDE, hasOverride)
             }
             sheet.show(fragmentManager, "restricted_replacement")
         }
