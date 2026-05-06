@@ -936,6 +936,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    fun isSongPlayerVisible(): Boolean {
+        val player = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER) as? SongPlayerFragment ?: return false
+        return player.isAdded && !player.isHidden
+    }
+
     fun openSearchFragment() {
         if (isFinishing || isDestroyed) return
         showModuleLoadingOverlay()
@@ -959,7 +964,7 @@ class MainActivity : AppCompatActivity() {
             commit()
         }
 
-        topAppBar.visibility = View.GONE
+        topAppBar.visibility = View.VISIBLE
         
         lifecycleScope.launch {
             delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
@@ -1197,6 +1202,7 @@ class MainActivity : AppCompatActivity() {
             }
             commitNowAllowingStateLoss()
         }
+        PlaybackEventBus.notifyPlaybackSnapshotUpdated()
     }
 
     private fun resolveSongPlayerReturnTarget(preferredTag: String?): Fragment? {

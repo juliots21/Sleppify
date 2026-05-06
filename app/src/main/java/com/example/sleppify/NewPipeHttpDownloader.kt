@@ -158,8 +158,8 @@ class NewPipeHttpDownloader private constructor() : Downloader() {
     }
 
     companion object {
-        private const val CONNECT_TIMEOUT_MS = 15000
-        private const val READ_TIMEOUT_MS = 30000
+        private const val CONNECT_TIMEOUT_MS = 8000
+        private const val READ_TIMEOUT_MS = 15000
         private const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 " +
                 "(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"

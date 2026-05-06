@@ -137,9 +137,9 @@ public class SongPlayerFragment extends Fragment {
     private static final int MAX_PLAYER_ENGINE_RECOVERY_RETRY = 4;
     private static final int COVER_TAPS_TO_UNLOCK_VIDEO_CONTROLS = 5;
     private static final long COVER_TAP_RESET_WINDOW_MS = 2000L;
-    private static final int CONNECT_TIMEOUT_MS = 14000;
-    private static final int READ_TIMEOUT_MS = 22000;
-    private static final long SOURCE_PREPARE_TIMEOUT_MS = 30000L;
+    private static final int CONNECT_TIMEOUT_MS = 8000;
+    private static final int READ_TIMEOUT_MS = 15000;
+    private static final long SOURCE_PREPARE_TIMEOUT_MS = 15000L;
     private static final long SOCIAL_STATS_FETCH_DEFER_MS = 1800L;
     private static final long PLAYBACK_BOOTSTRAP_GRACE_MS = 1800L;
     private static final int MAX_PLAYBACK_SOURCE_RETRY = 1;
@@ -151,7 +151,7 @@ public class SongPlayerFragment extends Fragment {
     private static final String AUDIUS_APP_NAME = "sleppify";
     private static final int AUDIUS_SEARCH_LIMIT = 6;
     private static final int OFFLINE_CROSSFADE_MAX_SECONDS = 12;
-    private static final int OFFLINE_CROSSFADE_DEFAULT_SECONDS = 0;
+    private static final int OFFLINE_CROSSFADE_DEFAULT_SECONDS = 6;
     private static final int OFFLINE_CROSSFADE_FIRST_STEP_MS = 500;
     private static final int OFFLINE_CROSSFADE_STEP_MS = 40;
     private static final int PLAYER_HERO_DEFAULT_HEIGHT_DP = 370;
@@ -275,8 +275,8 @@ public class SongPlayerFragment extends Fragment {
     private final Map<String, SocialStats> socialStatsCache = new HashMap<>();
 
     // Direct streaming & pre-fetching
-    private String prefetchedNextVideoId = null;
-    private String prefetchedNextUrl = null;
+    private volatile String prefetchedNextVideoId = null;
+    private volatile String prefetchedNextUrl = null;
 
     @Nullable
     private Future<?> pendingStreamResolverFuture;
@@ -1305,51 +1305,56 @@ public class SongPlayerFragment extends Fragment {
 
         long requestToken = ++activePlaybackRequestToken;
 
-        // ✅ ASYNC: Move offline check to background thread to avoid IO lag on main thread
-        streamResolverExecutor.submit(() -> {
+        // ✅ ASYNC: Merge offline check + stream resolution into a single background
+        // submission to eliminate the extra main→executor round-trip (~30-60ms saved).
+        pendingStreamResolverFuture = streamResolverExecutor.submit(() -> {
             if (!isAdded() || requestToken != activePlaybackRequestToken) {
                 return;
             }
             
             boolean hasOfflineLocal = OfflineAudioStore.hasOfflineAudio(requireContext(), track.videoId);
-            
-            localProgressHandler.post(() -> {
-                if (!isAdded() || requestToken != activePlaybackRequestToken) {
-                    return;
-                }
-                
-                if (shouldSkipRestrictedTrack(track.videoId, hasOfflineLocal)) {
-                    Log.d(TAG, "playCurrentTrack: restricted track skipped in queue. videoId=" + track.videoId);
-                    if (skipRestrictedTrackInQueue()) {
+
+            // Fast-path: if offline or prefetched, go straight to main thread
+            if (hasOfflineLocal) {
+                localProgressHandler.post(() -> {
+                    if (!isAdded() || requestToken != activePlaybackRequestToken) return;
+                    if (shouldSkipRestrictedTrack(track.videoId, true)) {
+                        Log.d(TAG, "playCurrentTrack: restricted track skipped in queue. videoId=" + track.videoId);
+                        skipRestrictedTrackInQueue();
                         return;
                     }
-                }
-
-                if (hasOfflineLocal) {
                     Log.d(TAG, "playCurrentTrack: prioritizing local offline audio. videoId=" + track.videoId);
                     List<String> directSources = buildDirectSourceCandidates(track);
                     attemptPlaybackFromSources(track, directSources, 0, requestToken, 0);
+                });
+                return;
+            }
+
+            // Check prefetch on main thread (fields are main-thread-only)
+            // but resolve online in THIS same background thread if no prefetch
+            final String[] prefetchHolder = new String[1];
+            final boolean[] hasPrefetch = new boolean[1];
+            // Read prefetch state via quick main-thread bounce
+            localProgressHandler.post(() -> {
+                if (!isAdded() || requestToken != activePlaybackRequestToken) return;
+                if (shouldSkipRestrictedTrack(track.videoId, false)) {
+                    Log.d(TAG, "playCurrentTrack: restricted track skipped in queue. videoId=" + track.videoId);
+                    skipRestrictedTrackInQueue();
                     return;
                 }
-
-                // Check if we have a prefetched URL for THIS track
                 if (TextUtils.equals(track.videoId, prefetchedNextVideoId) && !TextUtils.isEmpty(prefetchedNextUrl)) {
                     Log.d(TAG, "playCurrentTrack: using prefetched stream for videoId=" + track.videoId);
                     String url = prefetchedNextUrl;
-                    // Clear prefetch after use
-                    prefetchedNextVideoId = null;
                     prefetchedNextVideoId = null;
                     prefetchedNextUrl = null;
-                    
                     startMediaPlaybackFromSource(track, url, requestToken, () -> {
-                        // If prefetched URL fails, try fresh resolution
                         resolveAndPlayOnlineTrack(track, requestToken);
                     });
-                    return;
+                } else {
+                    // No prefetch — resolve fresh (already on background, but executor
+                    // is single-thread so we submit to keep it non-blocking from main)
+                    resolveAndPlayOnlineTrack(track, requestToken);
                 }
-
-                // Fresh online resolution
-                resolveAndPlayOnlineTrack(track, requestToken);
             });
         });
     }
@@ -1394,8 +1399,8 @@ public class SongPlayerFragment extends Fragment {
 
         pendingStreamResolverFuture = streamResolverExecutor.submit(() -> {
             String resolvedUrl = forceAlternativeClient
-                    ? InnertubeResolver.resolveStreamUrl(track.videoId, true)
-                    : InnertubeResolver.resolveStreamUrl(track.videoId);
+                    ? InnertubeResolver.resolveStreamUrl(requireContext(), track.videoId, true)
+                    : InnertubeResolver.resolveStreamUrl(requireContext(), track.videoId);
             
             localProgressHandler.post(() -> {
                 if (requestToken != activePlaybackRequestToken || !isAdded()) return;
@@ -1431,7 +1436,7 @@ public class SongPlayerFragment extends Fragment {
 
         Log.d(TAG, "prefetchNextTrackStream: starting pre-fetch for videoId=" + nextTrack.videoId);
         streamResolverExecutor.submit(() -> {
-            String url = InnertubeResolver.resolveStreamUrl(nextTrack.videoId);
+            String url = InnertubeResolver.resolveStreamUrl(requireContext(), nextTrack.videoId);
             if (!TextUtils.isEmpty(url)) {
                 prefetchedNextVideoId = nextTrack.videoId;
                 prefetchedNextUrl = url;
@@ -2289,11 +2294,31 @@ public class SongPlayerFragment extends Fragment {
         }
 
         if (nextUrl == null) {
-            // No direct source ready for crossfade, start regular playback
-            playCurrentTrack();
-            return;
+            // No direct source ready. If online, resolve the URL dynamically!
+            if (isNetworkAvailable()) {
+                final ExoMediaPlayer outgoingPlayer = outgoing;
+                final int finalNextIndex = nextIndex;
+                streamResolverExecutor.submit(() -> {
+                    String resolved = InnertubeResolver.resolveStreamUrl(requireContext(), nextTrack.videoId);
+                    localProgressHandler.post(() -> {
+                        if (!isAdded() || TextUtils.isEmpty(resolved)) {
+                            playCurrentTrack();
+                            return;
+                        }
+                        executeManualCrossfade(outgoingPlayer, finalNextIndex, resolved, true, crossfadeDurationMs);
+                    });
+                });
+                return;
+            } else {
+                playCurrentTrack();
+                return;
+            }
         }
 
+        executeManualCrossfade(outgoing, nextIndex, nextUrl, nextIsNetwork, crossfadeDurationMs);
+    }
+
+    private void executeManualCrossfade(ExoMediaPlayer outgoing, int nextIndex, String nextUrl, boolean nextIsNetwork, int crossfadeDurationMs) {
         ExoMediaPlayer incoming = new ExoMediaPlayer(requireContext().getApplicationContext());
         incoming.isCrossfadeComponent = true;
         try {
@@ -2406,11 +2431,31 @@ public class SongPlayerFragment extends Fragment {
         }
 
         if (nextUrl == null) {
-            // No direct source ready for crossfade (no offline, no prefetch)
-            startOfflineFadeOutOnly(outgoing, crossfadeDurationMs);
-            return;
+            // No direct source ready for crossfade. Resolve dynamically!
+            if (isNetworkAvailable()) {
+                final ExoMediaPlayer outgoingPlayer = outgoing;
+                final int finalNextIndex = nextIndex;
+                streamResolverExecutor.submit(() -> {
+                    String resolved = InnertubeResolver.resolveStreamUrl(requireContext(), nextTrack.videoId);
+                    localProgressHandler.post(() -> {
+                        if (!isAdded() || TextUtils.isEmpty(resolved)) {
+                            startOfflineFadeOutOnly(outgoingPlayer, crossfadeDurationMs);
+                            return;
+                        }
+                        executeAutomaticCrossfade(outgoingPlayer, finalNextIndex, resolved, true, crossfadeDurationMs);
+                    });
+                });
+                return;
+            } else {
+                startOfflineFadeOutOnly(outgoing, crossfadeDurationMs);
+                return;
+            }
         }
 
+        executeAutomaticCrossfade(outgoing, nextIndex, nextUrl, nextIsNetwork, crossfadeDurationMs);
+    }
+
+    private void executeAutomaticCrossfade(ExoMediaPlayer outgoing, int nextIndex, String nextUrl, boolean nextIsNetwork, int crossfadeDurationMs) {
         ExoMediaPlayer incoming = new ExoMediaPlayer(requireContext().getApplicationContext());
         incoming.isCrossfadeComponent = true;
         try {
@@ -2610,10 +2655,17 @@ public class SongPlayerFragment extends Fragment {
         try {
             totalSeconds = Math.max(1, incoming.getDuration() / 1000);
         } catch (Exception ignored) {
+            totalSeconds = 1;
         }
 
-        bindCurrentTrack(false);
+        bindCurrentTrackInternal(false, true);
         startLocalProgressTicker();
+        updatePlayPauseIcon();
+        updateMediaSessionState();
+        
+        prefetchedNextVideoId = null;
+        prefetchedNextUrl = null;
+        prefetchNextTrackStream();
     }
 
     private void cancelOfflineCrossfade() {

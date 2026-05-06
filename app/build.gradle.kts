@@ -75,6 +75,7 @@ dependencies {
     implementation("androidx.media3:media3-datasource:$media3Version")
     implementation("androidx.media3:media3-datasource-okhttp:$media3Version")
     implementation("androidx.media3:media3-common:$media3Version")
+    implementation("androidx.media3:media3-database:$media3Version")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     // pierfrancescosoffritti YouTube iframe player removed — playback is ExoPlayer only.
     // NewPipeExtractor - v0.26.1 estable en JitPack

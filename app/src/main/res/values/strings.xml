@@ -12,6 +12,8 @@
     <string name="settings_stream_download_quality_very_high">Muy alta (320 kbps)</string>
     <string name="settings_stream_mobile_data_title">Descargar con datos moviles</string>
     <string name="settings_stream_mobile_data_subtitle">Las descargas podran continuar usando datos moviles</string>
+    <string name="settings_offline_mode_title">Modo offline</string>
+    <string name="settings_offline_mode_subtitle">Solo muestra bibliotecas y canciones descargadas</string>
     <string name="settings_stream_crossfade_title">Crossfade</string>
     <string name="settings_stream_crossfade_subtitle">Transicion solo en pistas offline (0s a 12s)</string>
     <string name="settings_stream_crossfade_value_zero">0s</string>

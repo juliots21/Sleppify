@@ -55,17 +55,17 @@ class SettingsFragment : Fragment() {
     private lateinit var ivProfilePhoto: ShapeableImageView
     private lateinit var tvProfileName: TextView
     private lateinit var tvProfileBadge: TextView
-    private lateinit var tvSummaryFrequencyValue: TextView
-    private lateinit var swAiShiftPermissions: MaterialSwitch
     private lateinit var swAmoledMode: MaterialSwitch
     private lateinit var swDownloadOnMobileData: MaterialSwitch
+    private lateinit var swOfflineMode: MaterialSwitch
     private lateinit var swTvMode: MaterialSwitch
     private lateinit var rowTvMode: View
     private lateinit var dividerTvMode: View
-    private lateinit var rowSummaryFrequency: View
     private lateinit var rowDownloadQuality: View
     private lateinit var tvDownloadQualityValue: TextView
-    private lateinit var tvOfflineCrossfadeThumbValue: TextView
+    private lateinit var rowStreamingQuality: View
+    private lateinit var tvStreamingQualityValue: TextView
+    private lateinit var tvOfflineCrossfadeValue: TextView
     private lateinit var tvStorageOtherAppsValue: TextView
     private lateinit var tvStorageDownloadsValue: TextView
     private lateinit var tvStorageCacheValue: TextView
@@ -93,12 +93,12 @@ class SettingsFragment : Fragment() {
     private var hasProfileSnapshot = false
 
     // State Snapshots
-    private var lastSmartSuggestionsEnabled = false
     private var lastAmoledModeEnabled = false
-    private var lastSummaryFrequencyTimes = -1
     private var lastOfflineCrossfadeSeconds = -1
     private var lastAllowMobileDataDownloads = false
+    private var lastOfflineModeEnabled = false
     private var lastDownloadQuality: String? = null
+    private var lastStreamingQuality: String? = null
     private var lastProfileSignedIn = false
     private var lastProfileDisplayName: String? = null
     private var lastProfileEmail: String? = null
@@ -123,14 +123,14 @@ class SettingsFragment : Fragment() {
         ivProfilePhoto = v.findViewById(R.id.ivProfilePhoto)
         tvProfileName = v.findViewById(R.id.tvProfileName)
         tvProfileBadge = v.findViewById(R.id.tvProfileBadge)
-        tvSummaryFrequencyValue = v.findViewById(R.id.tvSummaryFrequencyValue)
-        swAiShiftPermissions = v.findViewById(R.id.swAiShiftPermissions)
         swAmoledMode = v.findViewById(R.id.swAmoledMode)
         swDownloadOnMobileData = v.findViewById(R.id.swDownloadOnMobileData)
-        rowSummaryFrequency = v.findViewById(R.id.rowSummaryFrequency)
+        swOfflineMode = v.findViewById(R.id.swOfflineMode)
         rowDownloadQuality = v.findViewById(R.id.rowDownloadQuality)
+        rowStreamingQuality = v.findViewById(R.id.rowStreamingQuality)
+        tvStreamingQualityValue = v.findViewById(R.id.tvStreamingQualityValue)
         tvDownloadQualityValue = v.findViewById(R.id.tvDownloadQualityValue)
-        tvOfflineCrossfadeThumbValue = v.findViewById(R.id.tvOfflineCrossfadeThumbValue)
+        tvOfflineCrossfadeValue = v.findViewById(R.id.tvOfflineCrossfadeValue)
         sbOfflineCrossfade = v.findViewById(R.id.sbOfflineCrossfade)
         tvStorageOtherAppsValue = v.findViewById(R.id.tvStorageOtherAppsValue)
         tvStorageDownloadsValue = v.findViewById(R.id.tvStorageDownloadsValue)
@@ -152,8 +152,8 @@ class SettingsFragment : Fragment() {
             else (activity as? MainActivity)?.requireAuth({ renderProfileState() }, { renderProfileState() })
         }
         
-        rowSummaryFrequency.setOnClickListener { showSummaryFrequencyPicker() }
         rowDownloadQuality.setOnClickListener { showDownloadQualityPicker() }
+        rowStreamingQuality.setOnClickListener { showStreamingQualityPicker() }
         btnDeleteSettingsCache.setOnClickListener { showDeleteCacheConfirmation() }
         updateDeleteCacheButtonState()
     }
@@ -319,33 +319,26 @@ class SettingsFragment : Fragment() {
     }
 
     private fun renderSettingsState() {
-        val suggestions = settingsPrefs.getBoolean(CloudSyncManager.KEY_SMART_SUGGESTIONS_ENABLED, settingsPrefs.getBoolean(CloudSyncManager.KEY_AI_SHIFT_ENABLED, true))
         val amoled = settingsPrefs.getBoolean(CloudSyncManager.KEY_AMOLED_MODE_ENABLED, false)
-        val frequency = settingsPrefs.getInt(CloudSyncManager.KEY_DAILY_SUMMARY_INTERVAL_HOURS, 2)
         val crossfade = settingsPrefs.getInt(CloudSyncManager.KEY_OFFLINE_CROSSFADE_SECONDS, 0).coerceIn(0, 12)
         val mobileDownloads = settingsPrefs.getBoolean(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false)
+        val offlineMode = settingsPrefs.getBoolean(CloudSyncManager.KEY_OFFLINE_MODE_ENABLED, false)
         val tvMode = localPrefs.getBoolean("tv_mode_enabled", false)
         val quality = normalizeQuality(settingsPrefs.getString(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_QUALITY, CloudSyncManager.DOWNLOAD_QUALITY_MEDIUM))
+        val streamingQuality = normalizeStreamingQuality(settingsPrefs.getString(CloudSyncManager.KEY_STREAMING_QUALITY, CloudSyncManager.STREAMING_QUALITY_MEDIUM))
 
-        if (hasSettingsSnapshot && lastSmartSuggestionsEnabled == suggestions && lastAmoledModeEnabled == amoled &&
-            lastSummaryFrequencyTimes == frequency && lastOfflineCrossfadeSeconds == crossfade &&
-            lastAllowMobileDataDownloads == mobileDownloads && lastDownloadQuality == quality &&
-            lastTvModeEnabled == tvMode) return
+        if (hasSettingsSnapshot && lastAmoledModeEnabled == amoled &&
+            lastOfflineCrossfadeSeconds == crossfade &&
+            lastAllowMobileDataDownloads == mobileDownloads && lastOfflineModeEnabled == offlineMode &&
+            lastDownloadQuality == quality &&
+            lastStreamingQuality == streamingQuality && lastTvModeEnabled == tvMode) return
 
         hasSettingsSnapshot = true
-        lastSmartSuggestionsEnabled = suggestions; lastAmoledModeEnabled = amoled
-        lastSummaryFrequencyTimes = frequency; lastOfflineCrossfadeSeconds = crossfade
-        lastAllowMobileDataDownloads = mobileDownloads; lastDownloadQuality = quality
+        lastAmoledModeEnabled = amoled
+        lastOfflineCrossfadeSeconds = crossfade
+        lastAllowMobileDataDownloads = mobileDownloads; lastOfflineModeEnabled = offlineMode; lastDownloadQuality = quality
+        lastStreamingQuality = streamingQuality
         lastTvModeEnabled = tvMode
-
-        swAiShiftPermissions.apply {
-            setOnCheckedChangeListener(null)
-            isChecked = suggestions
-            setOnCheckedChangeListener { _, c ->
-                settingsPrefs.edit().putBoolean(CloudSyncManager.KEY_SMART_SUGGESTIONS_ENABLED, c).putBoolean(CloudSyncManager.KEY_AI_SHIFT_ENABLED, c).apply()
-                (activity as? MainActivity)?.refreshSessionUi()
-            }
-        }
 
         swAmoledMode.apply {
             setOnCheckedChangeListener(null)
@@ -362,6 +355,15 @@ class SettingsFragment : Fragment() {
             isChecked = mobileDownloads
             setOnCheckedChangeListener { _, c ->
                 settingsPrefs.edit().putBoolean(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, c).apply()
+                renderSettingsState()
+            }
+        }
+
+        swOfflineMode.apply {
+            setOnCheckedChangeListener(null)
+            isChecked = offlineMode
+            setOnCheckedChangeListener { _, c ->
+                settingsPrefs.edit().putBoolean(CloudSyncManager.KEY_OFFLINE_MODE_ENABLED, c).apply()
                 renderSettingsState()
             }
         }
@@ -384,8 +386,8 @@ class SettingsFragment : Fragment() {
             dividerTvMode.visibility = View.GONE
         }
 
-        tvSummaryFrequencyValue.text = if (frequency == 1) "1 vez" else "$frequency veces"
         tvDownloadQualityValue.text = labelForQuality(quality)
+        tvStreamingQualityValue.text = labelForStreamingQuality(streamingQuality)
 
         sbOfflineCrossfade.apply {
             setOnSeekBarChangeListener(null)
@@ -404,19 +406,7 @@ class SettingsFragment : Fragment() {
     }
 
     private fun updateIndicator(s: Int) {
-        tvOfflineCrossfadeThumbValue.text = s.toString()
-        sbOfflineCrossfade.post {
-            val pv = tvOfflineCrossfadeThumbValue.parent as? View ?: return@post
-            val pw = pv.width.takeIf { it > 0 } ?: return@post
-            val ratio = s / sbOfflineCrossfade.max.toFloat()
-            val tw = sbOfflineCrossfade.width - sbOfflineCrossfade.paddingLeft - sbOfflineCrossfade.paddingRight
-            val center = sbOfflineCrossfade.paddingLeft + (tw * ratio)
-            val textW = tvOfflineCrossfadeThumbValue.width.takeIf { it > 0 } ?: run {
-                tvOfflineCrossfadeThumbValue.measure(0, 0)
-                tvOfflineCrossfadeThumbValue.getMeasuredWidth()
-            }
-            tvOfflineCrossfadeThumbValue.translationX = (center - textW / 2f).coerceIn(0f, (pw - textW).toFloat())
-        }
+        tvOfflineCrossfadeValue.text = if (s == 0) "off" else "${s}s"
     }
 
     private fun showDownloadQualityPicker() {
@@ -435,15 +425,15 @@ class SettingsFragment : Fragment() {
             .show()
     }
 
-    private fun showSummaryFrequencyPicker() {
-        val vals = intArrayOf(1, 2, 3, 4, 5)
-        val labs = arrayOf("1 vez", "2 veces", "3 veces", "4 veces", "5 veces")
-        val cur = settingsPrefs.getInt(CloudSyncManager.KEY_DAILY_SUMMARY_INTERVAL_HOURS, 2)
+    private fun showStreamingQualityPicker() {
+        val vals = arrayOf(CloudSyncManager.STREAMING_QUALITY_LOW, CloudSyncManager.STREAMING_QUALITY_MEDIUM, CloudSyncManager.STREAMING_QUALITY_HIGH, CloudSyncManager.STREAMING_QUALITY_VERY_HIGH)
+        val labs = arrayOf("Baja", "Media", "Alta", "Muy alta")
+        val cur = normalizeStreamingQuality(settingsPrefs.getString(CloudSyncManager.KEY_STREAMING_QUALITY, CloudSyncManager.STREAMING_QUALITY_MEDIUM))
         
         MaterialAlertDialogBuilder(requireContext())
-            .setTitle("Frecuencia resumen IA")
+            .setTitle("Calidad de streaming")
             .setSingleChoiceItems(labs, vals.indexOf(cur)) { d, w ->
-                settingsPrefs.edit().putInt(CloudSyncManager.KEY_DAILY_SUMMARY_INTERVAL_HOURS, vals[w]).apply()
+                settingsPrefs.edit().putString(CloudSyncManager.KEY_STREAMING_QUALITY, vals[w]).apply()
                 renderSettingsState()
                 d.dismiss()
             }
@@ -458,10 +448,24 @@ class SettingsFragment : Fragment() {
         else -> CloudSyncManager.DOWNLOAD_QUALITY_MEDIUM
     }
 
+    private fun normalizeStreamingQuality(q: String?) = when (q) {
+        CloudSyncManager.STREAMING_QUALITY_LOW -> q
+        CloudSyncManager.STREAMING_QUALITY_HIGH -> q
+        CloudSyncManager.STREAMING_QUALITY_VERY_HIGH -> q
+        else -> CloudSyncManager.STREAMING_QUALITY_MEDIUM
+    }
+
     private fun labelForQuality(q: String) = when (q) {
         CloudSyncManager.DOWNLOAD_QUALITY_LOW -> "Baja"
         CloudSyncManager.DOWNLOAD_QUALITY_HIGH -> "Alta"
         CloudSyncManager.DOWNLOAD_QUALITY_VERY_HIGH -> "Muy alta"
+        else -> "Media"
+    }
+
+    private fun labelForStreamingQuality(q: String) = when (q) {
+        CloudSyncManager.STREAMING_QUALITY_LOW -> "Baja"
+        CloudSyncManager.STREAMING_QUALITY_HIGH -> "Alta"
+        CloudSyncManager.STREAMING_QUALITY_VERY_HIGH -> "Muy alta"
         else -> "Media"
     }
 

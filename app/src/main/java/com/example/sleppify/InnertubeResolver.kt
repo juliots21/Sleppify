@@ -51,48 +51,100 @@ object InnertubeResolver {
     }
 
     /**
+     * Obtiene el bitrate objetivo basado en la preferencia de calidad de streaming.
+     */
+    private fun getTargetBitrate(context: Context): Int {
+        val prefs = context.getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE)
+        val quality = prefs.getString(CloudSyncManager.KEY_STREAMING_QUALITY, CloudSyncManager.STREAMING_QUALITY_MEDIUM)
+        return when (quality) {
+            CloudSyncManager.STREAMING_QUALITY_LOW -> 96_000      // Baja: 96 kbps
+            CloudSyncManager.STREAMING_QUALITY_HIGH -> 256_000    // Alta: 256 kbps
+            CloudSyncManager.STREAMING_QUALITY_VERY_HIGH -> 320_000 // Muy alta: 320 kbps
+            else -> 128_000                                       // Media: 128 kbps (default)
+        }
+    }
+
+    /**
      * Resuelve URL de audio usando NewPipeExtractor.
      * (forceAlternativeClient se ignora - NewPipeExtractor maneja todo internamente)
      */
     @JvmStatic
     @JvmOverloads
-    fun resolveStreamUrl(videoId: String?, forceAlternativeClient: Boolean = false): String? {
+    fun resolveStreamUrl(context: Context, videoId: String?, forceAlternativeClient: Boolean = false): String? {
         if (videoId.isNullOrEmpty()) return null
 
-        // Cache check
-        urlCache[videoId]?.let {
+        // Cache check - incluir calidad en la key para cache separado por calidad
+        val targetBitrate = getTargetBitrate(context)
+        val cacheKey = "${videoId}_${targetBitrate}"
+        urlCache[cacheKey]?.let {
             if (System.currentTimeMillis() - it.timestamp < CACHE_EXPIRY_MS) {
-                Log.d(TAG, "Cache hit: $videoId")
+                Log.d(TAG, "Cache hit: $cacheKey")
                 return it.url
             }
         }
 
         return try {
-            // Inicializar NewPipe una sola vez. Esto evita carreras (init duplicado)
-            // y reduce trabajo extra en el primer playback.
-            if (!newPipeInitialized || NewPipe.getDownloader() == null) {
+            // Ensure NewPipe is initialized (normally pre-warmed in SleppifyApp.onCreate).
+            // The null-check on getDownloader() is cheap and avoids redundant re-init.
+            if (NewPipe.getDownloader() == null) {
                 synchronized(newPipeInitLock) {
-                    if (!newPipeInitialized || NewPipe.getDownloader() == null) {
-                        Log.d(TAG, "Inicializando NewPipe...")
+                    if (NewPipe.getDownloader() == null) {
+                        Log.d(TAG, "Inicializando NewPipe (lazy fallback)...")
                         NewPipe.init(NewPipeHttpDownloader.getInstance())
-                        newPipeInitialized = true
                     }
                 }
             }
 
             // Usar /watch evita redirect extra (youtu.be -> youtube.com)
             val info = StreamInfo.getInfo(YouTube, "https://www.youtube.com/watch?v=$videoId")
-            val audioStream = info.audioStreams.maxByOrNull { it.bitrate }
+            // Seleccionar stream según la calidad preferida del usuario
+            val audioStream = info.audioStreams
+                .sortedBy { Math.abs(it.bitrate - targetBitrate) }
+                .firstOrNull()
+                ?: info.audioStreams.maxByOrNull { it.bitrate }
 
             val url = audioStream?.content
             if (!url.isNullOrEmpty()) {
-                urlCache[videoId] = CachedUrl(url, System.currentTimeMillis())
-                Log.d(TAG, "Éxito: $videoId - ${audioStream?.format} @ ${audioStream?.bitrate}bps")
+                urlCache[cacheKey] = CachedUrl(url, System.currentTimeMillis())
+                Log.d(TAG, "Éxito: $videoId - ${audioStream?.format} @ ${audioStream?.bitrate}bps (target: ${targetBitrate}bps)")
                 url
             } else {
                 Log.w(TAG, "No hay stream de audio: $videoId")
                 null
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error resolviendo $videoId: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Resuelve URL de audio usando NewPipeExtractor (versión sin context para compatibilidad).
+     * Usa calidad media por defecto.
+     */
+    @JvmStatic
+    @JvmOverloads
+    fun resolveStreamUrl(videoId: String?, forceAlternativeClient: Boolean = false): String? {
+        // Fallback sin context - usa 128kbps por defecto
+        if (videoId.isNullOrEmpty()) return null
+
+        return try {
+            if (NewPipe.getDownloader() == null) {
+                synchronized(newPipeInitLock) {
+                    if (NewPipe.getDownloader() == null) {
+                        NewPipe.init(NewPipeHttpDownloader.getInstance())
+                    }
+                }
+            }
+
+            val info = StreamInfo.getInfo(YouTube, "https://www.youtube.com/watch?v=$videoId")
+            val TARGET_BITRATE = 128_000
+            val audioStream = info.audioStreams
+                .sortedBy { Math.abs(it.bitrate - TARGET_BITRATE) }
+                .firstOrNull()
+                ?: info.audioStreams.maxByOrNull { it.bitrate }
+
+            audioStream?.content
         } catch (e: Exception) {
             Log.e(TAG, "Error resolviendo $videoId: ${e.message}")
             null

@@ -20,6 +20,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
@@ -342,37 +343,32 @@ class SearchFragment : Fragment() {
     private fun requestPagedSearchResults(query: String, pageToken: String, append: Boolean) {
         val requestId = ++latestSearchRequestId
 
-        if (!isNetworkAvailable()) {
-            if (!append) setSearchLoadingState(true, "Buscando música...")
-
+        // 1. Iniciar búsqueda local (Solo si no es scroll infinito/paginación)
+        if (!append) {
             lifecycleScope.launch(Dispatchers.IO) {
-                val offlineResults = performOfflineSearch(query)
-
+                val localResults = performOfflineSearch(query)
                 launch(Dispatchers.Main) {
                     if (activity == null || !isAdded || requestId != latestSearchRequestId) return@launch
-
-                    if (!append) allTracks.clear()
-                    appendUniqueTracks(offlineResults)
-
-                    nextSearchPageToken = ""
-                    hasMoreSearchPages = false
+                    appendUniqueTracks(localResults)
                     applyActiveFilter(query, forceSort = true)
-
-                    if (allTracks.isEmpty()) {
-                        setSearchLoadingState(false, "No encontré resultados para: $query")
-                    } else {
-                        setSearchLoadingState(false, "")
-                    }
                     
-                    revealModuleContent()
-                    rvSearchResults.alpha = 0f
-                    rvSearchResults.animate().alpha(1f).setDuration(250).start()
-                    hideKeyboard()
+                    // Si no hay internet, cerramos el estado de carga aquí mismo
+                    if (!isNetworkAvailable()) {
+                        if (allTracks.isEmpty()) {
+                            setSearchLoadingState(false, "No encontré resultados locales para: $query")
+                        } else {
+                            setSearchLoadingState(false, "")
+                        }
+                        revealModuleContent()
+                        hideKeyboard()
+                    }
                 }
             }
-            return
         }
 
+        if (!isNetworkAvailable()) return
+
+        // 2. Proceso de búsqueda Online
         if (append) {
             searchPaginationInFlight = true
             tvSearchState.text = "Cargando mas resultados..."
@@ -386,53 +382,41 @@ class SearchFragment : Fragment() {
                 
                 if (append) searchPaginationInFlight = false
                 
-                if (!append) {
-                    allTracks.clear()
-                    lifecycleScope.launch(Dispatchers.IO) {
-                        val localResults = performOfflineSearch(query)
-                        launch(Dispatchers.Main) {
-                            if (activity == null || !isAdded) return@launch
-                            appendUniqueTracks(localResults)
-                            applyActiveFilter(query, forceSort = true)
-                        }
-                    }
-                }
-                appendUniqueTracks(pageResult.tracks)
-                
                 nextSearchPageToken = pageResult.nextPageToken
                 hasMoreSearchPages = nextSearchPageToken.isNotEmpty()
+
+                appendUniqueTracks(pageResult.tracks)
                 applyActiveFilter(query, forceSort = true)
 
                 if (allTracks.isEmpty()) {
                     if (!append) setSearchLoadingState(false, "No encontré resultados para: $query")
                 } else if (!append) {
                     setSearchLoadingState(false, "")
+                    // Pre-fetch opcional para mejor latencia
                     allTracks.firstOrNull()?.videoId?.let { id ->
                         lifecycleScope.launch(Dispatchers.IO) {
-                            Log.d("SearchFragment", "Predictive pre-fetch: Resolviendo stream...")
-                            InnertubeResolver.resolveStreamUrl(id)
+                            InnertubeResolver.resolveStreamUrl(requireContext(), id)
                         }
                     }
                 }
                 
-                if (!append && !allTracks.isEmpty()) {
+                if (!append) {
                     revealModuleContent()
                     rvSearchResults.alpha = 0f
                     rvSearchResults.animate().alpha(1f).setDuration(250).start()
-                    hideKeyboard()
-                } else if (!append) {
-                    revealModuleContent()
                     hideKeyboard()
                 }
             }
 
             override fun onError(error: String) {
                 if (activity == null || !isAdded || requestId != latestSearchRequestId) return
-                if (append) {
-                    searchPaginationInFlight = false
-                    tvSearchState.text = "Error al cargar más resultados."
-                } else {
+                if (append) searchPaginationInFlight = false
+                
+                if (allTracks.isEmpty()) {
                     setSearchLoadingState(false, "Error: $error")
+                } else {
+                    setSearchLoadingState(false, "")
+                    if (append) Toast.makeText(requireContext(), "Error al cargar más resultados", Toast.LENGTH_SHORT).show()
                 }
             }
         })
@@ -1061,6 +1045,11 @@ class SearchFragment : Fragment() {
         if (!isAdded || view == null) return
         
         val mainActivity = requireActivity() as? MainActivity ?: return
+
+        if (mainActivity.isSongPlayerVisible()) {
+            llMiniPlayer.visibility = View.GONE
+            return
+        }
         val songPlayer = mainActivity.findSongPlayerFragment()
         val playerAttached = songPlayer != null && songPlayer.isAdded
         
@@ -1070,7 +1059,7 @@ class SearchFragment : Fragment() {
         var currentSeconds = 0
         var totalSeconds = 1
         
-        if (playerAttached && songPlayer != null) {
+        if (playerAttached) {
             miniPlaying = songPlayer.externalIsPlaying()
             currentSeconds = songPlayer.externalGetCurrentSeconds()
             totalSeconds = Math.max(1, songPlayer.externalGetTotalSeconds())
@@ -1091,30 +1080,20 @@ class SearchFragment : Fragment() {
         }
 
         if (llMiniPlayer.visibility != View.VISIBLE) {
-            val distance = if (llMiniPlayer.height > 0) llMiniPlayer.height.toFloat() else 300f
-            llMiniPlayer.translationY = distance
+            // Se muestra de inmediato para evitar la sensación de "duplicación" o retraso
+            // al entrar desde otra pantalla donde ya era visible
             llMiniPlayer.visibility = View.VISIBLE
-            llMiniPlayer.animate().cancel()
-            llMiniPlayer.animate()
-                .translationY(0f)
-                .setDuration(250)
-                .setInterpolator(android.view.animation.PathInterpolator(0.4f, 0f, 0.2f, 1f))
-                .start()
+            llMiniPlayer.translationY = 0f 
         }
 
         val displayTitle: String
         val displaySubtitle: String
         val displayImageUrl: String
 
-        if (playerAttached && songPlayer != null) {
-            val prefs = requireContext().getSharedPreferences("player_state", Context.MODE_PRIVATE)
-            val fallbackTitle = prefs.getString("stream_last_track_title", "") ?: ""
-            val fallbackArtist = prefs.getString("stream_last_track_artist", "") ?: ""
-            val fallbackImage = prefs.getString("stream_last_track_image", "") ?: ""
-            
-            displayTitle = if (fallbackTitle.isEmpty()) "Reproduciendo" else fallbackTitle
-            displaySubtitle = fallbackArtist
-            displayImageUrl = fallbackImage.trim()
+        if (playerAttached) {
+            displayTitle = songPlayer!!.externalGetCurrentTitle() ?: "Reproduciendo"
+            displaySubtitle = songPlayer.externalGetCurrentArtist() ?: ""
+            displayImageUrl = (songPlayer.externalGetCurrentImageUrl() ?: "").trim()
         } else if (snapshotTrack != null) {
             displayTitle = if (snapshotTrack.title.isEmpty()) "Última reproducción" else snapshotTrack.title
             displaySubtitle = snapshotTrack.artist

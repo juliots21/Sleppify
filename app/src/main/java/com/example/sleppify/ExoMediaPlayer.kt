@@ -14,8 +14,13 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
+import androidx.media3.datasource.cache.SimpleCache
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
 import java.lang.ref.WeakReference
 
@@ -46,6 +51,24 @@ class ExoMediaPlayer {
 
     companion object {
         private const val TAG = "ExoMediaPlayer"
+        private const val CACHE_SIZE_BYTES = 100L * 1024 * 1024 // 100 MB disk cache
+
+        @Volatile
+        private var sharedCache: SimpleCache? = null
+        private val cacheLock = Any()
+
+        @JvmStatic
+        fun getSharedCache(context: Context): SimpleCache {
+            return sharedCache ?: synchronized(cacheLock) {
+                sharedCache ?: run {
+                    val cacheDir = File(context.cacheDir, "exo_stream_cache")
+                    val evictor = LeastRecentlyUsedCacheEvictor(CACHE_SIZE_BYTES)
+                    SimpleCache(cacheDir, evictor, androidx.media3.database.StandaloneDatabaseProvider(context)).also {
+                        sharedCache = it
+                    }
+                }
+            }
+        }
 
         // Registry of all active ExoMediaPlayer instances in the app
         private val activeInstances = CopyOnWriteArrayList<WeakReference<ExoMediaPlayer>>()
@@ -111,7 +134,13 @@ class ExoMediaPlayer {
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .build()
 
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(15_000, 50_000, 500, 1_000)
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
+
         val player = ExoPlayer.Builder(appContext)
+            .setLoadControl(loadControl)
             .setAudioAttributes(audioAttributes, true)
             .setHandleAudioBecomingNoisy(true)
             .build()
@@ -230,8 +259,8 @@ class ExoMediaPlayer {
             // por el CDN de YouTube causando 403, mientras que HttpURLConnection
             // tiene un fingerprint consistente con el de una app Android real.
             val httpFactory = DefaultHttpDataSource.Factory()
-                .setConnectTimeoutMs(15_000)
-                .setReadTimeoutMs(15_000)
+                .setConnectTimeoutMs(8_000)
+                .setReadTimeoutMs(8_000)
                 .setAllowCrossProtocolRedirects(true)
 
             pendingHeaders?.let { headers ->
@@ -240,7 +269,11 @@ class ExoMediaPlayer {
                     Log.d(TAG, "prepareAsync: setting ${headers.size} headers on DefaultHttpDataSource: ${headers.keys}")
                 }
             }
-            httpFactory
+            // Wrap with CacheDataSource for disk caching of streamed audio
+            CacheDataSource.Factory()
+                .setCache(getSharedCache(appContext))
+                .setUpstreamDataSourceFactory(httpFactory)
+                .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
         } else {
             DefaultDataSource.Factory(appContext)
         }

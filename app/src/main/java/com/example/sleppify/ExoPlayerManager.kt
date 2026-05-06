@@ -7,6 +7,7 @@ import androidx.annotation.Nullable
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 
 /**
@@ -40,7 +41,26 @@ object ExoPlayerManager {
                             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
                             .build()
 
+                        // Aggressive LoadControl: start playback after only 500ms of
+                        // buffered audio instead of the default 2500ms.  Keep a
+                        // reasonable back-buffer so seeks within recently-played
+                        // sections are instant.
+                        val loadControl = DefaultLoadControl.Builder()
+                            .setBufferDurationsMs(
+                                /* minBufferMs */            15_000,
+                                /* maxBufferMs */            50_000,
+                                /* bufferForPlaybackMs */       500,
+                                /* bufferForPlaybackAfterRebufferMs */ 1_000
+                            )
+                            .setBackBuffer(
+                                /* backBufferDurationMs */ 30_000,
+                                /* retainBackBufferFromKeyframe */ true
+                            )
+                            .setPrioritizeTimeOverSizeThresholds(true)
+                            .build()
+
                         sharedExoPlayer = ExoPlayer.Builder(appContext)
+                            .setLoadControl(loadControl)
                             .setLooper(android.os.Looper.getMainLooper())
                             .setAudioAttributes(audioAttributes, true)
                             .setHandleAudioBecomingNoisy(true)
