@@ -290,7 +290,10 @@ class MainActivity : AppCompatActivity() {
             val extraPadding = (8 * density).toInt()
 
             topAppBar.setPadding(topAppBar.paddingLeft, systemBars.top + extraPadding, topAppBar.paddingRight, topAppBar.paddingBottom)
-            bottomNav.setPadding(systemBars.left, 0, systemBars.right, systemBars.bottom)
+            
+            if (bottomNav.paddingBottom != systemBars.bottom) {
+                bottomNav.setPadding(systemBars.left, 0, systemBars.right, systemBars.bottom)
+            }
             
             val playerContainer = findViewById<View>(R.id.playerContainer)
             playerContainer?.setPadding(0, 0, 0, systemBars.bottom)

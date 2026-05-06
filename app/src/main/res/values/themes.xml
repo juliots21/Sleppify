@@ -26,5 +26,6 @@
         <item name="android:textSize">11sp</item>
         <item name="android:letterSpacing">0.02</item>
         <item name="android:includeFontPadding">false</item>
+        <item name="lineHeight">12sp</item>
     </style>
 </resources>
