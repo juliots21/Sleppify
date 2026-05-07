@@ -71,6 +71,8 @@ import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentManager;
 import androidx.recyclerview.widget.ItemTouchHelper;
 import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.ListAdapter;
+import androidx.recyclerview.widget.DiffUtil;
 import androidx.recyclerview.widget.RecyclerView;
 
 import android.support.v4.media.MediaMetadataCompat;
@@ -105,6 +107,7 @@ import java.util.concurrent.Future;
 public class SongPlayerFragment extends Fragment {
 
     private static final String TAG = "SongPlayerFragment";
+    private static final YouTubeCropTransformation SHARED_YT_CROP = new YouTubeCropTransformation();
 
     public static final String ARG_VIDEO_IDS = "arg_video_ids";
     public static final String ARG_TITLES = "arg_titles";
@@ -164,6 +167,7 @@ public class SongPlayerFragment extends Fragment {
     private static final long NEXT_UP_BATCH_DELAY_MS = 32L;
 
     private final List<PlayerTrack> tracks = new ArrayList<>();
+    private static final int MAX_NEXT_UP = 50;
     private final List<PlayerTrack> nextUpTracks = new ArrayList<>();
     private final List<PlayerTrack> originalQueueOrder = new ArrayList<>();
 
@@ -347,6 +351,7 @@ public class SongPlayerFragment extends Fragment {
         @Override
         public void run() {
             if (!isAdded() || localExoMediaPlayer == null || userSeeking) {
+                localProgressHandler.removeCallbacks(this);
                 return;
             }
 
@@ -357,8 +362,8 @@ public class SongPlayerFragment extends Fragment {
                 maybeStartOfflineCrossfade(positionMs, durationMs);
 
                 int playerSeconds = positionMs / 1000;
-                
-                // Position Guard: If we are restoring a position, don't let a "0" from the player 
+
+                // Position Guard: If we are restoring a position, don't let a "0" from the player
                 // (which happens during prep/buffer) overwrite our target until the player actually advances.
                 if (isRestoringPosition) {
                     if (playerSeconds > 0 || (lastSeekTargetSeconds <= 0)) {
@@ -371,14 +376,17 @@ public class SongPlayerFragment extends Fragment {
                 } else {
                     currentSeconds = playerSeconds;
                 }
-                
+
                 totalSeconds = Math.max(1, durationMs / 1000);
 
-                tvCurrentTime.setText(formatSeconds(currentSeconds));
-                tvTotalTime.setText(formatSeconds(totalSeconds));
+                // Only update UI if player is visible - reduces GPU/CPU load when hidden
+                if (!isHidden()) {
+                    tvCurrentTime.setText(formatSeconds(currentSeconds));
+                    tvTotalTime.setText(formatSeconds(totalSeconds));
 
-                int progress = Math.round((Math.max(0, currentSeconds) / (float) Math.max(1, totalSeconds)) * 1000f);
-                sbPlaybackProgress.setProgress(Math.max(0, Math.min(1000, progress)));
+                    int progress = Math.round((Math.max(0, currentSeconds) / (float) Math.max(1, totalSeconds)) * 1000f);
+                    sbPlaybackProgress.setProgress(Math.max(0, Math.min(1000, progress)));
+                }
 
                 if (currentSeconds % 2 == 0) {
                     persistPlaybackSnapshot(false);
@@ -594,9 +602,8 @@ public class SongPlayerFragment extends Fragment {
         if (hidden) {
             swipeDismissGestureActive = false;
             swipeDismissAnimationRunning = false;
-            if (!(usingOfflineSource && localExoMediaPlayer != null && isPlaying)) {
-                stopLocalProgressTicker();
-            }
+            // ✅ ALWAYS pause ticker when hidden to reduce CPU waste
+            stopLocalProgressTicker();
         } else {
             if (getView() != null) {
                 if (!playerEnterAnimationRunning) {
@@ -606,7 +613,20 @@ public class SongPlayerFragment extends Fragment {
                 getView().setVisibility(View.VISIBLE);
             }
             resetPlayerScrollToTop();
+            // ✅ Restart ticker when visible if playing
+            if (isPlaying) {
+                startLocalProgressTicker();
+            }
             ensureActivePlaybackIfExpected("onHiddenChanged-visible");
+            // ✅ Re-bind artwork if the player was re-shown and artwork doesn't match current track
+            if (!tracks.isEmpty() && currentIndex >= 0 && currentIndex < tracks.size()) {
+                PlayerTrack current = tracks.get(currentIndex);
+                String currentVideoId = current.videoId == null ? "" : current.videoId;
+                if (!TextUtils.equals(activeCoverVideoId, currentVideoId)
+                        || !TextUtils.equals(activeBackdropVideoId, currentVideoId)) {
+                    bindCurrentTrackInternal(false, false);
+                }
+            }
         }
     }
 
@@ -1243,6 +1263,14 @@ public class SongPlayerFragment extends Fragment {
     private void playCurrentTrack() {
         if (!isAdded() || tracks.isEmpty()) {
             return;
+        }
+
+        // Safety: ensure no crossfade is active and no duplicate players exist
+        cancelOfflineCrossfade();
+        // Also ensure any lingering incoming player from a failed crossfade is released
+        if (localCrossfadeIncomingPlayer != null) {
+            releaseSingleExoMediaPlayer(localCrossfadeIncomingPlayer);
+            localCrossfadeIncomingPlayer = null;
         }
 
         final PlayerTrack track = tracks.get(currentIndex);
@@ -2211,7 +2239,6 @@ public class SongPlayerFragment extends Fragment {
     private void maybeStartOfflineCrossfade(int positionMs, int durationMs) {
         int crossfadeDurationMs = getOfflineCrossfadeDurationMs();
         if (!isAdded()
-                || !usingOfflineSource
                 || localExoMediaPlayer == null
                 || localSourcePreparing
                 || localCrossfadeInProgress
@@ -2773,11 +2800,15 @@ public class SongPlayerFragment extends Fragment {
                             ivPlayerCover.animate()
                                 .alpha(1f)
                                 .setDuration(500L)
+                                .withLayer()
+                                .setInterpolator(new android.view.animation.LinearInterpolator())
                                 .start();
                         } else {
                             ivPlayerCover.animate()
                                 .alpha(1f)
                                 .setDuration(500L)
+                                .withLayer()
+                                .setInterpolator(new android.view.animation.LinearInterpolator())
                                 .start();
                         }
                         adjustPlayerHeroForCover(processedResource);
@@ -2810,20 +2841,25 @@ public class SongPlayerFragment extends Fragment {
             }
         };
 
+        // Limit image size to reduce memory pressure and GPU load during fade animations
+        final int maxCoverSize = 800;
+
         com.bumptech.glide.RequestManager requestManager = Glide.with(this);
         requestManager
                 .asBitmap()
                 .load(preferredImageUrl)
-                .transform(new YouTubeCropTransformation())
+                .transform(SHARED_YT_CROP)
                 .format(DecodeFormat.PREFER_ARGB_8888)
                 .diskCacheStrategy(DiskCacheStrategy.ALL)
+                .override(maxCoverSize, maxCoverSize)
                 .error(
                         requestManager
                                 .asBitmap()
                                 .load("https://i.ytimg.com/vi/" + Uri.encode(requestVideoId) + "/hqdefault.jpg")
-                                .transform(new YouTubeCropTransformation())
+                                .transform(SHARED_YT_CROP)
                                 .format(DecodeFormat.PREFER_ARGB_8888)
                                 .diskCacheStrategy(DiskCacheStrategy.ALL)
+                                .override(maxCoverSize, maxCoverSize)
                                 .error(
                                         TextUtils.isEmpty(fallbackImageUrl)
                                                 || TextUtils.equals(preferredImageUrl, fallbackImageUrl)
@@ -2831,9 +2867,10 @@ public class SongPlayerFragment extends Fragment {
                                                 : requestManager
                                                         .asBitmap()
                                                         .load(fallbackImageUrl)
-                                                        .transform(new YouTubeCropTransformation())
+                                                        .transform(SHARED_YT_CROP)
                                                         .format(DecodeFormat.PREFER_ARGB_8888)
                                                         .diskCacheStrategy(DiskCacheStrategy.ALL)
+                                                        .override(maxCoverSize, maxCoverSize)
                                 )
                 )
                 .into(playerCoverTarget);
@@ -2906,6 +2943,7 @@ public class SongPlayerFragment extends Fragment {
                 .load(preferredImageUrl)
                 .priority(com.bumptech.glide.Priority.LOW)
                 .centerCrop()
+                .override(100, 100)
                 .diskCacheStrategy(DiskCacheStrategy.ALL)
                 .skipMemoryCache(true)
                 .error(
@@ -2917,6 +2955,7 @@ public class SongPlayerFragment extends Fragment {
                                         .load(fallbackImageUrl)
                                         .priority(com.bumptech.glide.Priority.LOW)
                                         .centerCrop()
+                                        .override(100, 100)
                                         .diskCacheStrategy(DiskCacheStrategy.ALL)
                                         .skipMemoryCache(true)
                 )
@@ -3011,17 +3050,31 @@ public class SongPlayerFragment extends Fragment {
             }
         }
         
-        // ✅ PRIORITY 1: Load cover art (visible immediately)
-        loadPlayerCover(track, bootstrapArtwork, coverAnimationDirection);
-        
-        // ✅ DEFERRED: Backdrop and notification artwork (not immediately visible)
-        // Defer by 500ms to avoid saturating Glide thread pool while cover is loading
+        // ✅ Only load artwork if player is actually visible (not hidden/miniplayer mode)
+        if (!isHidden()) {
+            // ✅ PRIORITY 1: Load cover art (visible immediately)
+            loadPlayerCover(track, bootstrapArtwork, coverAnimationDirection);
+
+            // ✅ BACKDROP: Fade to black immediately, then load new image after delay
+            // This ensures no old backdrop remains visible during track change
+            if (!bootstrapArtwork && ivPlayerBackdrop != null) {
+                ivPlayerBackdrop.animate().cancel();
+                ivPlayerBackdrop.setAlpha(0f);
+                ivPlayerBackdrop.setImageDrawable(null);
+            }
+
+            // ✅ DEFERRED: Backdrop and notification artwork (not immediately visible)
+            // Defer by 500ms to avoid saturating Glide thread pool while cover is loading
+            if (getView() != null) {
+                getView().postDelayed(() -> {
+                    if (!isAdded() || isHidden()) return;
+                    scheduleBackdropLoad(track, bootstrapArtwork);
+                }, 500L);
+            }
+        }
+
+        // ✅ Notification artwork can load regardless of player visibility
         if (getView() != null) {
-            getView().postDelayed(() -> {
-                if (!isAdded()) return;
-                scheduleBackdropLoad(track, bootstrapArtwork);
-            }, 500L);
-            // Defer notification artwork loading
             getView().postDelayed(() -> {
                 if (!isAdded()) return;
                 loadMediaNotificationArtwork(track);
@@ -3034,7 +3087,8 @@ public class SongPlayerFragment extends Fragment {
             cancelNextUpReveal();
             nextUpTracks.clear();
             if (nextUpAdapter != null) {
-                nextUpAdapter.notifyDataSetChanged();
+                // ✅ Use submitList for efficient DiffUtil updates
+                nextUpAdapter.submitList(new ArrayList<>(nextUpTracks));
             }
         } else {
             refreshNextUp();
@@ -3844,12 +3898,9 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            ivPlayerBackdrop.setRenderEffect(RenderEffect.createBlurEffect(16f, 16f, Shader.TileMode.CLAMP));
-            ivPlayerBackdrop.setAlpha(0.68f);
-        } else {
-            ivPlayerBackdrop.setAlpha(0.35f);
-        }
+        // Backdrop image is decoded at 100x100px (override in Glide) and scaled up by the ImageView,
+        // producing a natural pixelation blur — zero GPU cost at render time.
+        ivPlayerBackdrop.setAlpha(0.60f);
     }
 
     private void updatePlayerSurfaceForSource() {
@@ -4397,7 +4448,9 @@ public class SongPlayerFragment extends Fragment {
 
         for (int offset = start + 1; offset <= end; offset++) {
             int idx = (currentIndex + offset) % tracks.size();
-            nextUpTracks.add(tracks.get(idx));
+            if (nextUpTracks.size() < MAX_NEXT_UP) {
+                nextUpTracks.add(tracks.get(idx));
+            }
         }
 
         nextUpAdapter.notifyItemRangeInserted(start, end - start);
@@ -4412,11 +4465,13 @@ public class SongPlayerFragment extends Fragment {
         }
 
         if (tracks.size() <= 1) {
-            nextUpAdapter.notifyDataSetChanged();
+            // ✅ Use submitList for efficient DiffUtil updates
+            nextUpAdapter.submitList(new ArrayList<>(nextUpTracks));
             return;
         }
 
-        nextUpAdapter.notifyDataSetChanged();
+        // ✅ Use submitList for efficient DiffUtil updates
+        nextUpAdapter.submitList(new ArrayList<>(nextUpTracks));
 
         int maxQueue = 10;
         int total = Math.min(tracks.size() - 1, maxQueue);
@@ -4504,7 +4559,22 @@ public class SongPlayerFragment extends Fragment {
         }
     }
 
-    private static final class NextUpAdapter extends RecyclerView.Adapter<NextUpAdapter.NextUpViewHolder> {
+    // ✅ DiffUtil.ItemCallback for efficient list updates
+    private static final class PlayerTrackDiffCallback extends DiffUtil.ItemCallback<PlayerTrack> {
+        @Override
+        public boolean areItemsTheSame(@NonNull PlayerTrack oldItem, @NonNull PlayerTrack newItem) {
+            return TextUtils.equals(oldItem.videoId, newItem.videoId);
+        }
+
+        @Override
+        public boolean areContentsTheSame(@NonNull PlayerTrack oldItem, @NonNull PlayerTrack newItem) {
+            return oldItem.equals(newItem);
+        }
+    }
+
+    private static final class NextUpAdapter extends ListAdapter<PlayerTrack, NextUpAdapter.NextUpViewHolder> {
+        // ✅ Cache transformation to avoid creating new object per bind
+        private static final YouTubeCropTransformation SHARED_YT_CROP = new YouTubeCropTransformation();
 
         interface OnNextUpTap {
             void onTap(int position);
@@ -4514,16 +4584,14 @@ public class SongPlayerFragment extends Fragment {
             void onStartDrag(@NonNull NextUpViewHolder holder);
         }
 
-        private final List<PlayerTrack> items;
         private final OnNextUpTap onNextUpTap;
         private final OnDragStart onDragStart;
 
         NextUpAdapter(
-                @NonNull List<PlayerTrack> items,
                 @NonNull OnNextUpTap onNextUpTap,
                 @NonNull OnDragStart onDragStart
         ) {
-            this.items = items;
+            super(new PlayerTrackDiffCallback());
             this.onNextUpTap = onNextUpTap;
             this.onDragStart = onDragStart;
         }
@@ -4536,8 +4604,10 @@ public class SongPlayerFragment extends Fragment {
                 return false; // Restriction: cannot move 'Now Playing' or move anything above it
             }
 
-            PlayerTrack moved = items.remove(fromPosition);
-            items.add(toPosition, moved);
+            List<PlayerTrack> currentList = new ArrayList<>(getCurrentList());
+            PlayerTrack moved = currentList.remove(fromPosition);
+            currentList.add(toPosition, moved);
+            submitList(currentList);
             notifyItemMoved(fromPosition, toPosition);
             return true;
         }
@@ -4551,7 +4621,9 @@ public class SongPlayerFragment extends Fragment {
 
         @Override
         public void onBindViewHolder(@NonNull NextUpViewHolder holder, int position) {
-            PlayerTrack item = items.get(position);
+            PlayerTrack item = getItem(position);
+            if (item == null) return;
+            
             holder.tvNextUpTitle.setText(item.title);
             
             // Position 0 is the currently playing track
@@ -4566,9 +4638,10 @@ public class SongPlayerFragment extends Fragment {
             holder.ivNextUpArt.setImageDrawable(null);
             if (!TextUtils.isEmpty(item.imageUrl)) {
                 String imageUrl = item.imageUrl.trim();
+                // ✅ Use cached transformation instead of creating new one
                 Glide.with(holder.itemView)
                     .load(imageUrl)
-                    .transform(new YouTubeCropTransformation())
+                    .transform(SHARED_YT_CROP)
                     .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL)
                     .transition(com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions.withCrossFade())
                     .into(holder.ivNextUpArt);
@@ -4589,13 +4662,6 @@ public class SongPlayerFragment extends Fragment {
                 }
                 return false;
             });
-        }
-
-        @Override
-        public int getItemCount() {
-            int count = items.size();
-            // Log.v(TAG, "NextUpAdapter.getItemCount: " + count);
-            return count;
         }
 
         static final class NextUpViewHolder extends RecyclerView.ViewHolder {
@@ -4710,7 +4776,7 @@ public class SongPlayerFragment extends Fragment {
         rvQueue.setVisibility(View.GONE);
         tvEmptyQueue.setVisibility(View.GONE);
 
-        nextUpAdapter = new NextUpAdapter(nextUpTracks, position -> {
+        nextUpAdapter = new NextUpAdapter(position -> {
             if (position == 0) {
                 return;
             }
@@ -4804,8 +4870,14 @@ public class SongPlayerFragment extends Fragment {
                 }
 
                 nextUpTracks.clear();
-                nextUpTracks.addAll(computedQueue);
-                nextUpAdapter.notifyDataSetChanged();
+                // Limit queue size to avoid unbounded memory growth
+                if (computedQueue.size() > MAX_NEXT_UP) {
+                    nextUpTracks.addAll(computedQueue.subList(0, MAX_NEXT_UP));
+                } else {
+                    nextUpTracks.addAll(computedQueue);
+                }
+                // ✅ Use submitList for efficient DiffUtil updates
+                nextUpAdapter.submitList(new ArrayList<>(nextUpTracks));
 
                 pbQueueLoading.setVisibility(View.GONE);
                 if (nextUpTracks.isEmpty()) {
@@ -5053,13 +5125,17 @@ public class SongPlayerFragment extends Fragment {
         }
 
         ivPlayerBackdrop.animate().cancel();
+        // Apply blur first, before starting animation, to avoid GPU overload during fade
         applyPlayerBackdropBlur();
-        float targetAlpha = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? 0.68f : 0.35f;
-        
+        // Image decoded at 100x100px acts as natural blur when scaled up — no GPU cost
+        float targetAlpha = 0.60f;
+
         ivPlayerBackdrop.setAlpha(0f);
         ivPlayerBackdrop.animate()
             .alpha(targetAlpha)
             .setDuration(PLAYER_BACKDROP_FADE_IN_DURATION_MS)
+            .withLayer()
+            .setInterpolator(new android.view.animation.LinearInterpolator())
             .start();
     }
 
@@ -5204,7 +5280,7 @@ public class SongPlayerFragment extends Fragment {
                 .asBitmap()
                 .load(preferredImageUrl)
                 .priority(com.bumptech.glide.Priority.LOW)
-                .transform(new YouTubeCropTransformation())
+                .transform(SHARED_YT_CROP)
                 .format(DecodeFormat.PREFER_RGB_565)
                 .diskCacheStrategy(DiskCacheStrategy.ALL)
                 .skipMemoryCache(true)

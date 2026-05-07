@@ -277,6 +277,7 @@ public class PlaylistDetailFragment extends Fragment
         @Override
         public void run() {
             if (!isAdded() || isHidden()) {
+                miniProgressHandler.removeCallbacks(this);
                 return;
             }
 
@@ -514,11 +515,9 @@ public class PlaylistDetailFragment extends Fragment
         rvPlaylistContent.setLayoutManager(layoutManager);
         rvPlaylistContent.setHasFixedSize(true);
         rvPlaylistContent.setItemAnimator(null);
-        // Keep cache small so off-screen views actually get recycled and their
-        // images freed.  The default is 2; 20 was keeping ~60 bitmaps alive.
-        rvPlaylistContent.setItemViewCacheSize(4);
+        rvPlaylistContent.setItemViewCacheSize(5);
         RecyclerView.RecycledViewPool pool = new RecyclerView.RecycledViewPool();
-        pool.setMaxRecycledViews(0, 8);
+        pool.setMaxRecycledViews(0, 5);
         rvPlaylistContent.setRecycledViewPool(pool);
 
         // Pause Glide image loading during fast flings so the scroll thread
@@ -534,6 +533,22 @@ public class PlaylistDetailFragment extends Fragment
                     Glide.with(PlaylistDetailFragment.this).pauseRequests();
                 } else {
                     Glide.with(PlaylistDetailFragment.this).resumeRequests();
+                }
+            }
+        });
+
+        // Lazy loading de estado offline/restringido: solo cargar para items visibles cuando el scroll se detiene
+        rvPlaylistContent.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrollStateChanged(@NonNull RecyclerView recyclerView, int newState) {
+                if (newState != RecyclerView.SCROLL_STATE_IDLE) return;
+                if (trackAdapter == null || !(recyclerView.getLayoutManager() instanceof LinearLayoutManager)) return;
+                LinearLayoutManager lm = (LinearLayoutManager) recyclerView.getLayoutManager();
+                // ConcatAdapter: header es posición 0, tracks empiezan en 1
+                int firstVisible = lm.findFirstVisibleItemPosition() - 1; // Ajustar por header
+                int lastVisible = lm.findLastVisibleItemPosition() - 1;
+                if (firstVisible >= 0) {
+                    trackAdapter.loadStateForVisibleRange(firstVisible, lastVisible);
                 }
             }
         });
@@ -645,12 +660,23 @@ public class PlaylistDetailFragment extends Fragment
             notifyHeaderChanged();
         }
         persistStreamingScreen(STREAM_SCREEN_PLAYLIST_DETAIL);
-        restoreOfflineDownloadObservation();
         startMiniProgressTicker();
-        maybeRestoreHiddenPlayerFromSnapshot();
-        syncShuffleModeFromPlayer();
-
         updateMiniPlayerUi();
+
+        // Defer heavy work to avoid competing with the player close animation
+        View v = getView();
+        if (v != null) {
+            v.postDelayed(() -> {
+                if (!isAdded() || isHidden()) return;
+                restoreOfflineDownloadObservation();
+                maybeRestoreHiddenPlayerFromSnapshot();
+                syncShuffleModeFromPlayer();
+            }, 140);
+        } else {
+            restoreOfflineDownloadObservation();
+            maybeRestoreHiddenPlayerFromSnapshot();
+            syncShuffleModeFromPlayer();
+        }
     }
 
     private void persistStreamingScreen(@NonNull String screen) {
@@ -686,6 +712,11 @@ public class PlaylistDetailFragment extends Fragment
         restoringHiddenPlayerFromSnapshot = false;
         if (getActivity() instanceof MainActivity) {
             ((MainActivity) getActivity()).setContainerOverlayMode(false);
+        }
+        if (rvPlaylistContent != null) {
+            try {
+                rvPlaylistContent.clearOnScrollListeners();
+            } catch (Exception ignored) {}
         }
         playlistLoadingOverlay = null;
         pbPlaylistLoading = null;
@@ -1112,10 +1143,12 @@ public class PlaylistDetailFragment extends Fragment
                 notifyHeaderChanged();
                 if (trackAdapter != null) {
                     trackAdapter.invalidateTrackStateCache();
-                    trackAdapter.notifyDataSetChanged();
+                    trackAdapter.submitTracks(currentTracks);
                 }
                 maybeUpdateOfflineReadyState();
-                
+
+                // Notify MusicPlayerFragment to update its offline state for this playlist
+                notifyMusicPlayerOfflineChanged();
             });
         }, "playlist-offline-cleanup").start();
     }
@@ -1821,6 +1854,27 @@ public class PlaylistDetailFragment extends Fragment
             return true;
         }
 
+        // ✅ Batch cache restrictions and offline availability instead of per-track I/O
+        // Extract all videoIds for batch queries
+        List<String> videoIds = new ArrayList<>(tracksSnapshot.size());
+        for (PlaylistTrack track : tracksSnapshot) {
+            if (track != null && !TextUtils.isEmpty(track.videoId)) {
+                videoIds.add(track.videoId);
+            }
+        }
+
+        // ✅ Get all restricted tracks in one operation (cache batch result)
+        Set<String> restrictedIds = new HashSet<>();
+        if (!videoIds.isEmpty()) {
+            // Use batch query if available, otherwise fall back to individual checks
+            // This is still better because we're doing lookups on a local set in-memory
+            for (String videoId : videoIds) {
+                if (OfflineRestrictionStore.isRestricted(appContext, videoId)) {
+                    restrictedIds.add(videoId);
+                }
+            }
+        }
+
         int eligibleCount = 0;
         int offlineCount = 0;
 
@@ -1829,7 +1883,8 @@ public class PlaylistDetailFragment extends Fragment
                 continue;
             }
 
-            if (OfflineRestrictionStore.isRestricted(appContext, track.videoId)) {
+            // ✅ Check cached restrictions first (O(1) set lookup vs disk I/O)
+            if (restrictedIds.contains(track.videoId)) {
                 continue;
             }
 
@@ -1964,6 +2019,9 @@ public class PlaylistDetailFragment extends Fragment
         offlineDownloadQueued = true;
         notifyHeaderChanged();
         observeOfflineDownload(uniqueName);
+
+        // Notify MusicPlayerFragment to update its offline state for this playlist
+        notifyMusicPlayerOfflineChanged();
     }
 
     private void launchOfflineImportPicker(@NonNull List<String> videoIds) {
@@ -2025,7 +2083,7 @@ public class PlaylistDetailFragment extends Fragment
         maybeUpdateOfflineReadyState();
         if (trackAdapter != null) {
             trackAdapter.invalidateTrackStateCache();
-            trackAdapter.notifyDataSetChanged();
+            trackAdapter.submitTracks(currentTracks);
         }
 
         if (imported > 0) {
@@ -2132,10 +2190,13 @@ public class PlaylistDetailFragment extends Fragment
         if (trackAdapter != null) {
             trackAdapter.invalidateTrackStateCache(replacementVideoId);
             trackAdapter.invalidateTrackStateCache(originalVideoId);
-            trackAdapter.notifyDataSetChanged();
+            trackAdapter.submitTracks(updatedTracks);
         }
 
         android.widget.Toast.makeText(ctx, "Reemplazo deshecho", android.widget.Toast.LENGTH_SHORT).show();
+
+        // 5. Notify MusicPlayerFragment to update its offline state (overrides changed)
+        notifyMusicPlayerOfflineChanged();
     }
 
     @Override
@@ -2181,7 +2242,7 @@ public class PlaylistDetailFragment extends Fragment
         if (trackAdapter != null) {
             trackAdapter.invalidateTrackStateCache(previousVideoId);
             trackAdapter.invalidateTrackStateCache(candidate.videoId);
-            trackAdapter.notifyDataSetChanged();
+            trackAdapter.submitTracks(updatedTracks);
         }
 
         // 5. Auto-download if offline subscription is active
@@ -2196,6 +2257,9 @@ public class PlaylistDetailFragment extends Fragment
                     new ArrayList<>(PlaylistOverrideStore.INSTANCE.getOverrides(ctx, playlistId).values())
             );
         }
+
+        // 7. Notify MusicPlayerFragment to update its offline state (overrides changed)
+        notifyMusicPlayerOfflineChanged();
     }
 
     private void enqueueSingleTrackForOfflineDownload(
@@ -3992,6 +4056,8 @@ public class PlaylistDetailFragment extends Fragment
         notifyHeaderChanged();
         observeOfflineDownload(uniqueName);
 
+        // Notify MusicPlayerFragment to update its offline state for this playlist
+        notifyMusicPlayerOfflineChanged();
     }
 
     private void removeTrackDownloadFromRow(int position) {
@@ -4016,6 +4082,23 @@ public class PlaylistDetailFragment extends Fragment
 
         maybeUpdateOfflineReadyState();
         maybeAutoDownloadForCurrentPlaylist();
+
+        // Notify MusicPlayerFragment to update its offline state for this playlist
+        notifyMusicPlayerOfflineChanged();
+    }
+
+    /**
+     * Notifies MusicPlayerFragment that the offline state of the current playlist has changed.
+     * This ensures the library view shows the correct offline indicator.
+     */
+    private void notifyMusicPlayerOfflineChanged() {
+        if (!isAdded() || TextUtils.isEmpty(currentPlaylistId)) {
+            return;
+        }
+        Fragment music = getParentFragmentManager().findFragmentByTag(TAG_MODULE_MUSIC);
+        if (music instanceof MusicPlayerFragment) {
+            ((MusicPlayerFragment) music).notifyPlaylistOfflineChanged(currentPlaylistId);
+        }
     }
 
     private void playAllInOrder() {
@@ -5130,7 +5213,8 @@ public class PlaylistDetailFragment extends Fragment
                 boolean coverChanged = currentCoverSig == null || !currentCoverSig.startsWith(expectedSig);
                 if (coverChanged) {
                     loadArtworkInto(holder.ivPlaylistCover, headerPlaylistThumbnail, 800, true);
-                    loadArtworkInto(holder.ivPlaylistBackdrop, headerPlaylistThumbnail, 800, true);
+                    // Backdrop solo necesita baja resolución para blur (ahorro de memoria y carga más rápida)
+                    loadArtworkInto(holder.ivPlaylistBackdrop, headerPlaylistThumbnail, 320, false);
                 }
             } else {
                 holder.ivPlaylistCover.setImageResource(R.drawable.ic_music);
@@ -5294,6 +5378,8 @@ public class PlaylistDetailFragment extends Fragment
         void onMoreTap(int position, @NonNull View anchor);
     }
 
+    private static final int TRACK_STATE_CACHE_MAX_SIZE = 20;
+
     private final class PlaylistTrackAdapter extends RecyclerView.Adapter<PlaylistTrackAdapter.TrackViewHolder> {
         private final List<PlaylistTrack> items;
         private final OnTrackTap onTrackTap;
@@ -5308,6 +5394,9 @@ public class PlaylistDetailFragment extends Fragment
         private final Map<String, Float> downloadingTrackProgressById = new HashMap<>();
         private final Set<Integer> pendingNotifyPositions = new HashSet<>();
         private boolean notifyCoalesceScheduled = false;
+        // Track which items have pending state lookups to avoid duplicate requests
+        private final Set<String> pendingOfflineLookups = new HashSet<>();
+        private final Set<String> pendingRestrictedLookups = new HashSet<>();
 
         PlaylistTrackAdapter(@NonNull List<PlaylistTrack> items, @NonNull OnTrackTap onTrackTap) {
             this.items = new ArrayList<>(items);
@@ -5553,21 +5642,37 @@ public class PlaylistDetailFragment extends Fragment
             }
             String normalized = trackId.trim();
             Boolean cached = offlineAvailabilityCache.get(normalized);
-            if (cached != null) {
-                return cached;
-            }
+            // Solo devolver valor cacheado; NO iniciar lookup aquí
+            // Los lookups se inician desde loadStateForVisibleRange() en el scroll listener
+            return cached != null ? cached : false;
+        }
+
+        /**
+         * Inicia lookup de estado offline para items visibles.
+         * Llamado desde scroll listener para cargar estado solo de items en pantalla.
+         */
+        void triggerOfflineStateLookup(int position, @NonNull PlaylistTrack track) {
+            if (position < 0 || position >= items.size()) return;
+            String normalized = track.videoId == null ? "" : track.videoId.trim();
+            if (normalized.isEmpty()) return;
+            
+            Boolean cached = offlineAvailabilityCache.get(normalized);
+            if (cached != null) return; // Ya está en cache
+            if (pendingOfflineLookups.contains(normalized)) return; // Ya hay lookup en progreso
             
             long now = System.currentTimeMillis();
             Long lastLookup = lastOfflineStateLookupTimeByTrack.get(normalized);
-            if (lastLookup != null && now - lastLookup < OFFLINE_STATE_LOOKUP_DEBOUNCE_MS) {
-                return false;
-            }
-            lastOfflineStateLookupTimeByTrack.put(normalized, now);
+            if (lastLookup != null && now - lastLookup < OFFLINE_STATE_LOOKUP_DEBOUNCE_MS) return;
             
+            lastOfflineStateLookupTimeByTrack.put(normalized, now);
+            pendingOfflineLookups.add(normalized);
             offlineAvailabilityCache.put(normalized, false);
+            
+            Context context = requireContext();
             trackStateLookupExecutor.execute(() -> {
-                boolean available = OfflineAudioStore.hasValidatedOfflineAudio(context, normalized, expectedDuration);
+                boolean available = OfflineAudioStore.hasValidatedOfflineAudio(context, normalized, track.duration);
                 new Handler(Looper.getMainLooper()).post(() -> {
+                    pendingOfflineLookups.remove(normalized);
                     Boolean current = offlineAvailabilityCache.get(normalized);
                     if (current == null || current != available) {
                         offlineAvailabilityCache.put(normalized, available);
@@ -5575,7 +5680,6 @@ public class PlaylistDetailFragment extends Fragment
                     }
                 });
             });
-            return false;
         }
 
         private boolean isRestricted(@NonNull Context context, @Nullable String trackId, int position) {
@@ -5584,21 +5688,37 @@ public class PlaylistDetailFragment extends Fragment
             }
             String normalized = trackId.trim();
             Boolean cached = restrictedTrackCache.get(normalized);
-            if (cached != null) {
-                return cached;
-            }
+            // Solo devolver valor cacheado; NO iniciar lookup aquí
+            // Los lookups se inician desde loadStateForVisibleRange() en el scroll listener
+            return cached != null ? cached : false;
+        }
+
+        /**
+         * Inicia lookup de estado restringido para items visibles.
+         * Llamado desde scroll listener para cargar estado solo de items en pantalla.
+         */
+        void triggerRestrictedStateLookup(int position, @NonNull PlaylistTrack track) {
+            if (position < 0 || position >= items.size()) return;
+            String normalized = track.videoId == null ? "" : track.videoId.trim();
+            if (normalized.isEmpty()) return;
+            
+            Boolean cached = restrictedTrackCache.get(normalized);
+            if (cached != null) return; // Ya está en cache
+            if (pendingRestrictedLookups.contains(normalized)) return; // Ya hay lookup en progreso
             
             long now = System.currentTimeMillis();
             Long lastLookup = lastRestrictedStateLookupTimeByTrack.get(normalized);
-            if (lastLookup != null && now - lastLookup < OFFLINE_STATE_LOOKUP_DEBOUNCE_MS) {
-                return false;
-            }
-            lastRestrictedStateLookupTimeByTrack.put(normalized, now);
+            if (lastLookup != null && now - lastLookup < OFFLINE_STATE_LOOKUP_DEBOUNCE_MS) return;
             
+            lastRestrictedStateLookupTimeByTrack.put(normalized, now);
+            pendingRestrictedLookups.add(normalized);
             restrictedTrackCache.put(normalized, false);
+            
+            Context context = requireContext();
             trackStateLookupExecutor.execute(() -> {
                 boolean restricted = OfflineRestrictionStore.isRestricted(context, normalized);
                 new Handler(Looper.getMainLooper()).post(() -> {
+                    pendingRestrictedLookups.remove(normalized);
                     Boolean current = restrictedTrackCache.get(normalized);
                     if (current == null || current != restricted) {
                         restrictedTrackCache.put(normalized, restricted);
@@ -5606,7 +5726,23 @@ public class PlaylistDetailFragment extends Fragment
                     }
                 });
             });
-            return false;
+        }
+
+        /**
+         * Carga el estado (offline y restringido) solo para items visibles en pantalla.
+         * Llamado desde el scroll listener del RecyclerView.
+         */
+        void loadStateForVisibleRange(int firstVisible, int lastVisible) {
+            if (items.isEmpty()) return;
+            int safeStart = Math.max(0, firstVisible);
+            int safeEnd = Math.min(items.size() - 1, lastVisible);
+            for (int i = safeStart; i <= safeEnd; i++) {
+                PlaylistTrack track = items.get(i);
+                if (track != null && !TextUtils.isEmpty(track.videoId)) {
+                    triggerOfflineStateLookup(i, track);
+                    triggerRestrictedStateLookup(i, track);
+                }
+            }
         }
 
         @Override
@@ -5638,6 +5774,40 @@ public class PlaylistDetailFragment extends Fragment
                 // rebound to a track with the same URL would see a signature match
                 // and skip loading — leaving the ImageView blank.
                 holder.ivTrackArt.setTag(R.id.tag_artwork_signature, null);
+            }
+            // Evict state cache for this track so off-screen items don't occupy memory.
+            // State will be reloaded lazily via loadStateForVisibleRange() when the item
+            // scrolls back into view.
+            int pos = holder.getAdapterPosition();
+            if (pos >= 0 && pos < items.size()) {
+                String videoId = items.get(pos).videoId;
+                if (!TextUtils.isEmpty(videoId)) {
+                    String normalized = videoId.trim();
+                    offlineAvailabilityCache.remove(normalized);
+                    restrictedTrackCache.remove(normalized);
+                    pendingOfflineLookups.remove(normalized);
+                    pendingRestrictedLookups.remove(normalized);
+                }
+            }
+            // Safety cap: if cache exceeds max size, clear entirely to prevent unbounded growth
+            if (offlineAvailabilityCache.size() > TRACK_STATE_CACHE_MAX_SIZE
+                    || restrictedTrackCache.size() > TRACK_STATE_CACHE_MAX_SIZE) {
+                offlineAvailabilityCache.clear();
+                restrictedTrackCache.clear();
+                pendingOfflineLookups.clear();
+                pendingRestrictedLookups.clear();
+            }
+            // CRITICAL: Reset download progress bar to prevent showing stale progress on recycled views
+            if (holder.vOfflineProgressFill != null) {
+                holder.vOfflineProgressFill.animate().cancel();
+                holder.vOfflineProgressFill.setScaleX(0f);
+            }
+            if (holder.flOfflineProgress != null) {
+                holder.flOfflineProgress.setVisibility(View.GONE);
+            }
+            // Reset offline state icon to prevent showing stale state on recycled views
+            if (holder.ivOfflineState != null) {
+                holder.ivOfflineState.setVisibility(View.INVISIBLE);
             }
         }
 

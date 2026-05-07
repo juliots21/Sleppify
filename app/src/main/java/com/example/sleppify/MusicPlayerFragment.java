@@ -181,7 +181,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         if (!GoogleSignIn.hasPermissions(account, ytScope)) {
             return;
         }
-        synchronized (MusicPlayerFragment.class) {
+        synchronized (fragmentLock) {
             if (streamingWarmupInFlight) {
                 return;
             }
@@ -209,7 +209,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                     finishStreamingWarmup();
                     return;
                 }
-                synchronized (MusicPlayerFragment.class) {
+                synchronized (fragmentLock) {
                     tokenCacheAccountKey = accountKey;
                     cachedYoutubeAccessToken = token;
                     tokenCacheUpdatedAtMs = System.currentTimeMillis();
@@ -228,7 +228,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                     public void onSuccess(@NonNull List<YouTubeMusicService.PlaylistResult> playlists) {
                         List<YouTubeMusicService.TrackResult> mapped = mapPlaylistsToLibraryTracks(playlists);
                         long updatedAt = System.currentTimeMillis();
-                        synchronized (MusicPlayerFragment.class) {
+                        synchronized (fragmentLock) {
                             LIBRARY_CACHE.clear();
                             LIBRARY_CACHE.addAll(new ArrayList<>(mapped));
                             libraryCacheAccountKey = accountKey;
@@ -268,7 +268,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         });
     }
     private static void finishStreamingWarmup() {
-        synchronized (MusicPlayerFragment.class) {
+        synchronized (fragmentLock) {
             streamingWarmupInFlight = false;
         }
     }
@@ -410,7 +410,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                             "playlist", contentId, name, sub, thumb
                         );
                         libraryTracks.add(finalInjectionIdx, cloudTr);
-                        if (adapter != null) adapter.notifyDataSetChanged();
+                        if (adapter != null) adapter.notifyItemInserted(finalInjectionIdx);
                     }
                 });
             });
@@ -601,12 +601,14 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         LIBRARY
     }
     private ScreenMode activeScreen = ScreenMode.LIBRARY;
+    private static final Object fragmentLock = new Object();
     private enum ChipFilter {
         VIDEOS,
         SONGS,
         ARTISTS,
         PLAYLISTS
     }
+    private static final YouTubeCropTransformation SHARED_YT_CROP = new YouTubeCropTransformation();
     private interface OnLibraryTrackClick {
         void onTrackClick(@NonNull YouTubeMusicService.TrackResult track);
     }
@@ -4335,7 +4337,8 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         if (lastMiniPlayerIsPlaying != miniPlaying) {
             lastMiniPlayerIsPlaying = miniPlaying;
             if (adapter != null) {
-                adapter.notifyDataSetChanged();
+                // Use targeted payload notification instead of full dataset refresh to prevent blinking
+                adapter.notifyPlaybackStateChanged();
             }
         }
         if (!playerAttached) {
@@ -4989,7 +4992,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             adapter.invalidatePlaylistOfflineState(null);
         }
         offlineQueueHadActiveWork = false;
-        synchronized (MusicPlayerFragment.class) {
+        synchronized (fragmentLock) {
             isOfflineSyncInFlight = false;
         }
         maybeEnqueueNextOfflineAutoPlaylist();
@@ -5040,7 +5043,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
     }
     private void maybeEnqueueNextOfflineAutoPlaylist() {
         if (!isAdded()) return;
-        synchronized (MusicPlayerFragment.class) {
+        synchronized (fragmentLock) {
             if (isOfflineSyncInFlight || offlineAutoQueueScanInFlight) {
                 return;
             }
@@ -5058,7 +5061,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 if (offlineSyncRecentlyProcessedPlaylistIds.contains(candidate.primaryPlaylistId)) {
                     return;
                 }
-                synchronized (MusicPlayerFragment.class) {
+                synchronized (fragmentLock) {
                     isOfflineSyncInFlight = true;
                 }
                 final String primaryId = candidate.primaryPlaylistId;
@@ -5374,6 +5377,33 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         } catch (Exception ignored) {
             return new ArrayList<>();
         }
+
+        // Apply playlist overrides so replaced tracks are correctly detected as offline
+        // The audio file is saved with the replacement videoId, not the original
+        if (!playlistId.isEmpty()) {
+            java.util.Map<String, PlaylistOverrideStore.Override> overridesMap =
+                    PlaylistOverrideStore.INSTANCE.getOverrides(context, playlistId);
+            if (!overridesMap.isEmpty()) {
+                ArrayList<CachedPlaylistTrack> overridden = new ArrayList<>();
+                for (CachedPlaylistTrack track : result) {
+                    PlaylistOverrideStore.Override ovr = overridesMap.get(track.videoId);
+                    if (ovr != null) {
+                        // Track was replaced - use replacement videoId for offline check
+                        overridden.add(new CachedPlaylistTrack(
+                                ovr.getReplacementVideoId(),
+                                ovr.getTitle(),
+                                ovr.getArtist(),
+                                ovr.getDuration(),
+                                ovr.getImageUrl()
+                        ));
+                    } else {
+                        overridden.add(track);
+                    }
+                }
+                result = overridden;
+            }
+        }
+
         synchronized (cachedPlaylistTracksLock) {
             cachedPlaylistTracksById.put(playlistId, new ArrayList<>(result));
             cachedPlaylistTracksUpdatedAtById.put(playlistId, updatedAt);
@@ -5793,6 +5823,11 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             clearSearchBackPressedCallback.remove();
             clearSearchBackPressedCallback = null;
         }
+        if (rvMusicResults != null) {
+            try {
+                rvMusicResults.removeOnScrollListener(searchPaginationScrollListener);
+            } catch (Exception ignored) {}
+        }
         cancelPendingLibraryInlineSearch();
         queuedSearchQuery = null;
         pendingLocalSearchResults = null;
@@ -5895,6 +5930,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         private final OnLibraryTrackClick onTrackClick;
         private final OnLibraryTrackMoreClick onTrackMoreClick;
         private final Map<String, Boolean> playlistOfflineCompleteCache = new HashMap<>();
+        private final Map<String, Integer> playlistPositionCache = new HashMap<>();  // ✅ Cache for O(1) lookups
         private final Set<String> playlistOfflineRefreshInFlight = new HashSet<>();
         private long playlistOfflineStateGeneration;
         private boolean forceNextOfflineRecalculation = false;
@@ -5937,6 +5973,31 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 }
             }
         }
+
+        /**
+         * Force immediate recalculation of a playlist's offline state from actual files.
+         * Used when notified from PlaylistDetailFragment that tracks were downloaded/deleted.
+         */
+        void forceRecalculatePlaylistState(@NonNull String playlistId) {
+            if (playlistId.isEmpty()) {
+                return;
+            }
+            // Remove from cache to force recalculation
+            playlistOfflineCompleteCache.remove(playlistId);
+            // Also invalidate the cached playlist tracks so we fetch fresh data
+            synchronized (cachedPlaylistTracksLock) {
+                cachedPlaylistTracksById.remove(playlistId);
+                cachedPlaylistTracksUpdatedAtById.remove(playlistId);
+            }
+            // Trigger async recalculation with force flag
+            requestPlaylistOfflineStateRefreshAsync(playlistId, playlistOfflineStateGeneration, true);
+            // Also update UI immediately if position found
+            int position = findPlaylistPositionById(playlistId);
+            if (position >= 0) {
+                notifyItemChanged(position, PAYLOAD_OFFLINE_STATE);
+            }
+        }
+
         void notifyPlayingPlaylistChanged(@Nullable String previousPlaylistId, @Nullable String currentPlaylistId) {
             String previous = previousPlaylistId == null ? "" : previousPlaylistId.trim();
             String current = currentPlaylistId == null ? "" : currentPlaylistId.trim();
@@ -5969,6 +6030,17 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             this.searchMode = searchMode;
             notifyDataSetChanged();
         }
+
+        /**
+         * Notify all visible items that playback state changed.
+         * Uses payload for efficient partial bind instead of full dataset refresh.
+         */
+        void notifyPlaybackStateChanged() {
+            if (data.isEmpty()) return;
+            // Notify all items with playback state payload to update playing indicators
+            notifyItemRangeChanged(0, data.size(), PAYLOAD_PLAYBACK_STATE);
+        }
+
         void submitResults(@NonNull List<YouTubeMusicService.TrackResult> newData) {
             List<YouTubeMusicService.TrackResult> previous = new ArrayList<>(data);
             List<YouTubeMusicService.TrackResult> incoming = new ArrayList<>(newData);
@@ -6005,6 +6077,21 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             });
             data.clear();
             data.addAll(incoming);
+            
+            // ✅ Rebuild playlist position cache ATOMICALLY before notifying
+            // Build new cache completely BEFORE modifying existing one to avoid race conditions
+            Map<String, Integer> newPositionCache = new HashMap<>();
+            for (int i = 0; i < incoming.size(); i++) {
+                YouTubeMusicService.TrackResult item = incoming.get(i);
+                if ("playlist".equals(item.resultType) && !TextUtils.isEmpty(item.contentId)) {
+                    newPositionCache.put(item.contentId, i);
+                }
+            }
+            // Synchronize cache update to prevent race conditions with findPlaylistPositionById() reads
+            synchronized (playlistPositionCache) {
+                playlistPositionCache.clear();
+                playlistPositionCache.putAll(newPositionCache);
+            }
             // Don't increment playlistOfflineStateGeneration here - let existing async callbacks complete
             // Don't clear the entire cache - keep existing entries for playlists still in the list
             // and only remove entries for playlists that are no longer present
@@ -6042,7 +6129,28 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 diffResult.dispatchUpdatesTo(this);
             } else {
                 // Adjust for the fixed row at position 0
-                notifyDataSetChanged(); 
+                final int offset = 1; // header row reserved at position 0
+                diffResult.dispatchUpdatesTo(new androidx.recyclerview.widget.ListUpdateCallback() {
+                    @Override
+                    public void onInserted(int position, int count) {
+                        notifyItemRangeInserted(position + offset, count);
+                    }
+
+                    @Override
+                    public void onRemoved(int position, int count) {
+                        notifyItemRangeRemoved(position + offset, count);
+                    }
+
+                    @Override
+                    public void onMoved(int fromPosition, int toPosition) {
+                        notifyItemMoved(fromPosition + offset, toPosition + offset);
+                    }
+
+                    @Override
+                    public void onChanged(int position, int count, Object payload) {
+                        notifyItemRangeChanged(position + offset, count, payload);
+                    }
+                });
             }
         }
         @NonNull
@@ -6374,7 +6482,8 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                     if (updatedPosition >= 0) {
                         notifyItemChanged(updatedPosition, PAYLOAD_OFFLINE_STATE);
                     } else {
-                        notifyDataSetChanged();
+                        // Fallback: update visible items' offline state payload instead of full invalidate
+                        notifyItemRangeChanged(0, data.size(), PAYLOAD_OFFLINE_STATE);
                     }
                 });
             });
@@ -6418,16 +6527,12 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             return complete;
         }
         private int findPlaylistPositionById(@NonNull String playlistId) {
-            for (int i = 0; i < data.size(); i++) {
-                YouTubeMusicService.TrackResult item = data.get(i);
-                if (!"playlist".equals(item.resultType)) {
-                    continue;
-                }
-                if (TextUtils.equals(playlistId, item.contentId)) {
-                    return i;
-                }
+            // ✅ O(1) HashMap lookup instead of O(n) linear search
+            // Synchronize to prevent race conditions since this is called from async callbacks
+            synchronized (playlistPositionCache) {
+                Integer cachedPosition = playlistPositionCache.get(playlistId);
+                return cachedPosition != null ? cachedPosition : -1;
             }
-            return -1;
         }
         private final class CreatePlaylistViewHolder extends RecyclerView.ViewHolder {
             CreatePlaylistViewHolder(@NonNull View itemView) {
@@ -6478,6 +6583,18 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             this.imageUrl = imageUrl;
         }
     }
+    /**
+     * Public method to notify that a playlist's offline state has changed.
+     * Called from PlaylistDetailFragment when tracks are downloaded or deleted.
+     */
+    public void notifyPlaylistOfflineChanged(@NonNull String playlistId) {
+        if (!isAdded() || adapter == null) {
+            return;
+        }
+        // Force recalculation from files and update UI
+        adapter.forceRecalculatePlaylistState(playlistId);
+    }
+
     private boolean isAmoledModeEnabled() {
         if (!isAdded()) {
             return false;

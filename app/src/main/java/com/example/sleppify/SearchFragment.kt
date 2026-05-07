@@ -41,6 +41,7 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import android.graphics.Typeface
+import android.view.animation.PathInterpolator
 import androidx.core.content.res.ResourcesCompat
 import java.text.Normalizer
 import java.util.Locale
@@ -197,7 +198,7 @@ class SearchFragment : Fragment() {
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            root.setPadding(systemBars.left, systemBars.top, systemBars.right, 0)
+            root.setPadding(systemBars.left, 0, systemBars.right, 0)
             insets
         }
 
@@ -994,6 +995,7 @@ class SearchFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
+        lastMiniArtUrl = "" // Resetear para forzar recarga de imagen
         startMiniProgressTicker()
         updateMiniPlayerUi()
     }
@@ -1008,13 +1010,16 @@ class SearchFragment : Fragment() {
         if (hidden) {
             stopMiniProgressTicker()
         } else {
-            if (llMiniPlayer.visibility != View.VISIBLE) {
-                val distance = if (llMiniPlayer.height > 0) llMiniPlayer.height.toFloat() else 300f
-                llMiniPlayer.translationY = distance
-                llMiniPlayer.visibility = View.VISIBLE
-                llMiniPlayer.animate().cancel()
-                llMiniPlayer.animate().translationY(0f).setDuration(280).start()
-            }
+            lastMiniArtUrl = "" // Resetear para forzar recarga de imagen
+            val distance = if (llMiniPlayer.height > 0) llMiniPlayer.height.toFloat() else 300f
+            llMiniPlayer.translationY = distance
+            llMiniPlayer.visibility = View.VISIBLE
+            llMiniPlayer.animate().cancel()
+            llMiniPlayer.animate()
+                .translationY(0f)
+                .setDuration(250)
+                .setInterpolator(PathInterpolator(0.4f, 0f, 0.2f, 1f))
+                .start()
             startMiniProgressTicker()
             updateMiniPlayerUi()
         }
@@ -1133,6 +1138,17 @@ class SearchFragment : Fragment() {
     }
 
     private fun openPlayerFromMiniBar() {
+        llMiniPlayer.animate().cancel()
+        val distance = if (llMiniPlayer.height > 0) llMiniPlayer.height.toFloat() else 300f
+        llMiniPlayer.animate()
+            .translationY(distance)
+            .setDuration(250)
+            .setInterpolator(PathInterpolator(0.4f, 0f, 0.2f, 1f))
+            .withEndAction {
+                llMiniPlayer.visibility = View.GONE
+            }
+            .start()
+
         if (requireActivity() is MainActivity) {
             (requireActivity() as MainActivity).openSongPlayer()
         }

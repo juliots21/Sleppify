@@ -326,6 +326,8 @@ class OfflinePlaylistDownloadWorker(
             RestrictionHeuristics.processSuccess(context, id)
             restrictedIds.remove(id)
             OfflineAudioStore.markOfflineAudioState(id, true)
+            // Notify UI that a track was downloaded (so playlist offline state can be recalculated)
+            PlaybackEventBus.notifyPlaybackSnapshotUpdated()
             Log.d(TAG, "track:success id=$id")
             return TrackDownloadResult.downloaded(id, title, noNetworkEncountered)
         } finally {
