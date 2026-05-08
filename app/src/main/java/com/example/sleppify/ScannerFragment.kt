@@ -447,18 +447,12 @@ class ScannerFragment : Fragment() {
                 animateFocusToRect(targetRect) {
                     viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Main) {
                         showScanResultBottomCardAnimated(items)
-
-                        // Resume scanning sooner so it doesn't feel like it "detects worse".
-                        delay(250)
-                        resumeScanning()
+                        // Scanning remains locked until user dismisses the result card
                     }
                 }
             } else {
                 showScanResultBottomCardAnimated(items)
-
-                // Auto-reset after 1 second to resume scanning
-                delay(1000)
-                resumeScanning()
+                // Scanning remains locked until user dismisses the result card
             }
         }
     }
@@ -544,7 +538,7 @@ class ScannerFragment : Fragment() {
             .start()
 
         val anim = ValueAnimator.ofFloat(0f, 1f)
-        anim.duration = 1000
+        anim.duration = 1800 // Slower crop animation
         val os = OvershootInterpolator(0.85f)
         anim.addUpdateListener { va ->
             val t = va.animatedValue as Float
@@ -621,14 +615,14 @@ class ScannerFragment : Fragment() {
         val card = cardScanResult ?: return
 
         card.animate().cancel()
-        val dy = dpToPx(22).toFloat()
+        val dy = dpToPx(30).toFloat() // Distance from top
         card.alpha = 0f
-        card.translationY = -dy
+        card.translationY = -dy // Start from above (negative)
         card.animate()
             .alpha(1f)
             .translationY(0f)
-            .setDuration(240)
-            .setInterpolator(OvershootInterpolator(0.75f))
+            .setDuration(400) // Slower animation
+            .setInterpolator(OvershootInterpolator(0.6f))
             .start()
     }
 
@@ -710,7 +704,10 @@ class ScannerFragment : Fragment() {
             dialog.findViewById<FrameLayout>(com.google.android.material.R.id.design_bottom_sheet)
                 ?.setBackgroundColor(Color.TRANSPARENT)
         }
-        dialog.setOnDismissListener { scanOptionsBottomSheet = null }
+        dialog.setOnDismissListener { 
+            scanOptionsBottomSheet = null
+            resetDetectionState() // Resume scanning when bottom sheet is dismissed
+        }
         scanOptionsBottomSheet = dialog
         dialog.show()
     }

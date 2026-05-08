@@ -171,12 +171,12 @@ public class PlaylistDetailFragment extends Fragment
     private LinearLayout llMiniPlayer;
     private ImageButton btnMiniPlayPause;
 
-    // Library header members (for search bar)
-    private View llLibraryHeaderRow;
-    private TextView tvLibraryTitle;
-    private View llLibraryInlineSearch;
-    private android.widget.EditText etLibraryQuickSearch;
-    private android.widget.ImageView ivLibraryQuickClear;
+    // Playlist toolbar members (back + search + scroll-aware title)
+    private View llPlaylistToolbar;
+    private ImageView btnPlaylistBack;
+    private ImageView btnPlaylistSearch;
+    private TextView tvToolbarPlaylistTitle;
+    private android.graphics.drawable.ColorDrawable toolbarBgDrawable;
 
     // TV-specific split player members
     private boolean isTv;
@@ -344,7 +344,9 @@ public class PlaylistDetailFragment extends Fragment
     @Override
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
+        // Hide global header immediately
         if (getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).hideTopAppBarForPlaylistDetail();
             ((MainActivity) getActivity()).setContainerOverlayMode(false);
         }
         headerAmoledModeEnabled = isAmoledModeEnabled();
@@ -360,16 +362,25 @@ public class PlaylistDetailFragment extends Fragment
         llMiniPlayer = view.findViewById(R.id.llMiniPlayer);
         btnMiniPlayPause = view.findViewById(R.id.btnMiniPlayPause);
 
-        // Library header initialization
-        llLibraryHeaderRow = view.findViewById(R.id.llLibraryHeaderRow);
-        tvLibraryTitle = view.findViewById(R.id.tvLibraryTitle);
-        llLibraryInlineSearch = view.findViewById(R.id.llLibraryInlineSearch);
-        etLibraryQuickSearch = view.findViewById(R.id.etLibraryQuickSearch);
-        ivLibraryQuickClear = view.findViewById(R.id.ivLibraryQuickClear);
-        
-        // Hide library header on mobile
-        if (!isTv && llLibraryHeaderRow != null) {
-            llLibraryHeaderRow.setVisibility(View.GONE);
+        // Playlist toolbar initialization (back + search + scroll title)
+        llPlaylistToolbar = view.findViewById(R.id.llPlaylistToolbar);
+        btnPlaylistBack = view.findViewById(R.id.btnPlaylistBack);
+        btnPlaylistSearch = view.findViewById(R.id.btnPlaylistSearch);
+        tvToolbarPlaylistTitle = view.findViewById(R.id.tvToolbarPlaylistTitle);
+
+        // Transparent background controlled via alpha for scroll effect
+        int surfaceColor = androidx.core.content.ContextCompat.getColor(requireContext(), R.color.surface_dark);
+        toolbarBgDrawable = new android.graphics.drawable.ColorDrawable(surfaceColor);
+        toolbarBgDrawable.setAlpha(0);
+        llPlaylistToolbar.setBackground(toolbarBgDrawable);
+
+        if (btnPlaylistBack != null) {
+            btnPlaylistBack.setOnClickListener(v -> {
+                if (getActivity() != null) getActivity().onBackPressed();
+            });
+        }
+        if (btnPlaylistSearch != null) {
+            btnPlaylistSearch.setOnClickListener(v -> launchSearchActivity());
         }
 
         // TV Player initialization
@@ -424,10 +435,10 @@ public class PlaylistDetailFragment extends Fragment
                 btnTvPrev.setOnFocusChangeListener(tvFocusHighlight);
                 if (sbTvProgress != null) sbTvProgress.setOnFocusChangeListener(tvFocusHighlight);
 
-                // TV focus for library header elements
-                if (llLibraryInlineSearch != null) {
-                    llLibraryInlineSearch.setOnFocusChangeListener(tvFocusHighlight);
-                    llLibraryInlineSearch.setNextFocusLeftId(R.id.navigationRail);
+                // TV focus for toolbar elements
+                if (btnPlaylistSearch != null) {
+                    btnPlaylistSearch.setOnFocusChangeListener(tvFocusHighlight);
+                    btnPlaylistSearch.setNextFocusLeftId(R.id.navigationRail);
                 }
                 if (llMiniPlayer != null) llMiniPlayer.setOnFocusChangeListener(tvFocusHighlight);
 
@@ -448,15 +459,12 @@ public class PlaylistDetailFragment extends Fragment
                     rvPlaylistContent.setNextFocusLeftId(R.id.btnTvPlayPause);
                     // Cuando presionas abajo en la lista, ve al navigation rail (módulos)
                     rvPlaylistContent.setNextFocusDownId(R.id.navigationRail);
-                    // Cuando presionas arriba en la lista, ve al buscador
-                    rvPlaylistContent.setNextFocusUpId(R.id.llLibraryInlineSearch);
+                    // Cuando presionas arriba en la lista, ve al toolbar
+                    rvPlaylistContent.setNextFocusUpId(R.id.btnPlaylistSearch);
                 }
-                // Desde el buscador/biblioteca, al presionar abajo va a la lista
-                if (llLibraryInlineSearch != null) {
-                    llLibraryInlineSearch.setNextFocusDownId(R.id.rvPlaylistContent);
-                }
-                if (llLibraryHeaderRow != null) {
-                    llLibraryHeaderRow.setNextFocusDownId(R.id.rvPlaylistContent);
+                // Desde el toolbar, al presionar abajo va a la lista
+                if (llPlaylistToolbar != null) {
+                    llPlaylistToolbar.setNextFocusDownId(R.id.rvPlaylistContent);
                 }
                 // Desde el mini player, al presionar arriba va a la lista
                 if (llMiniPlayer != null) {
@@ -513,7 +521,7 @@ public class PlaylistDetailFragment extends Fragment
         rvPlaylistContent.setLayoutManager(layoutManager);
         rvPlaylistContent.setHasFixedSize(true);
         rvPlaylistContent.setItemAnimator(null);
-        rvPlaylistContent.setItemViewCacheSize(5);
+        rvPlaylistContent.setItemViewCacheSize(0);
         RecyclerView.RecycledViewPool pool = new RecyclerView.RecycledViewPool();
         pool.setMaxRecycledViews(0, 5);
         rvPlaylistContent.setRecycledViewPool(pool);
@@ -554,6 +562,10 @@ public class PlaylistDetailFragment extends Fragment
                         }
                     }
                 }
+
+                // Toolbar scroll transition: transparent → solid with title fade
+                updateToolbarScrollState(recyclerView);
+
                 if (dy <= 0 || !playlistTracksCanLoadMore || playlistTracksLoadMoreInFlight) return;
                 LinearLayoutManager lm = layoutManager;
                 int totalItems = lm.getItemCount();
@@ -582,9 +594,6 @@ public class PlaylistDetailFragment extends Fragment
         llMiniPlayer.setOnClickListener(v -> openPlayerFromMiniBar());
         btnMiniPlayPause.setOnClickListener(v -> toggleMiniPlayback());
 
-        // Setup library search click handlers
-        setupLibrarySearchHandlers();
-
         final String requestPlaylistId = playlistId;
         final String requestToken = youtubeAccessToken;
         view.post(() -> {
@@ -606,6 +615,9 @@ public class PlaylistDetailFragment extends Fragment
     @Override
     public void onResume() {
         super.onResume();
+        if (getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).hideTopAppBarForPlaylistDetail();
+        }
         boolean updatedAmoledMode = isAmoledModeEnabled();
         if (headerAmoledModeEnabled != updatedAmoledMode) {
             headerAmoledModeEnabled = updatedAmoledMode;
@@ -645,6 +657,9 @@ public class PlaylistDetailFragment extends Fragment
         super.onHiddenChanged(hidden);
         if (getActivity() instanceof MainActivity) {
             ((MainActivity) getActivity()).setContainerOverlayMode(false);
+            if (!hidden) {
+                ((MainActivity) getActivity()).hideTopAppBarForPlaylistDetail();
+            }
         }
         if (hidden) {
             stopMiniProgressTicker();
@@ -652,11 +667,15 @@ public class PlaylistDetailFragment extends Fragment
         }
 
         if (llMiniPlayer != null && !isTv) {
-            float distance = llMiniPlayer.getHeight() > 0 ? llMiniPlayer.getHeight() : 300f;
-            llMiniPlayer.setTranslationY(distance);
-            llMiniPlayer.setVisibility(View.VISIBLE);
-            llMiniPlayer.animate().cancel();
-            llMiniPlayer.animate().translationY(0f).setDuration(280).start();
+            if (llMiniPlayer.getVisibility() == View.VISIBLE && llMiniPlayer.getTranslationY() == 0f) {
+                // Already visible and in place (e.g. returning from search) — no animation
+            } else {
+                float distance = llMiniPlayer.getHeight() > 0 ? llMiniPlayer.getHeight() : 300f;
+                llMiniPlayer.setTranslationY(distance);
+                llMiniPlayer.setVisibility(View.VISIBLE);
+                llMiniPlayer.animate().cancel();
+                llMiniPlayer.animate().translationY(0f).setDuration(280).start();
+            }
         }
 
         boolean updatedAmoledMode = isAmoledModeEnabled();
@@ -736,12 +755,12 @@ public class PlaylistDetailFragment extends Fragment
         sbMiniPlayerProgress = null;
         llMiniPlayer = null;
         btnMiniPlayPause = null;
-        // Cleanup library header views
-        llLibraryHeaderRow = null;
-        tvLibraryTitle = null;
-        llLibraryInlineSearch = null;
-        etLibraryQuickSearch = null;
-        ivLibraryQuickClear = null;
+        // Cleanup toolbar views
+        llPlaylistToolbar = null;
+        btnPlaylistBack = null;
+        btnPlaylistSearch = null;
+        tvToolbarPlaylistTitle = null;
+        toolbarBgDrawable = null;
         PlaybackEventBus.removeListener(this);
         super.onDestroyView();
     }
@@ -778,6 +797,63 @@ public class PlaylistDetailFragment extends Fragment
 
     private void setupPlaylistLoadMoreScroll(@NonNull LinearLayoutManager layoutManager) {
         // Scroll listener consolidated into onViewCreated — this method intentionally left empty.
+    }
+
+    private void updateToolbarScrollState(@NonNull RecyclerView recyclerView) {
+        if (llPlaylistToolbar == null || toolbarBgDrawable == null) return;
+
+        float fraction = 0f;
+        // Header is at adapter position 0 in ConcatAdapter
+        RecyclerView.ViewHolder headerVH = recyclerView.findViewHolderForAdapterPosition(0);
+        if (headerVH != null) {
+            View headerView = headerVH.itemView;
+            // Find the btnListenNow (play button) — its bottom edge is our transition trigger
+            View btnListenNow = headerView.findViewById(R.id.btnListenNow);
+            if (btnListenNow != null && btnListenNow.getHeight() > 0) {
+                int toolbarHeight = llPlaylistToolbar.getHeight();
+                if (toolbarHeight <= 0) toolbarHeight = llPlaylistToolbar.getMeasuredHeight();
+                if (toolbarHeight <= 0) {
+                    // Toolbar not measured yet — keep fully transparent
+                    toolbarBgDrawable.setAlpha(0);
+                    if (tvToolbarPlaylistTitle != null) tvToolbarPlaylistTitle.setAlpha(0f);
+                    return;
+                }
+                // Bottom of btnListenNow relative to the RecyclerView top
+                int buttonBottom = getDescendantBottom(headerView, btnListenNow);
+                // Transition starts when buttonBottom falls below toolbarHeight + transitionZone,
+                // and finishes (fully solid) when buttonBottom <= toolbarHeight.
+                // Use a shorter zone (60dp) so the transition is snappy.
+                float transitionZone = toolbarHeight * 0.7f;
+                if (buttonBottom <= toolbarHeight) {
+                    fraction = 1f;
+                } else if (buttonBottom >= toolbarHeight + transitionZone) {
+                    fraction = 0f;
+                } else {
+                    fraction = 1f - (buttonBottom - toolbarHeight) / transitionZone;
+                }
+            }
+        } else {
+            // Header scrolled completely off-screen — fully solid
+            fraction = 1f;
+        }
+
+        int bgAlpha = Math.round(fraction * 255f);
+        toolbarBgDrawable.setAlpha(bgAlpha);
+        if (tvToolbarPlaylistTitle != null) {
+            tvToolbarPlaylistTitle.setAlpha(fraction);
+        }
+    }
+
+    private int getDescendantBottom(@NonNull View ancestor, @NonNull View descendant) {
+        int offset = descendant.getBottom();
+        android.view.ViewParent parent = descendant.getParent();
+        while (parent != ancestor && parent instanceof View) {
+            offset += ((View) parent).getTop();
+            parent = ((View) parent).getParent();
+        }
+        // Add ancestor's own top (its position within the RecyclerView)
+        offset += ancestor.getTop();
+        return offset;
     }
 
     private void setPlaylistPullRefreshState(boolean refreshing) {
@@ -1162,6 +1238,9 @@ public class PlaylistDetailFragment extends Fragment
         headerPlaylistInfo = buildPlaylistInfoLine(meta, currentTracks.isEmpty() ? 0 : currentTracks.size());
         headerPlaylistThumbnail = playlistThumbnail;
         bindGoogleProfile(meta.ownerLabel);
+        if (tvToolbarPlaylistTitle != null) {
+            tvToolbarPlaylistTitle.setText(headerPlaylistTitle);
+        }
         notifyHeaderChanged();
     }
 
@@ -1318,10 +1397,10 @@ public class PlaylistDetailFragment extends Fragment
         Glide.with(this)
                 .load(imageUrl)
                 .transform(SHARED_YT_CROP)
-                .format(DecodeFormat.PREFER_ARGB_8888)
+                .format(DecodeFormat.PREFER_RGB_565)
                 .diskCacheStrategy(DiskCacheStrategy.ALL)
                 .skipMemoryCache(false)
-                .override(200, 200)
+                .override(160, 160)
                 .priority(com.bumptech.glide.Priority.LOW)
                 .preload();
     }
@@ -1435,11 +1514,11 @@ public class PlaylistDetailFragment extends Fragment
             targetHeight = side;
         }
 
-        // For small thumbnails, apply the same 200px minimum here so the signature
+        // For small thumbnails, apply the same 160px minimum here so the signature
         // matches the actual Glide .override() used below — preventing duplicate loads.
         if (!highQuality && fixedSizeDp > 0 && fixedSizeDp <= 64) {
-            targetWidth = Math.max(targetWidth, 200);
-            targetHeight = Math.max(targetHeight, 200);
+            targetWidth = Math.max(targetWidth, 160);
+            targetHeight = Math.max(targetHeight, 160);
         }
 
         String signature = safeUrl + "|" + targetWidth + "x" + targetHeight;
@@ -1465,9 +1544,8 @@ public class PlaylistDetailFragment extends Fragment
         if (!highQuality && fixedSizeDp > 0 && fixedSizeDp <= 64) {
             Glide.with(target)
                 .load(safeUrl)
-                .placeholder(R.drawable.ic_music)
                 .transform(SHARED_YT_CROP)
-                .format(DecodeFormat.PREFER_ARGB_8888)
+                .format(DecodeFormat.PREFER_RGB_565)
                 .diskCacheStrategy(DiskCacheStrategy.ALL)
                 .onlyRetrieveFromCache(offlineOnly)
                 .override(targetWidth, targetHeight)
@@ -1476,7 +1554,6 @@ public class PlaylistDetailFragment extends Fragment
         } else {
             Glide.with(target)
                 .load(safeUrl)
-                .placeholder(R.drawable.ic_music)
                 .transform(SHARED_YT_CROP)
                 .format(highQuality ? DecodeFormat.PREFER_ARGB_8888 : DecodeFormat.PREFER_RGB_565)
                 .diskCacheStrategy(DiskCacheStrategy.ALL)
@@ -3705,7 +3782,7 @@ public class PlaylistDetailFragment extends Fragment
         btnReplace.setVisibility(View.VISIBLE);
         ImageView ivReplace = view.findViewById(R.id.ivBsReplace);
         TextView tvReplace = view.findViewById(R.id.tvBsReplace);
-        ivReplace.setImageResource(R.drawable.ic_stream_play_next);
+        ivReplace.setImageResource(R.drawable.ic_player_repeat);
         tvReplace.setText("Reemplazar");
         btnReplace.setOnClickListener(v -> {
             dialog.dismiss();
@@ -4822,8 +4899,6 @@ public class PlaylistDetailFragment extends Fragment
                     Glide.with(this)
                         .load(imageUrl)
                         .diskCacheStrategy(DiskCacheStrategy.ALL)
-                        .placeholder(R.drawable.ic_music)
-                        .error(R.drawable.ic_music)
                         .into(ivTvPlayerCover);
 
                     if (ivTvPlayerBackground != null) {
@@ -4833,7 +4908,7 @@ public class PlaylistDetailFragment extends Fragment
                             .into(ivTvPlayerBackground);
                     }
                 } else {
-                    ivTvPlayerCover.setImageResource(R.drawable.ic_music);
+                    ivTvPlayerCover.setImageDrawable(null);
                     if (ivTvPlayerBackground != null) ivTvPlayerBackground.setImageDrawable(null);
                 }
             }
@@ -4856,7 +4931,7 @@ public class PlaylistDetailFragment extends Fragment
             if (playerAttached && !TextUtils.isEmpty(lastMiniArtUrl)) {
                 return;
             }
-            ivMiniPlayerArt.setImageResource(R.drawable.ic_music);
+            ivMiniPlayerArt.setImageDrawable(null);
         }
         lastMiniArtTrackIndex = artTrackIndex;
         lastMiniArtUrl = imageUrl;
@@ -5224,8 +5299,8 @@ public class PlaylistDetailFragment extends Fragment
                     loadArtworkInto(holder.ivPlaylistBackdrop, headerPlaylistThumbnail, 320, false);
                 }
             } else {
-                holder.ivPlaylistCover.setImageResource(R.drawable.ic_music);
-                holder.ivPlaylistBackdrop.setImageResource(R.drawable.ic_music);
+                holder.ivPlaylistCover.setImageDrawable(null);
+                holder.ivPlaylistBackdrop.setImageDrawable(null);
             }
 
             applyHeaderBackdropVisualState(holder.ivPlaylistBackdrop, amoledModeEnabled);
@@ -5247,10 +5322,10 @@ public class PlaylistDetailFragment extends Fragment
             if (isTv) {
                 holder.itemView.setFocusable(false);
                 holder.itemView.setFocusableInTouchMode(false);
-                if (llLibraryInlineSearch != null) {
-                    llLibraryInlineSearch.setNextFocusDownId(holder.btnListenNow.getId());
+                if (llPlaylistToolbar != null) {
+                    llPlaylistToolbar.setNextFocusDownId(holder.btnListenNow.getId());
                 }
-                holder.btnListenNow.setNextFocusUpId(R.id.llLibraryInlineSearch);
+                holder.btnListenNow.setNextFocusUpId(R.id.btnPlaylistSearch);
             }
         }
 
@@ -6020,8 +6095,6 @@ public class PlaylistDetailFragment extends Fragment
 
             if (!TextUtils.isEmpty(track.imageUrl)) {
                 loadArtworkInto(holder.ivTrackArt, track.imageUrl, 50);
-            } else {
-                holder.ivTrackArt.setImageResource(R.drawable.ic_music);
             }
 
             boolean isActive = position == activeIndex;
@@ -6110,43 +6183,11 @@ public class PlaylistDetailFragment extends Fragment
         }
     } // end PlaylistTrackAdapter
 
-    private void setupLibrarySearchHandlers() {
-        boolean isTv = SystemType.INSTANCE.isTv(requireContext());
-        // Make searchable only on TV (click to launch search activity)
-        etLibraryQuickSearch.setFocusable(isTv);
-        etLibraryQuickSearch.setFocusableInTouchMode(isTv);
-
-        etLibraryQuickSearch.setOnClickListener(v -> launchSearchActivity());
-        etLibraryQuickSearch.setOnEditorActionListener((textView, actionId, event) -> {
-            launchSearchActivity();
-            return true;
-        });
-
-        if (llLibraryInlineSearch != null) {
-            llLibraryInlineSearch.setOnClickListener(v -> launchSearchActivity());
-        }
-
-        if (ivLibraryQuickClear != null) {
-            ivLibraryQuickClear.setOnClickListener(v -> {
-                etLibraryQuickSearch.setText("");
-                etLibraryQuickSearch.clearFocus();
-                updateLibraryInlineClearButton();
-            });
-        }
-    }
-
     private void launchSearchActivity() {
         if (!isAdded()) return;
         if (getActivity() instanceof MainActivity) {
             ((MainActivity) getActivity()).openSearchFragment();
         }
-    }
-
-    private void updateLibraryInlineClearButton() {
-        if (ivLibraryQuickClear == null || etLibraryQuickSearch == null) return;
-        boolean hasText = etLibraryQuickSearch.getText() != null
-                && etLibraryQuickSearch.getText().length() > 0;
-        ivLibraryQuickClear.setVisibility(hasText ? View.VISIBLE : View.GONE);
     }
 }
 

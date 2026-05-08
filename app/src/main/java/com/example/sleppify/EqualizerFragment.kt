@@ -38,8 +38,8 @@ import java.util.Locale
 class EqualizerFragment : Fragment() {
 
     private lateinit var preferences: SharedPreferences
-    private lateinit var tvOutputRoute: TextView
-    private lateinit var ivOutputIcon: ImageView
+    private var tvOutputRoute: TextView? = null
+    private var ivOutputIcon: ImageView? = null
     private lateinit var tvSelectedPreset: TextView
     private lateinit var cardPresetSelector: View
     private var cardGraphicEq: View? = null
@@ -97,8 +97,8 @@ class EqualizerFragment : Fragment() {
         hasLoadedUi = false
         boundProfileId = null
 
-        tvOutputRoute = view.findViewById(R.id.tvOutputRoute)
-        ivOutputIcon = view.findViewById(R.id.ivOutputIcon)
+        // tvOutputRoute = view.findViewById(R.id.tvOutputRoute) // View removed from layout
+        // ivOutputIcon = view.findViewById(R.id.ivOutputIcon) // View removed from layout
         tvSelectedPreset = view.findViewById(R.id.tvSelectedPreset)
         cardPresetSelector = view.findViewById(R.id.cardPresetSelector)
         cardGraphicEq = view.findViewById(R.id.cardGraphicEq)
@@ -383,9 +383,9 @@ class EqualizerFragment : Fragment() {
     }
 
     private fun setOutputUi(route: String, iconRes: Int, contentDescription: String) {
-        tvOutputRoute.text = route
-        ivOutputIcon.setImageResource(iconRes)
-        ivOutputIcon.contentDescription = contentDescription
+        tvOutputRoute?.text = route
+        ivOutputIcon?.setImageResource(iconRes)
+        ivOutputIcon?.contentDescription = contentDescription
     }
 
     private fun showPresetPopup() {

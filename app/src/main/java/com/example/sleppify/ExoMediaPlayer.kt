@@ -362,6 +362,11 @@ class ExoMediaPlayer {
                     player.stop()
                     player.clearMediaItems()
                     player.release()
+                } else {
+                    // For shared player: stop and clear media items to release AudioTrack
+                    // but do NOT release the player itself since it's shared.
+                    player.stop()
+                    player.clearMediaItems()
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "release: exception", e)

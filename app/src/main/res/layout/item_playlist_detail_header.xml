@@ -5,6 +5,8 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
+    android:clipChildren="false"
+    android:clipToPadding="false"
     android:focusable="true"
     android:focusableInTouchMode="true">
 
@@ -12,18 +14,17 @@
             android:id="@+id/flPlaylistHeaderContainer"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="-30dp"
+            android:layout_marginBottom="-36dp"
             android:clipChildren="false"
             android:clipToPadding="false">
 
             <ImageView
                 android:id="@+id/ivPlaylistBackdrop"
                 android:layout_width="0dp"
-                android:layout_height="0dp"
+                android:layout_height="520dp"
+                android:layout_marginTop="-82dp"
                 android:alpha="1.0"
                 android:scaleType="centerCrop"
-                android:src="@drawable/ic_music"
-                app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toTopOf="parent" />
@@ -32,6 +33,7 @@
                 android:id="@+id/vPlaylistBackdropScrim"
                 android:layout_width="0dp"
                 android:layout_height="0dp"
+                android:layout_marginTop="-82dp"
                 android:background="@drawable/bg_playlist_backdrop_scrim"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"
@@ -62,7 +64,6 @@
                 android:layout_height="wrap_content"
                 android:gravity="center_horizontal"
                 android:orientation="vertical"
-                android:paddingTop="8dp"
                 android:paddingBottom="40dp"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"
@@ -86,8 +87,7 @@
                         android:id="@+id/ivPlaylistCover"
                         android:layout_width="match_parent"
                         android:layout_height="match_parent"
-                        android:scaleType="centerCrop"
-                        android:src="@drawable/ic_music" />
+                        android:scaleType="centerCrop" />
                 </FrameLayout>
 
                 <TextView

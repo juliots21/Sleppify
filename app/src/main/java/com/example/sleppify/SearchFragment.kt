@@ -29,9 +29,15 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.LinearSnapHelper
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.engine.DiskCacheStrategy
+import com.bumptech.glide.request.RequestListener
+import com.bumptech.glide.request.target.Target
+import com.bumptech.glide.load.DataSource
+import com.bumptech.glide.load.engine.GlideException
+import android.graphics.drawable.Drawable
 import com.example.sleppify.SystemType
 import com.example.sleppify.utils.YouTubeCropTransformation
 import com.google.android.material.imageview.ShapeableImageView
@@ -61,6 +67,7 @@ class SearchFragment : Fragment() {
 
         private const val PREFS_STREAMING_CACHE = "streaming_cache"
         private const val PREF_RECENT_SEARCH_QUERIES = "stream_recent_search_queries"
+        private const val PREF_RECENT_SEARCH_DATA = "stream_recent_search_data"
         private const val SEARCH_PAGE_SIZE = 20
         private const val SEARCH_SUGGESTION_RECENT_LIMIT = 6
         private const val SEARCH_SCROLL_LOAD_MORE_THRESHOLD = 4
@@ -75,19 +82,30 @@ class SearchFragment : Fragment() {
         fun newInstance() = SearchFragment()
     }
 
+    data class RecentSearch(
+        val query: String,
+        val videoId: String = "",
+        val title: String = "",
+        val thumbnail: String = ""
+    )
+
     private val youTubeMusicService = YouTubeMusicService()
     private val normalizedFilterCache = mutableMapOf<String, String>()
     private val allTracks = mutableListOf<YouTubeMusicService.TrackResult>()
     private val tracks = mutableListOf<YouTubeMusicService.TrackResult>()
-    private val recentSearchQueries = mutableListOf<String>()
+    private val recentSearchData = mutableListOf<RecentSearch>()
 
     private lateinit var etSearchQuery: TextInputEditText
     private lateinit var ivSearchClear: ImageView
+    private lateinit var ivSearchBack: ImageView
     private lateinit var rvSearchResults: RecyclerView
     private lateinit var tvSearchState: TextView
     private lateinit var llSearchState: View
     private lateinit var nsvSearchContent: View
     private lateinit var rvSearchSuggestions: RecyclerView
+    private lateinit var rvRecentSearchImages: RecyclerView
+    private lateinit var llRecentSearchesSection: LinearLayout
+    private lateinit var llSearchSuggestionsContainer: View
     private lateinit var moduleLoadingOverlay: View
     private lateinit var llFeaturedResult: View
     private lateinit var ivFeaturedThumb: ImageView
@@ -130,9 +148,12 @@ class SearchFragment : Fragment() {
         initViews(view)
         setupRecyclerView()
         setupSuggestionsRecyclerView()
+        setupRecentSearchImagesRecyclerView()
         setupSearchInput()
+        setupBackButton()
         
         restoreRecentSearchQueries()
+        loadRecentSearchesFromFirebase()
         refreshSearchSuggestions("")
 
         setupBackNavigation()
@@ -141,11 +162,15 @@ class SearchFragment : Fragment() {
     private fun initViews(root: View) {
         etSearchQuery = root.findViewById(R.id.etSearchQuery)
         ivSearchClear = root.findViewById(R.id.ivSearchClear)
+        ivSearchBack = root.findViewById(R.id.ivSearchBack)
         rvSearchResults = root.findViewById(R.id.rvSearchResults)
         tvSearchState = root.findViewById(R.id.tvSearchState)
         llSearchState = root.findViewById(R.id.llSearchState)
         nsvSearchContent = root.findViewById(R.id.nsvSearchContent)
         rvSearchSuggestions = root.findViewById(R.id.rvSearchSuggestions)
+        rvRecentSearchImages = root.findViewById(R.id.rvRecentSearchImages)
+        llRecentSearchesSection = root.findViewById(R.id.llRecentSearchesSection)
+        llSearchSuggestionsContainer = root.findViewById(R.id.llSearchSuggestionsContainer)
         moduleLoadingOverlay = root.findViewById(R.id.moduleLoadingOverlay)
         llFeaturedResult = root.findViewById(R.id.llFeaturedResult)
         ivFeaturedThumb = root.findViewById(R.id.ivFeaturedThumb)
@@ -210,6 +235,14 @@ class SearchFragment : Fragment() {
         }
     }
 
+    private fun setupBackButton() {
+        ivSearchBack.setOnClickListener {
+            if (requireActivity() is MainActivity) {
+                (requireActivity() as MainActivity).closeSearchFragment()
+            }
+        }
+    }
+
     private fun setupBackNavigation() {
         backPressedCallback = object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -264,6 +297,27 @@ class SearchFragment : Fragment() {
         rvSearchSuggestions.adapter = suggestionsAdapter
     }
 
+    private fun setupRecentSearchImagesRecyclerView() {
+        val layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
+        rvRecentSearchImages.layoutManager = layoutManager
+        rvRecentSearchImages.adapter = RecentSearchImageAdapter { recentSearch ->
+            etSearchQuery.setText(recentSearch.query)
+            etSearchQuery.setSelection(recentSearch.query.length)
+            performSearch(recentSearch.query)
+            hideKeyboard()
+        }
+        
+        // Snap helper para centrar items
+        LinearSnapHelper().attachToRecyclerView(rvRecentSearchImages)
+    }
+
+    private fun updateRecentSearchImages() {
+        val adapter = rvRecentSearchImages.adapter as? RecentSearchImageAdapter
+        val itemsWithImages = recentSearchData.filter { it.thumbnail.isNotEmpty() }.take(2)
+        adapter?.updateItems(itemsWithImages)
+        llRecentSearchesSection.visibility = if (itemsWithImages.isEmpty()) View.GONE else View.VISIBLE
+    }
+
     private fun setupSearchInput() {
         etSearchQuery.setOnFocusChangeListener { _, hasFocus ->
             if (hasFocus) {
@@ -289,6 +343,12 @@ class SearchFragment : Fragment() {
             override fun afterTextChanged(s: Editable?) {
                 val query = s?.toString()?.trim() ?: ""
                 ivSearchClear.visibility = if (query.isEmpty()) View.GONE else View.VISIBLE
+                // Hide recent images when typing, show when empty
+                if (query.isEmpty()) {
+                    updateRecentSearchImages()
+                } else {
+                    llRecentSearchesSection.visibility = View.GONE
+                }
                 refreshSearchSuggestions(query)
             }
         })
@@ -297,7 +357,14 @@ class SearchFragment : Fragment() {
     private fun showSuggestionsMode() {
         val query = etSearchQuery.text?.toString()?.trim() ?: ""
         refreshSearchSuggestions(query)
+        llSearchSuggestionsContainer.visibility = View.VISIBLE
         rvSearchSuggestions.visibility = View.VISIBLE
+        // Only show recent search images when search bar is empty
+        if (query.isEmpty()) {
+            updateRecentSearchImages()
+        } else {
+            llRecentSearchesSection.visibility = View.GONE
+        }
         nsvSearchContent.visibility = View.GONE
         llSearchState.visibility = View.GONE
         view?.requestLayout()
@@ -333,9 +400,9 @@ class SearchFragment : Fragment() {
         hasMoreSearchPages = false
         nextSearchPageToken = ""
 
-        rememberRecentSearchQuery(query)
         refreshSearchSuggestions(query)
         rvSearchSuggestions.visibility = View.GONE
+        llSearchSuggestionsContainer.visibility = View.GONE
         nsvSearchContent.visibility = View.VISIBLE
 
         requestPagedSearchResults(query, "", false)
@@ -413,11 +480,36 @@ class SearchFragment : Fragment() {
                 if (activity == null || !isAdded || requestId != latestSearchRequestId) return
                 if (append) searchPaginationInFlight = false
                 
-                if (allTracks.isEmpty()) {
-                    setSearchLoadingState(false, "Error: $error")
+                // Fallback: try Innertube (no API key needed)
+                if (!append && allTracks.isEmpty()) {
+                    youTubeMusicService.searchTracksViaInnertube(query, SEARCH_PAGE_SIZE, object : YouTubeMusicService.SearchCallback {
+                        override fun onSuccess(tracks: List<YouTubeMusicService.TrackResult>) {
+                            if (activity == null || !isAdded || requestId != latestSearchRequestId) return
+                            appendUniqueTracks(tracks)
+                            applyActiveFilter(query, forceSort = true)
+                            if (allTracks.isEmpty()) {
+                                setSearchLoadingState(false, "No encontré resultados para: $query")
+                            } else {
+                                setSearchLoadingState(false, "")
+                            }
+                            revealModuleContent()
+                            rvSearchResults.alpha = 0f
+                            rvSearchResults.animate().alpha(1f).setDuration(250).start()
+                            hideKeyboard()
+                        }
+                        override fun onError(innerError: String) {
+                            if (activity == null || !isAdded || requestId != latestSearchRequestId) return
+                            setSearchLoadingState(false, "Error: $innerError")
+                            revealModuleContent()
+                        }
+                    })
                 } else {
-                    setSearchLoadingState(false, "")
-                    if (append) Toast.makeText(requireContext(), "Error al cargar más resultados", Toast.LENGTH_SHORT).show()
+                    if (allTracks.isEmpty()) {
+                        setSearchLoadingState(false, "Error: $error")
+                    } else {
+                        setSearchLoadingState(false, "")
+                        if (append) Toast.makeText(requireContext(), "Error al cargar más resultados", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
         })
@@ -701,6 +793,11 @@ class SearchFragment : Fragment() {
             putExtra(EXTRA_RESULT_TRACKS_JSON, tracksArray.toString())
         }
         
+        // Save to recent searches only when user plays a track from search results
+        if (activeSearchQuery.isNotEmpty()) {
+            rememberRecentSearchQuery(activeSearchQuery, track)
+        }
+
         if (requireActivity() is MainActivity) {
             (requireActivity() as MainActivity).handlePlayFromSearchIntent(playbackIntent)
         }
@@ -824,28 +921,132 @@ class SearchFragment : Fragment() {
 
     private fun restoreRecentSearchQueries() {
         val prefs = requireContext().getSharedPreferences(PREFS_STREAMING_CACHE, Context.MODE_PRIVATE)
-        val json = prefs.getString(PREF_RECENT_SEARCH_QUERIES, "[]")
-        recentSearchQueries.clear()
+        // Try to load extended data first
+        val dataJson = prefs.getString(PREF_RECENT_SEARCH_DATA, "[]")
+        recentSearchData.clear()
         try {
-            val array = JSONArray(json)
-            for (i in 0 until array.length()) recentSearchQueries.add(array.getString(i))
-        } catch (e: Exception) {}
+            val array = JSONArray(dataJson)
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                recentSearchData.add(RecentSearch(
+                    query = obj.optString("query", ""),
+                    videoId = obj.optString("videoId", ""),
+                    title = obj.optString("title", ""),
+                    thumbnail = obj.optString("thumbnail", "")
+                ))
+            }
+        } catch (e: Exception) {
+            // Fallback: try old format
+            val oldJson = prefs.getString(PREF_RECENT_SEARCH_QUERIES, "[]")
+            try {
+                val array = JSONArray(oldJson)
+                for (i in 0 until array.length()) {
+                    recentSearchData.add(RecentSearch(query = array.getString(i)))
+                }
+            } catch (e2: Exception) {}
+        }
+        updateRecentSearchImages()
     }
 
-    private fun rememberRecentSearchQuery(query: String) {
+    private fun rememberRecentSearchQuery(query: String, firstResult: YouTubeMusicService.TrackResult? = null) {
         val norm = query.trim()
         if (norm.isEmpty()) return
-        recentSearchQueries.run {
-            remove(norm)
-            add(0, norm)
+        
+        val newSearch = RecentSearch(
+            query = norm,
+            videoId = firstResult?.videoId ?: "",
+            title = firstResult?.title ?: "",
+            thumbnail = firstResult?.thumbnailUrl ?: ""
+        )
+        
+        recentSearchData.run {
+            removeAll { it.query == norm }
+            add(0, newSearch)
             if (size > SEARCH_SUGGESTION_RECENT_LIMIT) removeAt(size - 1)
         }
         saveRecentSearchQueries()
+        updateRecentSearchImages()
     }
 
     private fun saveRecentSearchQueries() {
-        val array = JSONArray(recentSearchQueries)
-        requireContext().getSharedPreferences(PREFS_STREAMING_CACHE, Context.MODE_PRIVATE).edit().putString(PREF_RECENT_SEARCH_QUERIES, array.toString()).apply()
+        val array = JSONArray()
+        recentSearchData.forEach { search ->
+            val obj = JSONObject()
+            obj.put("query", search.query)
+            obj.put("videoId", search.videoId)
+            obj.put("title", search.title)
+            obj.put("thumbnail", search.thumbnail)
+            array.put(obj)
+        }
+        requireContext().getSharedPreferences(PREFS_STREAMING_CACHE, Context.MODE_PRIVATE).edit()
+            .putString(PREF_RECENT_SEARCH_DATA, array.toString())
+            .apply()
+        saveRecentSearchesToFirebase()
+    }
+
+    private fun saveRecentSearchesToFirebase() {
+        val ctx = context ?: return
+        if (!AuthManager.getInstance(ctx).isSignedIn()) return
+        val uid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: return
+        val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+        val searches = recentSearchData.map { search ->
+            hashMapOf(
+                "query" to search.query,
+                "videoId" to search.videoId,
+                "title" to search.title,
+                "thumbnail" to search.thumbnail
+            )
+        }
+        db.collection("users").document(uid)
+            .collection("sleppify").document("recent_searches")
+            .set(hashMapOf("searches" to searches))
+            .addOnFailureListener { Log.e("SearchFragment", "Failed to save recent searches to Firebase", it) }
+    }
+
+    private fun loadRecentSearchesFromFirebase() {
+        val ctx = context ?: return
+        if (!AuthManager.getInstance(ctx).isSignedIn()) return
+        val uid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: return
+        val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+        db.collection("users").document(uid)
+            .collection("sleppify").document("recent_searches")
+            .get()
+            .addOnSuccessListener { doc ->
+                if (!isAdded || doc == null || !doc.exists()) return@addOnSuccessListener
+                val list = doc.get("searches") as? List<*> ?: return@addOnSuccessListener
+                val parsed = list.mapNotNull { item ->
+                    val map = item as? Map<*, *> ?: return@mapNotNull null
+                    RecentSearch(
+                        query = map["query"] as? String ?: return@mapNotNull null,
+                        videoId = map["videoId"] as? String ?: "",
+                        title = map["title"] as? String ?: "",
+                        thumbnail = map["thumbnail"] as? String ?: ""
+                    )
+                }
+                if (parsed.isNotEmpty() && recentSearchData.isEmpty()) {
+                    recentSearchData.clear()
+                    recentSearchData.addAll(parsed)
+                    saveRecentSearchQueries()
+                    updateRecentSearchImages()
+                    refreshSearchSuggestions(etSearchQuery.text?.toString()?.trim() ?: "")
+                }
+            }
+    }
+
+    private fun showDeleteSearchDialog(query: String) {
+        if (!isAdded) return
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
+            .setTitle("Eliminar búsqueda")
+            .setMessage("¿Eliminar \"$query\" de las búsquedas recientes?")
+            .setPositiveButton("Sí") { _, _ ->
+                recentSearchData.removeAll { it.query == query }
+                saveRecentSearchQueries()
+                saveRecentSearchesToFirebase()
+                updateRecentSearchImages()
+                refreshSearchSuggestions(etSearchQuery.text?.toString()?.trim() ?: "")
+            }
+            .setNegativeButton("No", null)
+            .show()
     }
 
     private fun refreshSearchSuggestions(draft: String?) {
@@ -857,7 +1058,8 @@ class SearchFragment : Fragment() {
 
     private fun poolSuggestions(draft: String): List<String> {
         val normDraft = normalizeForFilter(draft)
-        return (recentSearchQueries + DEFAULT_SEARCH_SUGGESTIONS).distinct()
+        val recentQueries = recentSearchData.map { it.query }
+        return (recentQueries + DEFAULT_SEARCH_SUGGESTIONS.toList()).distinct()
             .filter { candidate ->
                 if (normDraft.isEmpty()) true
                 else {
@@ -876,7 +1078,7 @@ class SearchFragment : Fragment() {
         }
 
         if (finalUrl.isNullOrEmpty()) {
-            target.setImageResource(R.drawable.ic_music)
+            target.setImageDrawable(null)
             return
         }
 
@@ -888,8 +1090,6 @@ class SearchFragment : Fragment() {
             .transform(YouTubeCropTransformation())
             .diskCacheStrategy(DiskCacheStrategy.ALL)
             .onlyRetrieveFromCache(offlineOnly)
-            .placeholder(R.drawable.ic_music)
-            .error(R.drawable.ic_music)
         base.into(target)
     }
 
@@ -995,6 +1195,11 @@ class SearchFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
+        // Always ensure global header is hidden when this fragment is active
+        (activity as? MainActivity)?.findViewById<View>(R.id.topAppBar)?.visibility = View.GONE
+        // Clear input on every entry
+        etSearchQuery.setText("")
+        showSuggestionsMode()
         lastMiniArtUrl = "" // Resetear para forzar recarga de imagen
         startMiniProgressTicker()
         updateMiniPlayerUi()
@@ -1010,16 +1215,16 @@ class SearchFragment : Fragment() {
         if (hidden) {
             stopMiniProgressTicker()
         } else {
+            // Re-enable back pressed callback when fragment becomes visible again
+            backPressedCallback?.isEnabled = true
+            // Hide global header when fragment becomes visible
+            (activity as? MainActivity)?.findViewById<View>(R.id.topAppBar)?.visibility = View.GONE
+            // Clear input on every entry
+            etSearchQuery.setText("")
+            showSuggestionsMode()
             lastMiniArtUrl = "" // Resetear para forzar recarga de imagen
-            val distance = if (llMiniPlayer.height > 0) llMiniPlayer.height.toFloat() else 300f
-            llMiniPlayer.translationY = distance
+            llMiniPlayer.translationY = 0f
             llMiniPlayer.visibility = View.VISIBLE
-            llMiniPlayer.animate().cancel()
-            llMiniPlayer.animate()
-                .translationY(0f)
-                .setDuration(250)
-                .setInterpolator(PathInterpolator(0.4f, 0f, 0.2f, 1f))
-                .start()
             startMiniProgressTicker()
             updateMiniPlayerUi()
         }
@@ -1119,7 +1324,7 @@ class SearchFragment : Fragment() {
             if (displayImageUrl.isNotEmpty()) {
                 loadArtworkInto(ivMiniPlayerArt, displayImageUrl, null)
             } else {
-                ivMiniPlayerArt.setImageResource(R.drawable.ic_music)
+                ivMiniPlayerArt.setImageDrawable(null)
             }
         }
     }
@@ -1168,10 +1373,15 @@ class SearchFragment : Fragment() {
         override fun onBindViewHolder(h: ViewHolder, p: Int) {
             val s = data[p]
             h.text.text = s
-            val recent = recentSearchQueries.contains(s)
-            h.icon.setImageResource(if (recent) R.drawable.ic_time_24 else android.R.drawable.ic_menu_search)
-            h.icon.alpha = if (recent) 0.7f else 0.5f
+            val recent = recentSearchData.any { it.query == s }
+            h.icon.setImageResource(if (recent) R.drawable.ic_time_24 else R.drawable.ic_search)
+            h.icon.setColorFilter(android.graphics.Color.WHITE)
+            h.icon.alpha = 1.0f
             h.itemView.setOnClickListener { onClick(s) }
+            h.itemView.setOnLongClickListener {
+                if (recent) showDeleteSearchDialog(s)
+                true
+            }
         }
 
         override fun getItemCount() = data.size
@@ -1179,6 +1389,93 @@ class SearchFragment : Fragment() {
         inner class ViewHolder(v: View) : RecyclerView.ViewHolder(v) {
             val text: TextView = v.findViewById(R.id.tvSuggestionText)
             val icon: ImageView = v.findViewById(R.id.ivSuggestionIcon)
+        }
+    }
+
+    private inner class RecentSearchImageAdapter(val onClick: (RecentSearch) -> Unit) : RecyclerView.Adapter<RecentSearchImageAdapter.ViewHolder>() {
+        private val data = mutableListOf<RecentSearch>()
+
+        fun updateItems(newList: List<RecentSearch>) {
+            data.clear()
+            data.addAll(newList)
+            notifyDataSetChanged()
+        }
+
+        override fun onCreateViewHolder(p: ViewGroup, t: Int): ViewHolder {
+            val view = LayoutInflater.from(p.context).inflate(R.layout.item_recent_search_image, p, false)
+            // Calculate width for 2 compact items (~40% of screen each)
+            val density = p.context.resources.displayMetrics.density
+            val parentWidth = p.measuredWidth.takeIf { it > 0 }
+                ?: p.context.resources.displayMetrics.widthPixels
+            val itemWidth = ((parentWidth - (32 * density).toInt()) * 0.40f).toInt()
+            val marginEnd = (12 * density).toInt()
+            view.layoutParams = RecyclerView.LayoutParams(itemWidth, RecyclerView.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(0, 0, marginEnd, 0)
+            }
+            // Set image container height for 16:9
+            val imageHeight = (itemWidth * 9f / 16f).toInt()
+            val container = view.findViewById<View>(R.id.flImageContainer)
+            container.layoutParams = (container.layoutParams).also { it.height = imageHeight }
+            return ViewHolder(view)
+        }
+
+        override fun onBindViewHolder(h: ViewHolder, p: Int) {
+            val item = data[p]
+            h.title.text = item.title.ifEmpty { item.query }
+            
+            // Show loading placeholder
+            h.loadingPlaceholder.visibility = View.VISIBLE
+            h.image.alpha = 0f
+            
+            if (item.thumbnail.isNotEmpty()) {
+                Glide.with(this@SearchFragment)
+                    .load(item.thumbnail)
+                    .transform(YouTubeCropTransformation())
+                    .diskCacheStrategy(DiskCacheStrategy.ALL)
+                    .listener(object : RequestListener<Drawable> {
+                        override fun onLoadFailed(
+                            e: GlideException?,
+                            model: Any?,
+                            target: Target<Drawable>,
+                            isFirstResource: Boolean
+                        ): Boolean {
+                            h.loadingPlaceholder.visibility = View.GONE
+                            return false
+                        }
+
+                        override fun onResourceReady(
+                            resource: Drawable,
+                            model: Any,
+                            target: Target<Drawable>?,
+                            dataSource: DataSource,
+                            isFirstResource: Boolean
+                        ): Boolean {
+                            h.loadingPlaceholder.animate()
+                                .alpha(0f)
+                                .setDuration(250)
+                                .withEndAction { h.loadingPlaceholder.visibility = View.GONE }
+                                .start()
+                            h.image.animate()
+                                .alpha(1f)
+                                .setDuration(300)
+                                .start()
+                            return false
+                        }
+                    })
+                    .into(h.image)
+            } else {
+                h.loadingPlaceholder.visibility = View.GONE
+            }
+            
+            h.itemView.setOnClickListener { onClick(item) }
+        }
+
+        override fun getItemCount() = data.size
+
+        inner class ViewHolder(v: View) : RecyclerView.ViewHolder(v) {
+            val image: ImageView = v.findViewById(R.id.ivRecentSearchImage)
+            val loadingPlaceholder: View = v.findViewById(R.id.vLoadingPlaceholder)
+            val title: TextView = v.findViewById(R.id.tvRecentSearchTitle)
         }
     }
 }

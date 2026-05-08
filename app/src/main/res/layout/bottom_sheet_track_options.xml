@@ -24,7 +24,7 @@
             android:layout_height="48dp"
             android:scaleType="centerCrop"
             android:background="@color/surface_high"
-            android:src="@drawable/ic_music"/>
+            />
         <LinearLayout
             android:layout_width="0dp"
             android:layout_weight="1"
@@ -348,7 +348,7 @@
                 android:id="@+id/ivBsReplace"
                 android:layout_width="22dp"
                 android:layout_height="22dp"
-                android:src="@drawable/ic_stream_play_next"
+                android:src="@drawable/ic_player_repeat"
                 app:tint="@android:color/white"/>
             <TextView
                 android:id="@+id/tvBsReplace"

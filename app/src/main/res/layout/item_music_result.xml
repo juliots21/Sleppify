@@ -23,8 +23,8 @@
         android:orientation="horizontal">
 
         <FrameLayout
-            android:layout_width="50dp"
-            android:layout_height="50dp">
+            android:layout_width="55dp"
+            android:layout_height="55dp">
 
             <View
                 android:id="@+id/vLikedBackground"
@@ -46,8 +46,7 @@
                 android:id="@+id/ivTrackThumb"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:scaleType="centerCrop"
-                android:src="@drawable/ic_music" />
+                android:scaleType="centerCrop" />
 
             <FrameLayout
                 android:id="@+id/llNowPlayingOverlay"
@@ -71,6 +70,7 @@
             android:layout_height="wrap_content"
             android:layout_marginStart="12dp"
             android:layout_weight="1"
+            android:gravity="center_vertical"
             android:orientation="vertical">
 
             <TextView
@@ -84,19 +84,21 @@
                 android:text="Track"
                 android:textColor="@color/text_primary"
                 android:textSize="14sp"
-                android:textStyle="bold" />
+                android:textStyle="bold"
+                android:includeFontPadding="false" />
 
             <TextView
                 android:id="@+id/tvTrackSubtitle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
+                android:layout_marginTop="4dp"
                 android:ellipsize="end"
                 android:fontFamily="@font/inter_variable"
                 android:maxLines="1"
                 android:text="Playlist"
                 android:textColor="@color/text_secondary"
-                android:textSize="14sp" />
+                android:textSize="14sp"
+                android:includeFontPadding="false" />
         </LinearLayout>
 
         <LinearLayout

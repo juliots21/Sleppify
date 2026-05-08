@@ -415,11 +415,10 @@ class SettingsFragment : Fragment() {
     private fun showDownloadQualityPicker() {
         val vals = arrayOf(CloudSyncManager.DOWNLOAD_QUALITY_LOW, CloudSyncManager.DOWNLOAD_QUALITY_MEDIUM, CloudSyncManager.DOWNLOAD_QUALITY_HIGH, CloudSyncManager.DOWNLOAD_QUALITY_VERY_HIGH)
         val labs = arrayOf("Baja", "Media", "Alta", "Muy alta")
-        val cur = normalizeQuality(settingsPrefs.getString(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_QUALITY, CloudSyncManager.DOWNLOAD_QUALITY_MEDIUM))
         
         MaterialAlertDialogBuilder(requireContext())
             .setTitle(R.string.settings_stream_download_quality_title)
-            .setSingleChoiceItems(labs, vals.indexOf(cur)) { d, w ->
+            .setItems(labs) { d, w ->
                 settingsPrefs.edit().putString(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_QUALITY, vals[w]).apply()
                 renderSettingsState()
                 d.dismiss()
@@ -431,11 +430,10 @@ class SettingsFragment : Fragment() {
     private fun showStreamingQualityPicker() {
         val vals = arrayOf(CloudSyncManager.STREAMING_QUALITY_LOW, CloudSyncManager.STREAMING_QUALITY_MEDIUM, CloudSyncManager.STREAMING_QUALITY_HIGH, CloudSyncManager.STREAMING_QUALITY_VERY_HIGH)
         val labs = arrayOf("Baja", "Media", "Alta", "Muy alta")
-        val cur = normalizeStreamingQuality(settingsPrefs.getString(CloudSyncManager.KEY_STREAMING_QUALITY, CloudSyncManager.STREAMING_QUALITY_MEDIUM))
         
         MaterialAlertDialogBuilder(requireContext())
             .setTitle("Calidad de streaming")
-            .setSingleChoiceItems(labs, vals.indexOf(cur)) { d, w ->
+            .setItems(labs) { d, w ->
                 settingsPrefs.edit().putString(CloudSyncManager.KEY_STREAMING_QUALITY, vals[w]).apply()
                 renderSettingsState()
                 d.dismiss()

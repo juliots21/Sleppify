@@ -111,6 +111,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var navRail: com.google.android.material.navigationrail.NavigationRailView
     private lateinit var tvModuleTitle: TextView
     private lateinit var btnSettings: ImageView
+    private lateinit var btnHeaderSearch: ImageView
     private lateinit var btnCamera: ImageView
     private lateinit var topAppBar: View
     private lateinit var fragmentContainer: View
@@ -291,6 +292,7 @@ class MainActivity : AppCompatActivity() {
         navRail = findViewById(R.id.navigationRail)
         tvModuleTitle = findViewById(R.id.tvModuleTitle)
         btnSettings = findViewById(R.id.btnSettings)
+        btnHeaderSearch = findViewById(R.id.btnHeaderSearch)
         btnCamera = findViewById(R.id.btnCamera)
         topAppBar = findViewById(R.id.topAppBar)
         fragmentContainer = findViewById(R.id.fragmentContainer)
@@ -339,7 +341,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             navRailView.visibility = View.GONE
             bottomNav.visibility = if (inSettings || inEqualizerFromSettings || inScannerFromSettings) View.GONE else View.VISIBLE
-            topAppBar.visibility = View.VISIBLE
+            if (!isSearchFragmentVisible() && !isPlaylistDetailVisible()) topAppBar.visibility = View.VISIBLE
         }
     }
 
@@ -597,6 +599,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    @Suppress("DEPRECATION")
+    private fun setSolidNavigationBar(solid: Boolean) {
+        val navColor = if (solid) ContextCompat.getColor(this, R.color.surface_low) else Color.TRANSPARENT
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            window.navigationBarColor = navColor
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = solid
+        }
+    }
+
     override fun onDestroy() {
         if (activeInstance?.get() === this) {
             activeInstance = null
@@ -834,11 +847,16 @@ class MainActivity : AppCompatActivity() {
     private fun setSyncOverlayVisible(visible: Boolean) { /* Signals visual sync in header */ }
 
     private fun configureHeaderActionForMainModules() {
-        btnSettings.visibility = View.VISIBLE
-        btnSettings.setImageResource(R.drawable.ic_settings)
-        btnSettings.contentDescription = getString(R.string.header_action_settings)
         btnCamera.visibility = View.GONE
-        
+        btnHeaderSearch.visibility = View.VISIBLE
+        btnHeaderSearch.setOnClickListener { openSearchFragment() }
+
+        // Profile photo as settings button
+        btnSettings.visibility = View.VISIBLE
+        btnSettings.contentDescription = getString(R.string.header_action_settings)
+        btnSettings.setOnClickListener { enterSettings() }
+        loadProfilePhotoIntoSettings()
+
         tvModuleTitle.apply {
             text = getString(R.string.header_brand_title)
             isAllCaps = true
@@ -856,10 +874,30 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun loadProfilePhotoIntoSettings() {
+        val prefs = getSharedPreferences("streaming_cache", MODE_PRIVATE)
+        val cachedUrl = prefs.getString("cached_google_profile_photo_url", "") ?: ""
+        val account = com.google.android.gms.auth.api.signin.GoogleSignIn.getLastSignedInAccount(this)
+        val photoUri = account?.photoUrl
+            ?: com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.photoUrl
+            ?: if (cachedUrl.isNotEmpty()) android.net.Uri.parse(cachedUrl) else null
+
+        if (photoUri != null) {
+            com.bumptech.glide.Glide.with(this)
+                .load(photoUri)
+                .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL)
+                .circleCrop()
+                .placeholder(R.drawable.ic_settings)
+                .error(R.drawable.ic_settings)
+                .into(btnSettings)
+        } else {
+            btnSettings.setImageResource(R.drawable.ic_settings)
+        }
+    }
+
     private fun configureHeaderActionForSettings() {
-        btnSettings.visibility = View.VISIBLE
-        btnSettings.setImageResource(R.drawable.ic_settings)
-        btnSettings.contentDescription = getString(R.string.header_action_settings)
+        btnSettings.visibility = View.GONE
+        btnHeaderSearch.visibility = View.GONE
         btnCamera.visibility = View.VISIBLE
 
         tvModuleTitle.apply {
@@ -870,6 +908,24 @@ class MainActivity : AppCompatActivity() {
             setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_arrow_back, 0, 0, 0)
             compoundDrawablePadding = (10 * resources.displayMetrics.density).toInt()
             setOnClickListener { exitSettings() }
+        }
+    }
+
+    private fun configureHeaderActionForScanner() {
+        btnSettings.visibility = View.VISIBLE
+        btnSettings.setImageResource(R.drawable.ic_settings)
+        btnSettings.contentDescription = getString(R.string.header_action_settings)
+        btnSettings.setOnClickListener { exitScannerBack() }
+        btnCamera.visibility = View.GONE
+
+        tvModuleTitle.apply {
+            text = "Scanner"
+            isAllCaps = false
+            letterSpacing = 0f
+            typeface = resolveHeaderSettingsTypeface()
+            setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_arrow_back, 0, 0, 0)
+            compoundDrawablePadding = (10 * resources.displayMetrics.density).toInt()
+            setOnClickListener { exitScannerBack() }
         }
     }
 
@@ -904,6 +960,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         configureHeaderActionForSettings()
+        setSolidNavigationBar(true)
         applyTvModeLayout()
         lifecycleScope.launch {
             delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
@@ -931,6 +988,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         configureHeaderActionForMainModules()
+        setSolidNavigationBar(false)
         applyTvModeLayout()
         updateHeaderTitleForModule(selectedId)
         lifecycleScope.launch {
@@ -964,6 +1022,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         configureHeaderActionForEqualizer()
+        setSolidNavigationBar(true)
         applyTvModeLayout()
 
         lifecycleScope.launch {
@@ -990,6 +1049,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         configureHeaderActionForSettings()
+        setSolidNavigationBar(true)
         applyTvModeLayout()
 
         lifecycleScope.launch {
@@ -1002,6 +1062,7 @@ class MainActivity : AppCompatActivity() {
         btnSettings.visibility = View.VISIBLE
         btnSettings.setImageResource(R.drawable.ic_settings)
         btnSettings.contentDescription = getString(R.string.header_action_settings)
+        btnSettings.setOnClickListener { exitEqualizerToSettings() }
         btnCamera.visibility = View.VISIBLE
 
         tvModuleTitle.apply {
@@ -1021,7 +1082,8 @@ class MainActivity : AppCompatActivity() {
 
         scannerLoadingOverlay.alpha = 1f
         scannerLoadingOverlay.visibility = View.VISIBLE
-        topAppBar.visibility = View.GONE
+        configureHeaderActionForScanner()
+        setSolidNavigationBar(true)
         bottomNav.visibility = View.GONE
 
         val target = scannerFragment ?: ScannerFragment().also { scannerFragment = it }
@@ -1049,7 +1111,7 @@ class MainActivity : AppCompatActivity() {
             if (isFinishing || isDestroyed) return@launch
             scannerLoadingOverlay.animate()
                 .alpha(0f)
-                .setDuration(350L)
+                .setDuration(150L)
                 .withEndAction { scannerLoadingOverlay.visibility = View.GONE }
                 .start()
         }
@@ -1060,7 +1122,7 @@ class MainActivity : AppCompatActivity() {
         inScannerFromSettings = false
 
         showModuleLoadingOverlay()
-        topAppBar.visibility = View.VISIBLE
+        if (!isSearchFragmentVisible() && !isPlaylistDetailVisible()) topAppBar.visibility = View.VISIBLE
 
         val returnToEqualizer = inEqualizerFromSettings
         val target = if (returnToEqualizer) {
@@ -1082,6 +1144,7 @@ class MainActivity : AppCompatActivity() {
 
         if (returnToEqualizer) configureHeaderActionForEqualizer() else configureHeaderActionForSettings()
         applyTvModeLayout()
+        setSolidNavigationBar(true)
 
         lifecycleScope.launch {
             delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
@@ -1109,6 +1172,16 @@ class MainActivity : AppCompatActivity() {
         return player.isAdded && !player.isHidden
     }
 
+    fun isSearchFragmentVisible(): Boolean {
+        val sf = searchFragment ?: return false
+        return sf.isAdded && !sf.isHidden
+    }
+
+    private fun isPlaylistDetailVisible(): Boolean {
+        val pd = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL) ?: return false
+        return pd.isAdded && !pd.isHidden
+    }
+
     fun openSearchFragment() {
         if (isFinishing || isDestroyed) return
         showModuleLoadingOverlay()
@@ -1132,7 +1205,8 @@ class MainActivity : AppCompatActivity() {
             commit()
         }
 
-        topAppBar.visibility = View.VISIBLE
+        // Keep topAppBar hidden — SearchFragment has its own header
+        topAppBar.visibility = View.GONE
         
         lifecycleScope.launch {
             delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
@@ -1149,15 +1223,16 @@ class MainActivity : AppCompatActivity() {
 
         supportFragmentManager.popBackStackImmediate(TAG_MODULE_SEARCH, androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE)
 
+        val playlistDetail = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL)
+        val wasPlaylistDetailActive = playlistDetail != null && playlistDetail.isAdded
+
         supportFragmentManager.beginTransaction().apply {
             setReorderingAllowed(true)
             searchFragment?.let { if (it.isAdded) { hide(it); setMaxLifecycle(it, Lifecycle.State.STARTED) } }
             
-            // Si el playlist detail estaba activo, lo restauramos si sigue en el backstack, 
-            // de lo contrario volvemos al módulo principal.
-            val playlistDetail = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL)
-            if (playlistDetail != null && playlistDetail.isAdded && !playlistDetail.isHidden) {
-                // Ya se mostrará correctamente por el popBackStack
+            if (wasPlaylistDetailActive) {
+                show(playlistDetail!!)
+                setMaxLifecycle(playlistDetail, Lifecycle.State.RESUMED)
             } else {
                 target?.let { 
                     if (it.isAdded) show(it) else moduleTagForItem(selectedId)?.let { tag -> add(R.id.fragmentContainer, it, tag) }
@@ -1167,12 +1242,14 @@ class MainActivity : AppCompatActivity() {
             commit()
         }
 
-        topAppBar.visibility = View.VISIBLE
-        configureHeaderActionForMainModules()
         applyTvModeLayout()
-        
-        // If playlist detail is active, we don't need to change the header title since it hides the header anyway.
-        updateHeaderTitleForModule(selectedId)
+        if (wasPlaylistDetailActive) {
+            topAppBar.visibility = View.GONE
+        } else {
+            topAppBar.visibility = View.VISIBLE
+            configureHeaderActionForMainModules()
+            updateHeaderTitleForModule(selectedId)
+        }
         
         lifecycleScope.launch {
             delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
@@ -1390,8 +1467,15 @@ class MainActivity : AppCompatActivity() {
         supportFragmentManager.popBackStackImmediate(TAG_PLAYLIST_DETAIL, androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE)
         if (bottomNav.selectedItemId != R.id.nav_music) bottomNav.selectedItemId = R.id.nav_music
         currentMainNavItemId = R.id.nav_music
-        updateHeaderTitleForModule(R.id.nav_music)
+        if (!isSearchFragmentVisible()) {
+            topAppBar.visibility = View.VISIBLE
+            updateHeaderTitleForModule(R.id.nav_music)
+        }
         return true
+    }
+
+    fun hideTopAppBarForPlaylistDetail() {
+        topAppBar.visibility = View.GONE
     }
 
     private fun updateHeaderTitleForModule(itemId: Int) {

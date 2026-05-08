@@ -165,7 +165,7 @@
                 android:layout_marginTop="8dp"
                 android:clipToPadding="false"
                 android:overScrollMode="never"
-                android:paddingHorizontal="6dp"
+                android:paddingHorizontal="0dp"
                 android:scrollbars="none"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
@@ -256,11 +256,13 @@
                 android:layout_height="wrap_content"
                 android:minHeight="48dp"
                 android:layout_marginTop="12dp"
+                android:layout_marginStart="0dp"
+                android:layout_marginEnd="0dp"
                 android:max="1000"
                 android:progress="0"
                 android:thumbTint="@color/stitch_blue"
-                app:layout_constraintEnd_toEndOf="parent"
-                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="@id/llPlayerInfo"
+                app:layout_constraintStart_toStartOf="@id/llPlayerInfo"
                 app:layout_constraintTop_toBottomOf="@id/hsSocialActions" />
 
             <TextView
@@ -273,7 +275,7 @@
                 android:textColor="@color/text_secondary"
                 android:textSize="13sp"
                 android:textStyle="bold"
-                app:layout_constraintStart_toStartOf="@id/sbPlaybackProgress"
+                app:layout_constraintStart_toStartOf="@id/llPlayerInfo"
                 app:layout_constraintTop_toBottomOf="@id/sbPlaybackProgress" />
 
             <TextView
@@ -286,7 +288,7 @@
                 android:textColor="@color/text_secondary"
                 android:textSize="13sp"
                 android:textStyle="bold"
-                app:layout_constraintEnd_toEndOf="@id/sbPlaybackProgress"
+                app:layout_constraintEnd_toEndOf="@id/llPlayerInfo"
                 app:layout_constraintTop_toBottomOf="@id/sbPlaybackProgress" />
 
             <LinearLayout
@@ -319,7 +321,7 @@
                 android:id="@+id/llPlayerFooter"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="40dp"
+                android:layout_marginTop="80dp"
                 android:layout_marginStart="14dp"
                 android:layout_marginEnd="14dp"
                 android:gravity="center_vertical"
@@ -351,7 +353,7 @@
                         android:fontFamily="@font/inter_variable"
                         android:text="Este dispositivo"
                         android:textColor="@color/stitch_blue"
-                        android:textSize="12sp"
+                        android:textSize="13sp"
                         android:textStyle="bold" />
                 </LinearLayout>
 
@@ -365,30 +367,23 @@
                     android:id="@+id/llQueueTrigger"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:background="?attr/selectableItemBackground"
                     android:clickable="true"
                     android:focusable="true"
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
-                    android:paddingVertical="4dp"
-                    android:paddingStart="0dp"
-                    android:paddingEnd="4dp"
-                    android:layout_marginEnd="12dp">
-
-                    <ImageView
-                        android:layout_width="18dp"
-                        android:layout_height="18dp"
-                        android:layout_marginEnd="5dp"
-                        android:src="@drawable/ic_stream_queue_add"
-                        app:tint="@color/text_primary" />
+                    android:paddingVertical="8dp"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:layout_marginEnd="8dp">
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:fontFamily="@font/inter_variable"
-                        android:text="Ver Cola"
+                        android:text="A CONTINUACIÓN"
                         android:textColor="@color/text_primary"
-                        android:textSize="12sp"
+                        android:textSize="13sp"
                         android:textStyle="bold" />
                 </LinearLayout>
             </LinearLayout>

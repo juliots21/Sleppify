@@ -705,11 +705,11 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         super.onViewCreated(view, savedInstanceState);
         PlaybackEventBus.addListener(this);
         llLibraryHeaderRow = view.findViewById(R.id.llLibraryHeaderRow);
-        llLibraryInlineSearch = view.findViewById(R.id.llLibraryInlineSearch);
+        llLibraryInlineSearch = null;
         tvLibraryTitle = view.findViewById(R.id.tvLibraryTitle);
         llMusicState = view.findViewById(R.id.llMusicState);
-        ivLibraryQuickClear = view.findViewById(R.id.ivLibraryQuickClear);
-        etLibraryQuickSearch = view.findViewById(R.id.etLibraryQuickSearch);
+        ivLibraryQuickClear = null;
+        etLibraryQuickSearch = null;
         btnYoutubeLogin = view.findViewById(R.id.btnYoutubeLogin);
         llLibraryEmptyState = view.findViewById(R.id.llLibraryEmptyState);
         progressMusic = view.findViewById(R.id.progressMusic);
@@ -791,8 +791,8 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                     rvMusicResults.setNextFocusLeftId(R.id.btnTvPlayPause);
                     // Cuando presionas abajo en la lista, ve al navigation rail (módulos)
                     rvMusicResults.setNextFocusDownId(R.id.navigationRail);
-                    // Cuando presionas arriba en la lista, ve al buscador
-                    rvMusicResults.setNextFocusUpId(R.id.llLibraryInlineSearch);
+                    // Cuando presionas arriba en la lista, ve al header
+                    rvMusicResults.setNextFocusUpId(R.id.llLibraryHeaderRow);
                 }
                 // Desde el buscador/biblioteca, al presionar abajo va a la lista
                 if (llLibraryInlineSearch != null) {
@@ -826,7 +826,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         rebuildGoogleSignInClient();
         restoreCachedStreamingSessionState();
         restoreRecentSearchQueries();
-        ensureFavoritesPlaylistInLibraryTracks();
         refreshCurrentPlayingPlaylistState();
         setupLibraryPullToRefresh();
         startObservingOfflineQueue();
@@ -910,7 +909,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         offlineManualQueueHadActiveWork = false;
         resetMiniPlayerRenderCache();
         updateClearSearchBackPressedEnabled();
-        ensureFavoritesPlaylistInLibraryTracks();
         refreshCurrentPlayingPlaylistState();
         if (adapter != null) {
             adapter.invalidatePlaylistOfflineState(null);
@@ -942,14 +940,17 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             return;
         }
         if (llMiniPlayer != null && !isTv) {
-            float distance = llMiniPlayer.getHeight() > 0 ? llMiniPlayer.getHeight() : 300f;
-            llMiniPlayer.setTranslationY(distance);
-            llMiniPlayer.setVisibility(View.VISIBLE);
-            llMiniPlayer.animate().cancel();
-            llMiniPlayer.animate().translationY(0f).setDuration(280).start();
+            if (llMiniPlayer.getVisibility() == View.VISIBLE && llMiniPlayer.getTranslationY() == 0f) {
+                // Already visible and in place (e.g. returning from search) — no animation
+            } else {
+                float distance = llMiniPlayer.getHeight() > 0 ? llMiniPlayer.getHeight() : 300f;
+                llMiniPlayer.setTranslationY(distance);
+                llMiniPlayer.setVisibility(View.VISIBLE);
+                llMiniPlayer.animate().cancel();
+                llMiniPlayer.animate().translationY(0f).setDuration(280).start();
+            }
         }
         startObservingOfflineQueue();
-        ensureFavoritesPlaylistInLibraryTracks();
         refreshCurrentPlayingPlaylistState();
         if (adapter != null) {
             adapter.invalidatePlaylistOfflineState(null);
@@ -1710,7 +1711,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 Log.i(TAG_STREAMING, "playlist_fetch success playlists=" + playlists.size());
                 libraryTracks.clear();
                 libraryTracks.addAll(mapPlaylistsToLibraryTracks(playlists));
-                ensureFavoritesPlaylistInLibraryTracks();
                 cacheLibraryForCurrentAccount(libraryTracks);
                 prefetchLibraryTracksForOffline(libraryTracks, youtubeAccessToken);
                 lastLibrarySyncAtMs = System.currentTimeMillis();
@@ -1898,7 +1898,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         cancelPendingLibraryInlineSearch();
         libraryInlinePendingReveal = false;
         if (tvLibraryTitle != null) tvLibraryTitle.setVisibility(View.VISIBLE);
-        llLibraryInlineSearch.setVisibility(View.VISIBLE);
+        if (llLibraryInlineSearch != null) llLibraryInlineSearch.setVisibility(View.VISIBLE);
         llLibraryEmptyState.setVisibility(View.GONE);
         updateLibraryInlineClearButton();
         featuredTrack = null;
@@ -2109,7 +2109,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         if (!isAdded()) {
             return result;
         }
-        ensureFavoritesPlaylistInLibraryTracks();
         String[] queryTokens = extractSearchTokens(query);
         if (queryTokens.length == 0) {
             return result;
@@ -2881,14 +2880,12 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         if (hasValidLibraryCache(accountKey) && libraryTracks.isEmpty()) {
             libraryTracks.clear();
             libraryTracks.addAll(new ArrayList<>(LIBRARY_CACHE));
-            ensureFavoritesPlaylistInLibraryTracks();
             return;
         }
         List<YouTubeMusicService.TrackResult> persisted = loadPersistedLibrary(accountKey);
         if (!persisted.isEmpty() && libraryTracks.isEmpty()) {
             libraryTracks.clear();
             libraryTracks.addAll(persisted);
-            ensureFavoritesPlaylistInLibraryTracks();
             LIBRARY_CACHE.clear();
             LIBRARY_CACHE.addAll(libraryTracks);
             libraryCacheAccountKey = accountKey;
@@ -2906,7 +2903,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         }
         libraryTracks.clear();
         libraryTracks.addAll(persisted);
-        ensureFavoritesPlaylistInLibraryTracks();
         LIBRARY_CACHE.clear();
         LIBRARY_CACHE.addAll(libraryTracks);
         libraryCacheAccountKey = accountKey;
@@ -3969,7 +3965,9 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 "--:--",
                 track.thumbnailUrl == null ? "" : track.thumbnailUrl
         );
-        ensureFavoritesPlaylistInLibraryTracks();
+        if (activeScreen == ScreenMode.LIBRARY) {
+            renderLibraryResults();
+        }
     }
     private void shareTrackResult(@NonNull YouTubeMusicService.TrackResult track) {
         if (!isAdded()) {
@@ -4443,8 +4441,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                     Glide.with(this)
                         .load(currentTrack.imageUrl)
                         .diskCacheStrategy(DiskCacheStrategy.ALL)
-                        .placeholder(R.drawable.ic_music)
-                        .error(R.drawable.ic_music)
                         .into(ivTvPlayerCover);
                     if (ivTvPlayerBackground != null) {
                         Glide.with(this)
@@ -4453,7 +4449,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                             .into(ivTvPlayerBackground);
                     }
                 } else {
-                    ivTvPlayerCover.setImageResource(R.drawable.ic_music);
+                    ivTvPlayerCover.setImageDrawable(null);
                     if (ivTvPlayerBackground != null) ivTvPlayerBackground.setImageDrawable(null);
                 }
             }
@@ -6111,7 +6107,8 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 return;
             }
             if (!rv.isComputingLayout() && !rv.isLayoutRequested()) {
-                action.run();
+                // Post to RecyclerView to ensure we're in the next layout pass
+                rv.post(action);
             } else {
                 int delay = attempt < 3 ? 16 : 32;
                 mainHandler.postDelayed(() -> dispatchWhenIdle(action, attempt + 1), delay);

@@ -52,8 +52,20 @@
             android:contentDescription="Scanner"
             android:focusable="true"
             android:padding="8dp"
-            android:layout_marginEnd="4dp"
             android:src="@drawable/ic_camera"
+            android:visibility="gone"
+            app:tint="@android:color/white" />
+
+        <ImageView
+            android:id="@+id/btnHeaderSearch"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:clickable="true"
+            android:contentDescription="Buscar"
+            android:focusable="true"
+            android:padding="8dp"
+            android:src="@drawable/ic_search"
             android:visibility="gone"
             app:tint="@color/text_secondary" />
 
@@ -65,9 +77,8 @@
             android:clickable="true"
             android:contentDescription="@string/header_action_settings"
             android:focusable="true"
-            android:padding="8dp"
-            android:src="@drawable/ic_settings"
-            app:tint="@color/text_secondary" />
+            android:padding="4dp"
+            android:src="@drawable/ic_settings" />
     </LinearLayout>
 
     <com.google.android.material.navigationrail.NavigationRailView
@@ -151,14 +162,14 @@
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:background="@android:color/black"
-        android:elevation="50dp"
+        android:elevation="25dp"
         android:visibility="gone"
         android:clickable="true"
         android:focusable="true"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent">
+        app:layout_constraintTop_toBottomOf="@id/topAppBar">
 
         <ProgressBar
             android:layout_width="36dp"

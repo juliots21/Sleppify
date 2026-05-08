@@ -21,8 +21,8 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="20dp"
         android:layout_marginStart="24dp"
-        android:fontFamily="@font/manrope_variable"
-        android:text="Cola de reproducción"
+        android:fontFamily="@font/inter_variable"
+        android:text="A continuación"
         android:textColor="@color/text_primary"
         android:textSize="20sp"
         android:textStyle="bold" />

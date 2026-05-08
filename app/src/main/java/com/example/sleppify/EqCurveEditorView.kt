@@ -508,8 +508,8 @@ class EqCurveEditorView : View {
         private const val MAX_DB = AudioEffectsService.EQ_GAIN_MAX_DB
         private const val STEP_DB = 0.5f
         private const val CURVE_TENSION = 0.64f
-        private const val CONTENT_HORIZONTAL_INSET_DP = 24f
-        private const val CONTENT_VERTICAL_INSET_DP = 10f
+        private const val CONTENT_HORIZONTAL_INSET_DP = 2f
+        private const val CONTENT_VERTICAL_INSET_DP = 2f
         private const val GRID_CORNER_RADIUS_DP = 0f
         private const val MODAL_GUIDE_TOP_INSET_DP = 12f
         private const val MODAL_GUIDE_BOTTOM_INSET_DP = 8f

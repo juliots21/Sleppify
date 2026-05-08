@@ -1726,6 +1726,21 @@ public class SongPlayerFragment extends Fragment {
                 releaseSingleExoMediaPlayer(mp);
             }
 
+            // AudioTrack init failure (status -12 / ENOMEM): reinitialize shared player
+            // to force release stale AudioTrack resources held by the OS.
+            if (what == 5001 && isAdded()) {
+                Log.w(TAG, "AudioTrack init failed — reinitializing shared ExoPlayer");
+                ExoPlayerManager.INSTANCE.reinitialize(requireContext().getApplicationContext());
+                // Give the OS time to reclaim AudioTrack resources before retrying
+                if (requestToken == activePlaybackRequestToken) {
+                    localProgressHandler.postDelayed(() -> {
+                        if (!isAdded() || requestToken != activePlaybackRequestToken) return;
+                        onFailure.run();
+                    }, 1500L);
+                }
+                return true;
+            }
+
             if (requestToken != activePlaybackRequestToken || !isAdded()) {
                 return true;
             }

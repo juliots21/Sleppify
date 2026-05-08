@@ -9,14 +9,14 @@
     android:gravity="center_vertical"
     android:orientation="horizontal"
     android:paddingHorizontal="16dp"
-    android:paddingVertical="12dp">
+    android:paddingVertical="8dp">
 
     <ImageView
         android:id="@+id/ivSuggestionIcon"
-        android:layout_width="20dp"
-        android:layout_height="20dp"
+        android:layout_width="27dp"
+        android:layout_height="27dp"
         android:src="@drawable/ic_time_24"
-        app:tint="@color/text_secondary" />
+        app:tint="#FFFFFF" />
 
     <TextView
         android:id="@+id/tvSuggestionText"
@@ -32,10 +32,10 @@
         android:textSize="14sp" />
 
     <ImageView
-        android:layout_width="16dp"
-        android:layout_height="16dp"
-        android:src="@drawable/ic_chevron_right"
-        android:alpha="0.3"
-        app:tint="@color/text_secondary" />
+        android:id="@+id/ivSuggestionArrow"
+        android:layout_width="27dp"
+        android:layout_height="27dp"
+        android:src="@drawable/ic_arrow_outward"
+        app:tint="#FFFFFF" />
 
 </LinearLayout>
