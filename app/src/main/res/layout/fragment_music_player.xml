@@ -287,7 +287,7 @@
         <!-- TV PLAYER PANE (Embedded Player) -->
         <include layout="@layout/layout_tv_split_player" />
 
-        <androidx.recyclerview.widget.RecyclerView
+        <com.example.sleppify.widget.SafeRecyclerView
             android:id="@+id/rvMusicResults"
             android:layout_width="0dp"
             android:layout_height="match_parent"

@@ -15,7 +15,7 @@
         android:layout_marginEnd="-180dp"
         android:layout_marginTop="-180dp"
         android:layout_marginBottom="-180dp"
-        android:alpha="0.68"
+        android:alpha="1.0"
         android:background="@android:color/black"
         android:scaleType="centerCrop"
         android:src="@android:color/transparent"
@@ -24,6 +24,45 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
+
+    <!-- Internal navigation bar: close (↓) + options (⋮). paddingTop set from Java to match status bar height. -->
+    <LinearLayout
+        android:id="@+id/llPlayerNavBar"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="4dp"
+        android:paddingBottom="4dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <ImageButton
+            android:id="@+id/btnPlayerClose"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Cerrar"
+            android:padding="6dp"
+            android:src="@drawable/ic_expand_more"
+            app:tint="@color/text_primary" />
+
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <ImageButton
+            android:id="@+id/btnPlayerMore"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Opciones"
+            android:padding="12dp"
+            android:src="@drawable/ic_more_vert"
+            app:tint="@color/text_primary" />
+    </LinearLayout>
 
     <androidx.core.widget.NestedScrollView
         android:id="@+id/svSongPlayerContent"
@@ -34,22 +73,26 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent">
+        app:layout_constraintTop_toBottomOf="@id/llPlayerNavBar">
 
         <androidx.constraintlayout.widget.ConstraintLayout
             android:id="@+id/clPlayerContent"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:paddingHorizontal="24dp"
-            android:paddingTop="40dp"
+            android:paddingTop="8dp"
             android:paddingBottom="40dp">
 
-            <FrameLayout
+            <com.google.android.material.card.MaterialCardView
                 android:id="@+id/flPlayerHero"
                 android:layout_width="0dp"
-                android:layout_height="320dp"
+                android:layout_height="360dp"
                 android:layout_marginTop="20dp"
-                android:layout_marginHorizontal="20dp"
+                android:layout_marginHorizontal="4dp"
+                app:cardBackgroundColor="@android:color/transparent"
+                app:cardElevation="0dp"
+                app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Small"
+                app:strokeWidth="0dp"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toTopOf="parent">
@@ -62,7 +105,8 @@
                     android:clickable="false"
                     android:focusable="false"
                     android:scaleType="centerCrop"
-                    android:src="@android:color/transparent" />
+                    android:src="@android:color/transparent"
+                    app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Small" />
 
                 <com.example.sleppify.AnimatedEqualizerView
                     android:id="@+id/animatedEqPlayer"
@@ -72,13 +116,13 @@
                     android:layout_margin="12dp"
                     android:visibility="gone"
                     app:barColor="@color/stitch_blue" />
-            </FrameLayout>
+            </com.google.android.material.card.MaterialCardView>
 
             <LinearLayout
                 android:id="@+id/llPlayerInfo"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="18dp"
+                android:layout_marginTop="24dp"
                 android:orientation="vertical"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
@@ -118,7 +162,7 @@
                 android:id="@+id/hsSocialActions"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
+                android:layout_marginTop="8dp"
                 android:clipToPadding="false"
                 android:overScrollMode="never"
                 android:paddingHorizontal="6dp"
@@ -135,25 +179,48 @@
                     android:orientation="horizontal">
 
                     <LinearLayout
-                        android:id="@+id/actionLike"
+                        android:id="@+id/actionLikeDislike"
                         android:layout_width="wrap_content"
-                        android:layout_height="34dp"
+                        android:layout_height="37dp"
                         android:background="@drawable/bg_player_social_chip"
-                        android:clickable="true"
-                        android:focusable="true"
-                        android:foreground="?attr/selectableItemBackground"
                         android:gravity="center_vertical"
-                        android:orientation="horizontal"
-                        android:paddingHorizontal="10dp">
-                        <ImageView android:layout_width="16dp" android:layout_height="16dp" android:src="@drawable/ic_thumb_up_liked" />
-                        <TextView android:id="@+id/tvActionLikeCount" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="5dp" android:fontFamily="@font/inter_variable" android:text="0" android:textColor="@color/text_primary" android:textSize="13sp" android:textStyle="bold" />
+                        android:orientation="horizontal">
+
+                        <LinearLayout
+                            android:id="@+id/actionLike"
+                            android:layout_width="wrap_content"
+                            android:layout_height="match_parent"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:foreground="?attr/selectableItemBackground"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:paddingHorizontal="14dp">
+                            <ImageView android:layout_width="19dp" android:layout_height="19dp" android:src="@drawable/ic_thumb_up_liked" />
+                            <TextView android:id="@+id/tvActionLikeCount" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:fontFamily="@font/inter_variable" android:text="0" android:textColor="@color/text_primary" android:textSize="14sp" android:textStyle="bold" />
+                        </LinearLayout>
+
+                        <View android:layout_width="1dp" android:layout_height="18dp" android:background="#40FFFFFF" />
+
+                        <LinearLayout
+                            android:id="@+id/actionDislike"
+                            android:layout_width="wrap_content"
+                            android:layout_height="match_parent"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:foreground="?attr/selectableItemBackground"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:paddingHorizontal="14dp">
+                            <ImageView android:layout_width="19dp" android:layout_height="19dp" android:src="@drawable/ic_social_thumb_down" app:tint="@color/text_primary" />
+                        </LinearLayout>
                     </LinearLayout>
 
                     <LinearLayout
-                        android:id="@+id/actionDislike"
+                        android:id="@+id/actionComments"
                         android:layout_width="wrap_content"
-                        android:layout_height="34dp"
-                        android:layout_marginStart="12dp"
+                        android:layout_height="37dp"
+                        android:layout_marginStart="10dp"
                         android:background="@drawable/bg_player_social_chip"
                         android:clickable="true"
                         android:focusable="true"
@@ -161,40 +228,24 @@
                         android:gravity="center_vertical"
                         android:orientation="horizontal"
                         android:paddingHorizontal="14dp">
-                        <ImageView android:layout_width="16dp" android:layout_height="16dp" android:src="@drawable/ic_social_thumb_down" app:tint="@color/text_primary" />
-                        <TextView android:id="@+id/tvActionDislikeCount" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="5dp" android:fontFamily="@font/inter_variable" android:text="0" android:textColor="@color/text_primary" android:textSize="13sp" android:textStyle="bold" />
-                    </LinearLayout>
-
-                    <LinearLayout
-                        android:id="@+id/actionComments"
-                        android:layout_width="wrap_content"
-                        android:layout_height="34dp"
-                        android:layout_marginStart="12dp"
-                        android:background="@drawable/bg_player_social_chip"
-                        android:clickable="true"
-                        android:focusable="true"
-                        android:foreground="?attr/selectableItemBackground"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal"
-                        android:paddingHorizontal="10dp">
-                        <ImageView android:layout_width="16dp" android:layout_height="16dp" android:src="@drawable/ic_social_comment" app:tint="@color/text_primary" />
-                        <TextView android:id="@+id/tvActionCommentCount" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="5dp" android:fontFamily="@font/inter_variable" android:text="0" android:textColor="@color/text_primary" android:textSize="13sp" android:textStyle="bold" />
+                        <ImageView android:layout_width="19dp" android:layout_height="19dp" android:src="@drawable/ic_social_comment" app:tint="@color/text_primary" />
+                        <TextView android:id="@+id/tvActionCommentCount" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:fontFamily="@font/inter_variable" android:text="0" android:textColor="@color/text_primary" android:textSize="14sp" android:textStyle="bold" />
                     </LinearLayout>
 
                     <LinearLayout
                         android:id="@+id/actionFavorite"
                         android:layout_width="wrap_content"
-                        android:layout_height="34dp"
-                        android:layout_marginStart="12dp"
+                        android:layout_height="37dp"
+                        android:layout_marginStart="10dp"
                         android:background="@drawable/bg_player_social_chip"
                         android:clickable="true"
                         android:focusable="true"
                         android:foreground="?attr/selectableItemBackground"
                         android:gravity="center_vertical"
                         android:orientation="horizontal"
-                        android:paddingHorizontal="10dp">
-                        <ImageView android:id="@+id/ivActionFavoriteIcon" android:layout_width="16dp" android:layout_height="16dp" android:src="@drawable/ic_favorite_star" app:tint="@color/text_primary" />
-                        <TextView android:id="@+id/tvActionFavoriteLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:fontFamily="@font/inter_variable" android:text="Guardar en favoritos" android:textColor="@color/text_primary" android:textSize="13sp" android:textStyle="bold" />
+                        android:paddingHorizontal="14dp">
+                        <ImageView android:id="@+id/ivActionFavoriteIcon" android:layout_width="19dp" android:layout_height="19dp" android:src="@drawable/ic_favorite_star" app:tint="@color/text_primary" />
+                        <TextView android:id="@+id/tvActionFavoriteLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:fontFamily="@font/inter_variable" android:text="Guardar" android:textColor="@color/text_primary" android:textSize="14sp" android:textStyle="bold" />
                     </LinearLayout>
                 </LinearLayout>
             </HorizontalScrollView>
@@ -204,7 +255,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:minHeight="48dp"
-                android:layout_marginTop="18dp"
+                android:layout_marginTop="12dp"
                 android:max="1000"
                 android:progress="0"
                 android:thumbTint="@color/stitch_blue"
@@ -216,11 +267,11 @@
                 android:id="@+id/tvCurrentTime"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
+                android:layout_marginTop="-8dp"
                 android:fontFamily="@font/inter_variable"
                 android:text="00:00"
                 android:textColor="@color/text_secondary"
-                android:textSize="11sp"
+                android:textSize="13sp"
                 android:textStyle="bold"
                 app:layout_constraintStart_toStartOf="@id/sbPlaybackProgress"
                 app:layout_constraintTop_toBottomOf="@id/sbPlaybackProgress" />
@@ -229,11 +280,11 @@
                 android:id="@+id/tvTotalTime"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
+                android:layout_marginTop="-8dp"
                 android:fontFamily="@font/inter_variable"
                 android:text="00:00"
                 android:textColor="@color/text_secondary"
-                android:textSize="11sp"
+                android:textSize="13sp"
                 android:textStyle="bold"
                 app:layout_constraintEnd_toEndOf="@id/sbPlaybackProgress"
                 app:layout_constraintTop_toBottomOf="@id/sbPlaybackProgress" />
@@ -242,25 +293,25 @@
                 android:id="@+id/llPlayerControls"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="14dp"
+                android:layout_marginTop="8dp"
                 android:gravity="center"
                 android:orientation="horizontal"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toBottomOf="@id/tvCurrentTime">
 
-                <LinearLayout android:layout_width="44dp" android:layout_height="wrap_content" android:gravity="center_horizontal" android:orientation="vertical">
-                    <ImageButton android:id="@+id/btnShuffle" android:layout_width="44dp" android:layout_height="44dp" android:background="?attr/selectableItemBackgroundBorderless" android:padding="10dp" android:src="@drawable/ic_shuffle_custom" app:tint="@color/text_primary" />
+                <LinearLayout android:layout_width="64dp" android:layout_height="wrap_content" android:gravity="center_horizontal" android:orientation="vertical">
+                    <ImageButton android:id="@+id/btnShuffle" android:layout_width="64dp" android:layout_height="64dp" android:background="?attr/selectableItemBackgroundBorderless" android:padding="1dp" android:src="@drawable/ic_shuffle_custom" app:tint="@color/text_primary" />
                     <View android:id="@+id/vPlayerShuffleIndicator" android:layout_width="6dp" android:layout_height="6dp" android:layout_marginTop="2dp" android:background="@drawable/bg_mode_indicator_dot" android:visibility="gone" />
                 </LinearLayout>
 
-                <ImageButton android:id="@+id/btnPrev" android:layout_width="52dp" android:layout_height="52dp" android:layout_marginStart="8dp" android:background="?attr/selectableItemBackgroundBorderless" android:padding="10dp" android:src="@drawable/ic_player_skip_previous" app:tint="@color/text_primary" />
-                <ImageButton android:id="@+id/btnPlayPause" android:layout_width="72dp" android:layout_height="72dp" android:layout_marginHorizontal="8dp" android:background="@drawable/bg_player_center_button" android:padding="16dp" android:src="@drawable/ic_player_pause" app:tint="#0C0C0C" />
-                <ImageButton android:id="@+id/btnNext" android:layout_width="52dp" android:layout_height="52dp" android:layout_marginEnd="8dp" android:background="?attr/selectableItemBackgroundBorderless" android:padding="10dp" android:src="@drawable/ic_player_skip_next" app:tint="@color/text_primary" />
+                <ImageButton android:id="@+id/btnPrev" android:layout_width="76dp" android:layout_height="76dp" android:layout_marginStart="0dp" android:background="?attr/selectableItemBackgroundBorderless" android:padding="0dp" android:src="@drawable/ic_player_skip_previous" app:tint="@color/text_primary" />
+                <ImageButton android:id="@+id/btnPlayPause" android:layout_width="72dp" android:layout_height="72dp" android:layout_marginHorizontal="4dp" android:background="@drawable/bg_player_center_button" android:padding="5dp" android:src="@drawable/ic_player_pause" app:tint="#0C0C0C" />
+                <ImageButton android:id="@+id/btnNext" android:layout_width="76dp" android:layout_height="76dp" android:layout_marginEnd="0dp" android:background="?attr/selectableItemBackgroundBorderless" android:padding="0dp" android:src="@drawable/ic_player_skip_next" app:tint="@color/text_primary" />
 
-                <LinearLayout android:layout_width="52dp" android:layout_height="52dp" android:gravity="center_horizontal" android:orientation="vertical">
-                    <ImageButton android:id="@+id/btnRepeat" android:layout_width="44dp" android:layout_height="44dp" android:layout_marginTop="3dp" android:background="?attr/selectableItemBackgroundBorderless" android:padding="10dp" android:src="@drawable/ic_player_repeat" app:tint="@color/text_primary" />
-                    <View android:id="@+id/vPlayerRepeatIndicator" android:layout_width="6dp" android:layout_height="6dp" android:layout_marginTop="-4dp" android:background="@drawable/bg_mode_indicator_dot" android:visibility="invisible" />
+                <LinearLayout android:layout_width="64dp" android:layout_height="64dp" android:gravity="center_horizontal" android:orientation="vertical">
+                    <ImageButton android:id="@+id/btnRepeat" android:layout_width="64dp" android:layout_height="64dp" android:layout_marginTop="0dp" android:background="?attr/selectableItemBackgroundBorderless" android:padding="1dp" android:src="@drawable/ic_player_repeat" app:tint="@color/text_primary" />
+                    <View android:id="@+id/vPlayerRepeatIndicator" android:layout_width="6dp" android:layout_height="6dp" android:layout_marginTop="-6dp" android:background="@drawable/bg_mode_indicator_dot" android:visibility="invisible" />
                 </LinearLayout>
             </LinearLayout>
 

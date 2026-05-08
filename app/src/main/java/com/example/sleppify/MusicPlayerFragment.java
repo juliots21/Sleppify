@@ -284,6 +284,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             @NonNull List<YouTubeMusicService.PlaylistResult> playlists
     ) {
         List<YouTubeMusicService.TrackResult> mapped = new ArrayList<>();
+        Set<String> seenContentIds = new HashSet<>();
         for (YouTubeMusicService.PlaylistResult playlist : playlists) {
             String title = playlist.title;
             String subtitle;
@@ -294,6 +295,9 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             String playlistContentId = isLikedCollection
                     ? YouTubeMusicService.SPECIAL_LIKED_VIDEOS_ID
                     : playlist.playlistId;
+            if (!seenContentIds.add(playlistContentId)) {
+                continue;
+            }
             if (isLikedCollection) {
                 title = "Música que te gustó";
                 subtitle = playlist.itemCount > 0
@@ -381,17 +385,19 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             if (eIdx >= 0) libraryTracks.remove(eIdx);
             libraryTracks.add(injectionIndex++, customTrackResult);
         }
-        // Fetch Cloud Playlists if signed in
-        if (AuthManager.getInstance(requireContext()).isSignedIn()) {
+        // Fetch Cloud Playlists if signed in — guarded to prevent concurrent fetches
+        // causing duplicates when ensureFavoritesPlaylistInLibraryTracks is called multiple times
+        if (AuthManager.getInstance(requireContext()).isSignedIn() && !cloudPlaylistFetchInFlight) {
+            cloudPlaylistFetchInFlight = true;
             final int finalInjectionIdx = injectionIndex;
             CloudSyncManager.getInstance(requireContext()).fetchCloudPlaylists(cloudMap -> {
                 if (!isAdded()) return;
                 mainHandler.post(() -> {
+                    cloudPlaylistFetchInFlight = false;
                     if (!isAdded()) return;
                     for (Map.Entry<String, List<FavoritesPlaylistStore.FavoriteTrack>> entry : cloudMap.entrySet()) {
                         String name = entry.getKey();
                         String contentId = CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX + name;
-                        // Check if already in library
                         boolean alreadyHandled = false;
                         for (YouTubeMusicService.TrackResult r : libraryTracks) {
                             if (TextUtils.equals(r.contentId, contentId)) {
@@ -410,7 +416,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                             "playlist", contentId, name, sub, thumb
                         );
                         libraryTracks.add(finalInjectionIdx, cloudTr);
-                        if (adapter != null) adapter.notifyItemInserted(finalInjectionIdx);
+                        if (adapter != null) adapter.safeNotifyItemInserted(finalInjectionIdx);
                     }
                 });
             });
@@ -590,6 +596,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
     private boolean offlineAutoQueueScanInFlight;
     private boolean offlineQueueHadActiveWork;
     private boolean offlineManualQueueHadActiveWork;
+    private boolean cloudPlaylistFetchInFlight;
     @Nullable
     private OnBackPressedCallback clearSearchBackPressedCallback;
     private ActivityResultLauncher<Intent> signInLauncher;
@@ -2329,6 +2336,49 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                         }
                         hasMoreSearchPages = false;
                         nextSearchPageToken = "";
+                        String normalizedErr = normalizeForFilter(error);
+                        if (isYouTubeQuotaOrConfigIssue(normalizedErr)) {
+                            // API quota exhausted — retry via Innertube (no API key, no quota)
+                            setSearchLoadingState(true, "Buscando via YouTube Music...");
+                            youTubeMusicService.searchTracksViaInnertube(query, SEARCH_PAGE_SIZE, new YouTubeMusicService.SearchCallback() {
+                                @Override
+                                public void onSuccess(@NonNull List<YouTubeMusicService.TrackResult> resultTracks) {
+                                    if (!isAdded() || requestId != latestSearchRequestId) return;
+                                    setSearchLoadingState(false, "");
+                                    allTracks.clear();
+                                    allTracks.addAll(filterTracksByOrderedQuery(resultTracks, query));
+                                    activeSearchQuery = query;
+                                    applyActiveFilter(query);
+                                    if (allTracks.isEmpty()) {
+                                        tvMusicState.setText("No encontre resultados para: " + query);
+                                    }
+                                    dispatchQueuedSearchIfAny();
+                                }
+                                @Override
+                                public void onError(@NonNull String innerErr) {
+                                    if (!isAdded() || requestId != latestSearchRequestId) return;
+                                    // Final fallback: local library
+                                    setSearchLoadingState(false, "");
+                                    allTracks.clear();
+                                    allTracks.addAll(findSongsAcrossCachedPlaylists(query));
+                                    applyActiveFilter(query);
+                                    hasMoreSearchPages = false;
+                                    nextSearchPageToken = "";
+                                    activeSearchQuery = query;
+                                    if (allTracks.isEmpty()) {
+                                        tvMusicState.setText("Límite de API. No encontré canciones en tu biblioteca para: " + query);
+                                    } else {
+                                        tvMusicState.setText(String.format(
+                                                java.util.Locale.getDefault(),
+                                                "Límite de API. %d canciones de tu biblioteca.",
+                                                allTracks.size()
+                                        ));
+                                    }
+                                    dispatchQueuedSearchIfAny();
+                                }
+                            });
+                            return;
+                        }
                         setSearchLoadingState(false, "Error: " + error);
                         if (fromUserAction) {
                         }
@@ -5941,7 +5991,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         ) {
             this.onTrackClick = onTrackClick;
             this.onTrackMoreClick = onTrackMoreClick;
-            setHasStableIds(true);
+            setHasStableIds(false);
         }
         void invalidatePlaylistOfflineState(@Nullable String playlistId) {
             if (TextUtils.isEmpty(playlistId)) {
@@ -5961,7 +6011,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                     requestPlaylistOfflineStateRefreshAsync(candidateId, generation, true);
                 }
                 if (!data.isEmpty()) {
-                    notifyItemRangeChanged(0, data.size());
+                    safeNotify(() -> notifyItemRangeChanged(0, data.size()));
                 }
             } else {
                 // For single playlist, remove from cache and recalculate from files
@@ -5969,7 +6019,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 requestPlaylistOfflineStateRefreshAsync(playlistId, playlistOfflineStateGeneration, true);
                 int updatedPosition = findPlaylistPositionById(playlistId);
                 if (updatedPosition >= 0) {
-                    notifyItemChanged(updatedPosition);
+                    safeNotify(() -> notifyItemChanged(updatedPosition));
                 }
             }
         }
@@ -5994,7 +6044,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             // Also update UI immediately if position found
             int position = findPlaylistPositionById(playlistId);
             if (position >= 0) {
-                notifyItemChanged(position, PAYLOAD_OFFLINE_STATE);
+                safeNotify(() -> notifyItemChanged(position, PAYLOAD_OFFLINE_STATE));
             }
         }
 
@@ -6004,10 +6054,10 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             int previousPosition = findPlaylistPositionById(previous);
             int currentPosition = findPlaylistPositionById(current);
             if (previousPosition >= 0) {
-                notifyItemChanged(previousPosition, PAYLOAD_PLAYBACK_STATE);
+                safeNotify(() -> notifyItemChanged(previousPosition, PAYLOAD_PLAYBACK_STATE));
             }
             if (currentPosition >= 0) {
-                notifyItemChanged(currentPosition, PAYLOAD_PLAYBACK_STATE);
+                safeNotify(() -> notifyItemChanged(currentPosition, PAYLOAD_PLAYBACK_STATE));
             }
         }
         @Override
@@ -6028,7 +6078,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 return;
             }
             this.searchMode = searchMode;
-            notifyDataSetChanged();
+            safeNotify(this::notifyDataSetChanged);
         }
 
         /**
@@ -6037,13 +6087,68 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
          */
         void notifyPlaybackStateChanged() {
             if (data.isEmpty()) return;
-            // Notify all items with playback state payload to update playing indicators
-            notifyItemRangeChanged(0, data.size(), PAYLOAD_PLAYBACK_STATE);
+            safeNotify(() -> notifyItemRangeChanged(0, data.size(), PAYLOAD_PLAYBACK_STATE));
         }
 
+        void safeNotifyItemInserted(int position) {
+            safeNotify(() -> notifyItemInserted(position));
+        }
+
+        /**
+         * Dispatches a notify* call only when the RecyclerView is NOT computing a layout
+         * or scrolling. If it is busy, re-queues with a short postDelayed until safe.
+         * This prevents both IndexOutOfBoundsException (inconsistency) and
+         * IllegalStateException (cannot call while computing layout).
+         */
+        private void safeNotify(@NonNull Runnable notifyAction) {
+            dispatchWhenIdle(notifyAction, 0);
+        }
+
+        private void dispatchWhenIdle(@NonNull Runnable action, int attempt) {
+            RecyclerView rv = rvMusicResults;
+            if (rv == null) {
+                action.run();
+                return;
+            }
+            if (!rv.isComputingLayout() && !rv.isLayoutRequested()) {
+                action.run();
+            } else {
+                int delay = attempt < 3 ? 16 : 32;
+                mainHandler.postDelayed(() -> dispatchWhenIdle(action, attempt + 1), delay);
+            }
+        }
+
+        // pendingIncoming: the latest list waiting to be diffed. null = no work in flight.
+        // Set to non-null on UI thread; cleared to null on background thread before computing diff.
+        private final java.util.concurrent.atomic.AtomicReference<List<YouTubeMusicService.TrackResult>>
+                pendingIncoming = new java.util.concurrent.atomic.AtomicReference<>(null);
+        private boolean diffInFlight = false;
+        private final android.os.Handler mainHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+
         void submitResults(@NonNull List<YouTubeMusicService.TrackResult> newData) {
-            List<YouTubeMusicService.TrackResult> previous = new ArrayList<>(data);
-            List<YouTubeMusicService.TrackResult> incoming = new ArrayList<>(newData);
+            // Always runs on UI thread. Store the incoming list as the latest pending.
+            pendingIncoming.set(new ArrayList<>(newData));
+            if (diffInFlight) {
+                // A diff is already running; it will pick up pendingIncoming when it finishes.
+                return;
+            }
+            diffInFlight = true;
+            scheduleDiffWork();
+        }
+
+        private void dispatchDiffResult(@NonNull DiffUtil.DiffResult ignored) {
+            // No-op: data swap + notify is handled atomically in applyDataAndNotify()
+        }
+
+        private void scheduleDiffWork() {
+            // Called on UI thread. Snapshot data and the latest pending list.
+            final List<YouTubeMusicService.TrackResult> previous = new ArrayList<>(data);
+            final List<YouTubeMusicService.TrackResult> incoming = pendingIncoming.getAndSet(null);
+            if (incoming == null) {
+                diffInFlight = false;
+                return;
+            }
+            STREAMING_WARMUP_EXECUTOR.execute(() -> {
             DiffUtil.DiffResult diffResult = DiffUtil.calculateDiff(new DiffUtil.Callback() {
                 @Override
                 public int getOldListSize() {
@@ -6075,83 +6180,74 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                             && TextUtils.equals(oldItem.thumbnailUrl, newItem.thumbnailUrl);
                 }
             });
-            data.clear();
-            data.addAll(incoming);
-            
-            // ✅ Rebuild playlist position cache ATOMICALLY before notifying
-            // Build new cache completely BEFORE modifying existing one to avoid race conditions
-            Map<String, Integer> newPositionCache = new HashMap<>();
-            for (int i = 0; i < incoming.size(); i++) {
-                YouTubeMusicService.TrackResult item = incoming.get(i);
-                if ("playlist".equals(item.resultType) && !TextUtils.isEmpty(item.contentId)) {
-                    newPositionCache.put(item.contentId, i);
-                }
-            }
-            // Synchronize cache update to prevent race conditions with findPlaylistPositionById() reads
-            synchronized (playlistPositionCache) {
-                playlistPositionCache.clear();
-                playlistPositionCache.putAll(newPositionCache);
-            }
-            // Don't increment playlistOfflineStateGeneration here - let existing async callbacks complete
-            // Don't clear the entire cache - keep existing entries for playlists still in the list
-            // and only remove entries for playlists that are no longer present
-            Set<String> incomingPlaylistIds = new HashSet<>();
-            for (YouTubeMusicService.TrackResult item : incoming) {
-                if (!"playlist".equals(item.resultType)) continue;
-                String playlistId = item.contentId == null ? "" : item.contentId.trim();
-                if (!playlistId.isEmpty()) incomingPlaylistIds.add(playlistId);
-            }
-            // Remove cache entries for playlists no longer in the list
-            playlistOfflineCompleteCache.keySet().removeIf(id -> !incomingPlaylistIds.contains(id));
-            playlistOfflineRefreshInFlight.clear();
-            // Request refresh for all playlists to ensure state is up-to-date
-            // If forceNextOfflineRecalculation is set (after pull-to-refresh), force recalculation from files
-            boolean forceRecalc = forceNextOfflineRecalculation;
-            forceNextOfflineRecalculation = false; // Consume the flag
-            for (YouTubeMusicService.TrackResult item : incoming) {
-                if (!"playlist".equals(item.resultType)) {
-                    continue;
-                }
-                String playlistId = item.contentId == null ? "" : item.contentId.trim();
-                if (playlistId.isEmpty()) {
-                    continue;
-                }
-                // If forcing recalculation, bypass cache and check actual files
-                // Otherwise use cached value as fallback until async completes
-                if (forceRecalc) {
-                    requestPlaylistOfflineStateRefreshAsync(playlistId, playlistOfflineStateGeneration, true);
-                } else if (!playlistOfflineCompleteCache.containsKey(playlistId)) {
-                    // Only request if not cached
-                    requestPlaylistOfflineStateRefreshAsync(playlistId, playlistOfflineStateGeneration, false);
-                }
-            }
-            if (searchMode) {
-                diffResult.dispatchUpdatesTo(this);
-            } else {
-                // Adjust for the fixed row at position 0
-                final int offset = 1; // header row reserved at position 0
-                diffResult.dispatchUpdatesTo(new androidx.recyclerview.widget.ListUpdateCallback() {
-                    @Override
-                    public void onInserted(int position, int count) {
-                        notifyItemRangeInserted(position + offset, count);
-                    }
+            mainHandler.post(() -> {
+                boolean forceRecalc = forceNextOfflineRecalculation;
+                forceNextOfflineRecalculation = false;
+                applyDataAndNotify(incoming, forceRecalc);
+            }); // end mainHandler.post
+            }); // end STREAMING_WARMUP_EXECUTOR.execute
+        }
 
-                    @Override
-                    public void onRemoved(int position, int count) {
-                        notifyItemRangeRemoved(position + offset, count);
-                    }
+        /**
+         * Atomically swaps 'data', rebuilds caches, and posts notifyDataSetChanged via rv.post().
+         * The key insight: data swap and notify must happen in the SAME rv.post() callback so
+         * the RecyclerView never sees a stale item count during onMeasure/dispatchLayoutStep1.
+         */
+        private void applyDataAndNotify(
+                @NonNull List<YouTubeMusicService.TrackResult> incoming,
+                boolean forceRecalc) {
+            RecyclerView rv = rvMusicResults;
+            Runnable applyAndNotify = () -> {
+                // Swap data
+                data.clear();
+                data.addAll(incoming);
 
-                    @Override
-                    public void onMoved(int fromPosition, int toPosition) {
-                        notifyItemMoved(fromPosition + offset, toPosition + offset);
+                // Rebuild position cache atomically
+                Map<String, Integer> newPositionCache = new HashMap<>();
+                for (int i = 0; i < incoming.size(); i++) {
+                    YouTubeMusicService.TrackResult item = incoming.get(i);
+                    if ("playlist".equals(item.resultType) && !TextUtils.isEmpty(item.contentId)) {
+                        newPositionCache.put(item.contentId, i);
                     }
+                }
+                synchronized (playlistPositionCache) {
+                    playlistPositionCache.clear();
+                    playlistPositionCache.putAll(newPositionCache);
+                }
 
-                    @Override
-                    public void onChanged(int position, int count, Object payload) {
-                        notifyItemRangeChanged(position + offset, count, payload);
+                // Trim offline cache
+                Set<String> incomingPlaylistIds = new HashSet<>();
+                for (YouTubeMusicService.TrackResult item : incoming) {
+                    if (!"playlist".equals(item.resultType)) continue;
+                    String pid = item.contentId == null ? "" : item.contentId.trim();
+                    if (!pid.isEmpty()) incomingPlaylistIds.add(pid);
+                }
+                playlistOfflineCompleteCache.keySet().removeIf(id -> !incomingPlaylistIds.contains(id));
+                playlistOfflineRefreshInFlight.clear();
+
+                // Notify AFTER data is consistent
+                notifyDataSetChanged();
+
+                // Schedule offline refresh AFTER notify
+                for (YouTubeMusicService.TrackResult item : incoming) {
+                    if (!"playlist".equals(item.resultType)) continue;
+                    String pid = item.contentId == null ? "" : item.contentId.trim();
+                    if (pid.isEmpty()) continue;
+                    if (forceRecalc) {
+                        requestPlaylistOfflineStateRefreshAsync(pid, playlistOfflineStateGeneration, true);
+                    } else if (!playlistOfflineCompleteCache.containsKey(pid)) {
+                        requestPlaylistOfflineStateRefreshAsync(pid, playlistOfflineStateGeneration, false);
                     }
-                });
-            }
+                }
+
+                // Chain next diff if pending
+                if (pendingIncoming.get() != null) {
+                    scheduleDiffWork();
+                } else {
+                    diffInFlight = false;
+                }
+            };
+            dispatchWhenIdle(applyAndNotify, 0);
         }
         @NonNull
         @Override
@@ -6480,10 +6576,9 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                     }
                     int updatedPosition = findPlaylistPositionById(playlistId);
                     if (updatedPosition >= 0) {
-                        notifyItemChanged(updatedPosition, PAYLOAD_OFFLINE_STATE);
+                        safeNotify(() -> notifyItemChanged(updatedPosition, PAYLOAD_OFFLINE_STATE));
                     } else {
-                        // Fallback: update visible items' offline state payload instead of full invalidate
-                        notifyItemRangeChanged(0, data.size(), PAYLOAD_OFFLINE_STATE);
+                        safeNotify(() -> notifyItemRangeChanged(0, data.size(), PAYLOAD_OFFLINE_STATE));
                     }
                 });
             });

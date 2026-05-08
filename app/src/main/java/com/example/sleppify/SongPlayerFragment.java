@@ -69,6 +69,7 @@ import androidx.core.view.ViewCompat;
 import androidx.core.widget.NestedScrollView;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentManager;
+import androidx.palette.graphics.Palette;
 import androidx.recyclerview.widget.ItemTouchHelper;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.ListAdapter;
@@ -119,6 +120,8 @@ public class SongPlayerFragment extends Fragment {
     public static final String ARG_IS_TEMPORARY_PLAYER = "arg_is_temporary_player";
 
     private static final String PREFS_PLAYER_STATE = "player_state";
+    private static final String PREFS_BACKDROP_COLORS = "sleppify_backdrop_colors";
+    private static final int BACKDROP_COLOR_PREFS_MAX = 200;
     private static final String PREF_SOCIAL_STATS_PREFIX = "yt_social_stats_";
     private static final String PREF_LAST_PLAYLIST_ID = "stream_last_playlist_id";
     private static final String PREF_LAST_PLAYLIST_TITLE = "stream_last_playlist_title";
@@ -178,7 +181,6 @@ public class SongPlayerFragment extends Fragment {
     private TextView tvPlayerTitle;
     private TextView tvPlayerArtist;
     private TextView tvActionLikeCount;
-    private TextView tvActionDislikeCount;
     private TextView tvActionCommentCount;
     private TextView tvActionFavoriteLabel;
     private TextView tvCurrentTime;
@@ -189,6 +191,9 @@ public class SongPlayerFragment extends Fragment {
     private AudioDeviceCallback audioDeviceCallback;
     private boolean audioDeviceCallbackRegistered = false;
     private View llQueueTrigger;
+    private View llPlayerNavBar;
+    private ImageButton btnPlayerClose;
+    private ImageButton btnPlayerMore;
     private SeekBar sbPlaybackProgress;
     private NestedScrollView svSongPlayerContent;
     private ImageButton btnShuffle;
@@ -319,7 +324,14 @@ public class SongPlayerFragment extends Fragment {
     private CustomTarget<Bitmap> notificationArtworkTarget;
     @NonNull
     private String activeNotificationArtworkVideoId = "";
-    private CustomTarget<Drawable> playerBackdropTarget;
+
+    private View playerBackgroundContainer;
+    private final java.util.LinkedHashMap<String, Integer> dominantColorCache = new java.util.LinkedHashMap<String, Integer>(50, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry eldest) {
+            return size() > 50;
+        }
+    };
     @Nullable
     private Runnable deferredBackdropLoadRunnable;
     @Nullable
@@ -485,7 +497,9 @@ public class SongPlayerFragment extends Fragment {
 
         // ✅ CRITICAL: Only findViewById here (fast path)
         ivPlayerCover = view.findViewById(R.id.ivPlayerCover);
+        // ivPlayerBackdrop now only used as container for background color
         ivPlayerBackdrop = view.findViewById(R.id.ivPlayerBackdrop);
+        playerBackgroundContainer = ivPlayerBackdrop;
         animatedEqPlayer = view.findViewById(R.id.animatedEqPlayer);
         flPlayerHero = view.findViewById(R.id.flPlayerHero);
         playerArtworkBootstrapPending = true;
@@ -497,7 +511,6 @@ public class SongPlayerFragment extends Fragment {
         actionComments = view.findViewById(R.id.actionComments);
         actionFavorite = view.findViewById(R.id.actionFavorite);
         tvActionLikeCount = view.findViewById(R.id.tvActionLikeCount);
-        tvActionDislikeCount = view.findViewById(R.id.tvActionDislikeCount);
         tvActionCommentCount = view.findViewById(R.id.tvActionCommentCount);
         tvActionFavoriteLabel = view.findViewById(R.id.tvActionFavoriteLabel);
         ivActionFavoriteIcon = view.findViewById(R.id.ivActionFavoriteIcon);
@@ -512,6 +525,33 @@ public class SongPlayerFragment extends Fragment {
         btnPlayPause = view.findViewById(R.id.btnPlayPause);
         llQueueTrigger = view.findViewById(R.id.llQueueTrigger);
         llQueueTrigger.setOnClickListener(v -> showQueueBottomSheet());
+        llPlayerNavBar = view.findViewById(R.id.llPlayerNavBar);
+        btnPlayerClose = view.findViewById(R.id.btnPlayerClose);
+        btnPlayerMore = view.findViewById(R.id.btnPlayerMore);
+        if (btnPlayerClose != null) {
+            btnPlayerClose.setOnClickListener(v -> collapseToMiniMode(true));
+        }
+        if (btnPlayerMore != null) {
+            btnPlayerMore.setOnClickListener(v -> {
+                android.widget.PopupMenu popup = new android.widget.PopupMenu(requireContext(), btnPlayerMore);
+                popup.getMenu().add(0, 1, 0, "Añadir a playlist");
+                popup.getMenu().add(0, 2, 1, "Compartir");
+                popup.show();
+            });
+        }
+        // Apply status-bar inset to the internal nav bar so buttons sit below the status bar
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(view, (v, insets) -> {
+            int statusBarHeight = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars()).top;
+            if (llPlayerNavBar != null) {
+                llPlayerNavBar.setPadding(
+                    llPlayerNavBar.getPaddingLeft(),
+                    statusBarHeight,
+                    llPlayerNavBar.getPaddingRight(),
+                    llPlayerNavBar.getPaddingBottom()
+                );
+            }
+            return insets;
+        });
         tvDeviceName = view.findViewById(R.id.tvDeviceName);
         ivDeviceIcon = view.findViewById(R.id.ivDeviceIcon);
 
@@ -521,6 +561,7 @@ public class SongPlayerFragment extends Fragment {
 
             playerStatePrefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
             settingsPrefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Activity.MODE_PRIVATE);
+            loadBackdropColorCache();
             loadPlaybackModesFromSettings();
             setupSocialActions();
             updatePlayerSurfaceForSource();
@@ -2727,13 +2768,7 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void clearPlayerBackdropRequest() {
-        if (playerBackdropTarget == null) {
-            return;
-        }
-        if (isAdded()) {
-            Glide.with(this).clear(playerBackdropTarget);
-        }
-        playerBackdropTarget = null;
+        // Backdrop now uses solid background color - no Glide request to clear
     }
 
     private void clearNotificationArtworkRequest() {
@@ -2792,25 +2827,21 @@ public class SongPlayerFragment extends Fragment {
                         if (!isAdded() || !TextUtils.equals(activeCoverVideoId, requestVideoId)) {
                             return;
                         }
-                        ivPlayerCover.setImageBitmap(processedResource);
                         ivPlayerCover.animate().cancel();
                         ivPlayerCover.setTranslationX(0f);
                         ivPlayerCover.setAlpha(0f);
-                        if (!bootstrapArtwork) {
-                            ivPlayerCover.animate()
-                                .alpha(1f)
-                                .setDuration(500L)
-                                .withLayer()
-                                .setInterpolator(new android.view.animation.LinearInterpolator())
-                                .start();
-                        } else {
-                            ivPlayerCover.animate()
-                                .alpha(1f)
-                                .setDuration(500L)
-                                .withLayer()
-                                .setInterpolator(new android.view.animation.LinearInterpolator())
-                                .start();
-                        }
+                        // Set image and promote to hardware layer BEFORE starting the animation.
+                        // This uploads the bitmap to the GPU in the current vsync so the first
+                        // animated frame has zero upload cost — eliminating the "10fps" jank.
+                        ivPlayerCover.setImageBitmap(processedResource);
+                        ivPlayerCover.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null);
+                        ivPlayerCover.animate()
+                            .alpha(1f)
+                            .setDuration(420L)
+                            .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                            .withEndAction(() -> ivPlayerCover.setLayerType(
+                                    android.view.View.LAYER_TYPE_NONE, null))
+                            .start();
                         adjustPlayerHeroForCover(processedResource);
                         cacheMediaNotificationArtwork(requestVideoId, processedResource);
                         updateMediaSessionMetadata();
@@ -2877,7 +2908,7 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void loadPlayerBackdrop(@NonNull PlayerTrack track, boolean bootstrapArtwork) {
-        if (!isAdded() || getActivity() == null || ivPlayerBackdrop == null) {
+        if (!isAdded() || getActivity() == null || playerBackgroundContainer == null) {
             completePlayerArtworkBootstrap();
             return;
         }
@@ -2889,61 +2920,78 @@ public class SongPlayerFragment extends Fragment {
         activeBackdropVideoId = requestVideoId;
         clearPlayerBackdropRequest();
 
+        // Loading state: mostrar fondo negro inmediatamente
         if (!bootstrapArtwork) {
             fadeOutBackdropToBlack();
         }
 
         if (TextUtils.isEmpty(preferredImageUrl)) {
-            ivPlayerBackdrop.setImageDrawable(null);
-            ivPlayerBackdrop.setAlpha(0f);
+            fadeOutBackdropToBlack();
             completePlayerArtworkBootstrap();
             return;
         }
 
-        playerBackdropTarget = new CustomTarget<Drawable>() {
+        // Verificar si el color ya está cacheado
+        Integer cachedColor = dominantColorCache.get(requestVideoId);
+        if (cachedColor != null) {
+            revealBackdropWithFadeToColor(cachedColor);
+            if (bootstrapArtwork) {
+                completePlayerArtworkBootstrap();
+            }
+            return;
+        }
+
+        com.bumptech.glide.request.target.CustomTarget<Bitmap> backdropTarget = new com.bumptech.glide.request.target.CustomTarget<Bitmap>() {
             @Override
-            public void onResourceReady(@NonNull Drawable resource, @Nullable Transition<? super Drawable> transition) {
+            public void onResourceReady(@NonNull Bitmap bitmap, @Nullable Transition<? super Bitmap> transition) {
                 if (!isAdded() || !TextUtils.equals(activeBackdropVideoId, requestVideoId)) {
                     return;
                 }
 
-                ivPlayerBackdrop.setImageDrawable(resource);
-                applyPlayerBackdropBlur();
-                revealBackdropWithFade();
-                if (bootstrapArtwork) {
-                    completePlayerArtworkBootstrap();
-                }
+                // Extraer color dominante usando Palette
+                Palette.from(bitmap).generate(palette -> {
+                    if (!isAdded() || !TextUtils.equals(activeBackdropVideoId, requestVideoId)) {
+                        return;
+                    }
+
+                    int dominantColor = palette.getDominantColor(Color.BLACK);
+                    dominantColorCache.put(requestVideoId, dominantColor);
+                    saveBackdropColor(requestVideoId, dominantColor);
+                    revealBackdropWithFadeToColor(dominantColor);
+
+                    if (bootstrapArtwork) {
+                        completePlayerArtworkBootstrap();
+                    }
+                });
             }
 
             @Override
-            public void onLoadCleared(@Nullable Drawable placeholder) {
+            public void onLoadCleared(@Nullable android.graphics.drawable.Drawable placeholder) {
                 if (!isAdded()) {
                     return;
                 }
-                ivPlayerBackdrop.setImageDrawable(null);
-                ivPlayerBackdrop.setAlpha(0f);
+                fadeOutBackdropToBlack();
             }
 
             @Override
-            public void onLoadFailed(@Nullable Drawable errorDrawable) {
+            public void onLoadFailed(@Nullable android.graphics.drawable.Drawable errorDrawable) {
                 if (!isAdded() || !TextUtils.equals(activeBackdropVideoId, requestVideoId)) {
                     return;
                 }
 
-                ivPlayerBackdrop.setImageDrawable(null);
-                ivPlayerBackdrop.setAlpha(0f);
+                fadeOutBackdropToBlack();
                 completePlayerArtworkBootstrap();
             }
         };
 
         com.bumptech.glide.RequestManager requestManager = Glide.with(this);
-        // ✅ OPTIMIZATION: Use LOW priority and skip memory cache for backdrop
+        // Load small bitmap (16x16) to extract dominant color only - not for display
         requestManager
-                .asDrawable()
+                .asBitmap()
                 .load(preferredImageUrl)
                 .priority(com.bumptech.glide.Priority.LOW)
                 .centerCrop()
-                .override(100, 100)
+                .override(16, 16)
                 .diskCacheStrategy(DiskCacheStrategy.ALL)
                 .skipMemoryCache(true)
                 .error(
@@ -2951,15 +2999,15 @@ public class SongPlayerFragment extends Fragment {
                                 || TextUtils.equals(preferredImageUrl, fallbackImageUrl)
                                 ? null
                                 : requestManager
-                                        .asDrawable()
+                                        .asBitmap()
                                         .load(fallbackImageUrl)
                                         .priority(com.bumptech.glide.Priority.LOW)
                                         .centerCrop()
-                                        .override(100, 100)
+                                        .override(16, 16)
                                         .diskCacheStrategy(DiskCacheStrategy.ALL)
                                         .skipMemoryCache(true)
                 )
-                .into(playerBackdropTarget);
+                .into(backdropTarget);
     }
 
     @NonNull
@@ -3055,12 +3103,9 @@ public class SongPlayerFragment extends Fragment {
             // ✅ PRIORITY 1: Load cover art (visible immediately)
             loadPlayerCover(track, bootstrapArtwork, coverAnimationDirection);
 
-            // ✅ BACKDROP: Fade to black immediately, then load new image after delay
-            // This ensures no old backdrop remains visible during track change
-            if (!bootstrapArtwork && ivPlayerBackdrop != null) {
-                ivPlayerBackdrop.animate().cancel();
-                ivPlayerBackdrop.setAlpha(0f);
-                ivPlayerBackdrop.setImageDrawable(null);
+            // ✅ BACKDROP: Set to black immediately (now using solid background, not image)
+            if (!bootstrapArtwork && playerBackgroundContainer != null) {
+                fadeOutBackdropToBlack();
             }
 
             // ✅ DEFERRED: Backdrop and notification artwork (not immediately visible)
@@ -3074,6 +3119,11 @@ public class SongPlayerFragment extends Fragment {
         }
 
         // ✅ Notification artwork can load regardless of player visibility
+        // Clear stale artwork immediately so the notification doesn't show the previous track's image
+        if (!bootstrapArtwork) {
+            clearMediaNotificationArtwork();
+            updateMediaNotification();
+        }
         if (getView() != null) {
             getView().postDelayed(() -> {
                 if (!isAdded()) return;
@@ -3405,15 +3455,6 @@ public class SongPlayerFragment extends Fragment {
     private void applySocialStatsToUi(@NonNull SocialStats stats) {
         if (tvActionLikeCount != null) {
             tvActionLikeCount.setText(stats.likeCount);
-        }
-        if (tvActionDislikeCount != null) {
-            // Only show dislike count if it's not "0" or just hide it as requested
-            if ("0".equals(stats.dislikeCount) || TextUtils.isEmpty(stats.dislikeCount)) {
-                tvActionDislikeCount.setVisibility(View.GONE);
-            } else {
-                tvActionDislikeCount.setVisibility(View.VISIBLE);
-                tvActionDislikeCount.setText(stats.dislikeCount);
-            }
         }
         if (tvActionCommentCount != null) {
             tvActionCommentCount.setText(stats.commentCount);
@@ -3894,13 +3935,7 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void applyPlayerBackdropBlur() {
-        if (ivPlayerBackdrop == null) {
-            return;
-        }
-
-        // Backdrop image is decoded at 100x100px (override in Glide) and scaled up by the ImageView,
-        // producing a natural pixelation blur — zero GPU cost at render time.
-        ivPlayerBackdrop.setAlpha(0.60f);
+        // Ya no es necesario - el fondo sólido no necesita blur
     }
 
     private void updatePlayerSurfaceForSource() {
@@ -4163,6 +4198,9 @@ public class SongPlayerFragment extends Fragment {
 
     private void updateMediaNotification() {
         if (mediaSession == null || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) {
+            if (persistentAppContext != null) {
+                PlaybackKeepAliveService.stop(persistentAppContext);
+            }
             return;
         }
         if (persistentAppContext == null) return;
@@ -4192,6 +4230,7 @@ public class SongPlayerFragment extends Fragment {
                 .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
                 .setContentIntent(contentIntent)
                 .setSilent(true)
+                .setOnlyAlertOnce(true)
                 .setOngoing(isPlaying)
                 .addAction(android.R.drawable.ic_media_previous, "Anterior", prevIntent)
                 .addAction(
@@ -4208,7 +4247,15 @@ public class SongPlayerFragment extends Fragment {
             builder.setLargeIcon(mediaSessionArtwork);
         }
 
-        NotificationManagerCompat.from(persistentAppContext).notify(MEDIA_NOTIFICATION_ID, builder.build());
+        android.app.Notification notification = builder.build();
+        NotificationManagerCompat.from(persistentAppContext).notify(MEDIA_NOTIFICATION_ID, notification);
+
+        // Keep process alive while playing so the MediaSession binder stays valid in background
+        if (isPlaying) {
+            PlaybackKeepAliveService.start(persistentAppContext, notification);
+        } else {
+            PlaybackKeepAliveService.stop(persistentAppContext);
+        }
     }
 
     private void ensureMediaNotificationChannel() {
@@ -5074,8 +5121,7 @@ public class SongPlayerFragment extends Fragment {
         }
         if (ivPlayerBackdrop != null) {
             ivPlayerBackdrop.animate().cancel();
-            ivPlayerBackdrop.setImageDrawable(null);
-            ivPlayerBackdrop.setAlpha(0f);
+            ivPlayerBackdrop.setBackgroundColor(Color.BLACK);
         }
     }
 
@@ -5120,23 +5166,120 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void revealBackdropWithFade() {
-        if (ivPlayerBackdrop == null) {
-            return;
+        // Replaced by revealBackdropWithFadeToColor
+    }
+
+    /**
+     * Tones down a raw dominant color so it is not too vivid:
+     * - Reduces saturation to ~45% max
+     * - Reduces lightness to ~28% max (dark but not black)
+     */
+    private int muteBackdropColor(int rawColor) {
+        float[] hsl = new float[3];
+        androidx.core.graphics.ColorUtils.colorToHSL(rawColor, hsl);
+        // Keep hue intact. Boost saturation slightly for dull colors, cap vivid ones.
+        hsl[1] = Math.max(hsl[1], 0.35f);   // boost minimum saturation so grey covers look tinted
+        hsl[1] = Math.min(hsl[1], 0.80f);   // cap so neon colors don’t burn
+        // Target lightness: ~32–40% — dark enough to read text, light enough to feel like YouTube Music
+        hsl[2] = Math.max(hsl[2], 0.18f);   // floor: never completely black
+        hsl[2] = Math.min(hsl[2], 0.40f);   // ceiling: never too bright
+        return androidx.core.graphics.ColorUtils.HSLToColor(hsl);
+    }
+
+    /**
+     * Builds a top→bottom gradient from {@code topColor} to a darker variant of it.
+     * The bottom colour is derived by dropping lightness ~40 % further, but never
+     * below 6 % (very dark, not pure black), so there is always a visible gradient.
+     */
+    private android.graphics.drawable.GradientDrawable buildBackdropGradient(int topColor) {
+        float[] hsl = new float[3];
+        androidx.core.graphics.ColorUtils.colorToHSL(topColor, hsl);
+        // Mid stop: same hue/sat, lightness cut to ~45% of top
+        float midL = Math.max(0.07f, hsl[2] * 0.45f);
+        hsl[2] = midL;
+        int midColor = androidx.core.graphics.ColorUtils.HSLToColor(hsl);
+        // Bottom stop: near-black but tinted (keeps gradient from looking totally dead)
+        float bottomL = Math.max(0.04f, hsl[2] * 0.35f);
+        hsl[2] = bottomL;
+        int bottomColor = androidx.core.graphics.ColorUtils.HSLToColor(hsl);
+
+        android.graphics.drawable.GradientDrawable gd = new android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{topColor, midColor, bottomColor}
+        );
+        gd.setGradientType(android.graphics.drawable.GradientDrawable.LINEAR_GRADIENT);
+        return gd;
+    }
+
+    private void revealBackdropWithFadeToColor(int rawDominantColor) {
+        if (playerBackgroundContainer == null) return;
+
+        final int mutedColor = muteBackdropColor(rawDominantColor);
+        final android.graphics.drawable.GradientDrawable targetGradient = buildBackdropGradient(mutedColor);
+
+        // Snapshot the current background for the cross-fade start point
+        android.graphics.drawable.Drawable currentBg = playerBackgroundContainer.getBackground();
+        final int startColor;
+        if (currentBg instanceof android.graphics.drawable.GradientDrawable) {
+            // Extract the top color stored in the tag, fallback to near-black
+            Object tag = playerBackgroundContainer.getTag(R.id.tag_backdrop_top_color);
+            startColor = (tag instanceof Integer) ? (int) tag : 0xFF0A0A0A;
+        } else if (currentBg instanceof android.graphics.drawable.ColorDrawable) {
+            startColor = ((android.graphics.drawable.ColorDrawable) currentBg).getColor();
+        } else {
+            startColor = 0xFF0A0A0A;
         }
 
-        ivPlayerBackdrop.animate().cancel();
-        // Apply blur first, before starting animation, to avoid GPU overload during fade
-        applyPlayerBackdropBlur();
-        // Image decoded at 100x100px acts as natural blur when scaled up — no GPU cost
-        float targetAlpha = 0.60f;
+        android.animation.ValueAnimator anim = android.animation.ValueAnimator
+                .ofObject(new android.animation.ArgbEvaluator(), startColor, mutedColor);
+        anim.setDuration(600L);
+        anim.setInterpolator(new android.view.animation.DecelerateInterpolator());
+        anim.addUpdateListener(va -> {
+            if (playerBackgroundContainer == null) return;
+            int interpolated = (int) va.getAnimatedValue();
+            android.graphics.drawable.GradientDrawable frame = buildBackdropGradient(interpolated);
+            playerBackgroundContainer.setBackground(frame);
+            playerBackgroundContainer.setTag(R.id.tag_backdrop_top_color, interpolated);
+        });
+        anim.addListener(new android.animation.AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(android.animation.Animator animation) {
+                if (playerBackgroundContainer == null) return;
+                playerBackgroundContainer.setBackground(targetGradient);
+                playerBackgroundContainer.setTag(R.id.tag_backdrop_top_color, mutedColor);
+            }
+        });
+        anim.start();
+    }
 
-        ivPlayerBackdrop.setAlpha(0f);
-        ivPlayerBackdrop.animate()
-            .alpha(targetAlpha)
-            .setDuration(PLAYER_BACKDROP_FADE_IN_DURATION_MS)
-            .withLayer()
-            .setInterpolator(new android.view.animation.LinearInterpolator())
-            .start();
+    /** Load up to BACKDROP_COLOR_PREFS_MAX persisted dominant colors into the in-memory LRU. */
+    private void loadBackdropColorCache() {
+        if (persistentAppContext == null) return;
+        SharedPreferences prefs = persistentAppContext.getSharedPreferences(PREFS_BACKDROP_COLORS, Activity.MODE_PRIVATE);
+        Map<String, ?> all = prefs.getAll();
+        for (Map.Entry<String, ?> entry : all.entrySet()) {
+            if (entry.getValue() instanceof Integer && !dominantColorCache.containsKey(entry.getKey())) {
+                dominantColorCache.put(entry.getKey(), (Integer) entry.getValue());
+            }
+        }
+    }
+
+    /** Persist a newly extracted dominant color so future sessions skip Palette extraction. */
+    private void saveBackdropColor(@NonNull String videoId, int rawColor) {
+        if (persistentAppContext == null || videoId.isEmpty()) return;
+        SharedPreferences prefs = persistentAppContext.getSharedPreferences(PREFS_BACKDROP_COLORS, Activity.MODE_PRIVATE);
+        // Evict oldest entries if we are over the limit
+        Map<String, ?> all = prefs.getAll();
+        if (all.size() >= BACKDROP_COLOR_PREFS_MAX) {
+            SharedPreferences.Editor editor = prefs.edit();
+            int toRemove = all.size() - BACKDROP_COLOR_PREFS_MAX + 1;
+            for (String key : all.keySet()) {
+                editor.remove(key);
+                if (--toRemove <= 0) break;
+            }
+            editor.apply();
+        }
+        prefs.edit().putInt(videoId, rawColor).apply();
     }
 
     private void clearMediaNotificationArtwork() {
@@ -5288,10 +5431,16 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void fadeOutBackdropToBlack() {
-        if (ivPlayerBackdrop == null) return;
-        ivPlayerBackdrop.animate().cancel();
-        ivPlayerBackdrop.setAlpha(0f);
-        ivPlayerBackdrop.setImageDrawable(null);
+        if (playerBackgroundContainer == null) return;
+        playerBackgroundContainer.animate().cancel();
+        // Use a very dark gradient instead of solid black so the transition looks smooth
+        android.graphics.drawable.GradientDrawable darkGrad = new android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{0xFF111111, 0xFF050505}
+        );
+        playerBackgroundContainer.setBackground(darkGrad);
+        playerBackgroundContainer.setTag(R.id.tag_backdrop_top_color, 0xFF0D0D0D);
     }
+
 }
     

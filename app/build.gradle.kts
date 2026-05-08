@@ -65,6 +65,7 @@ dependencies {
     implementation(libs.googleid)
     implementation("com.google.android.gms:play-services-auth:21.2.0")
     implementation(libs.glide)
+    implementation("androidx.palette:palette:1.0.0")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
     implementation("androidx.work:work-runtime:2.9.1")

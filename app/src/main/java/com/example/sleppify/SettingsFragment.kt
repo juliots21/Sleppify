@@ -64,6 +64,7 @@ class SettingsFragment : Fragment() {
     private lateinit var rowDownloadQuality: View
     private lateinit var tvDownloadQualityValue: TextView
     private lateinit var rowStreamingQuality: View
+    private lateinit var rowOpenEqualizer: View
     private lateinit var tvStreamingQualityValue: TextView
     private lateinit var tvOfflineCrossfadeValue: TextView
     private lateinit var tvStorageOtherAppsValue: TextView
@@ -128,6 +129,7 @@ class SettingsFragment : Fragment() {
         swOfflineMode = v.findViewById(R.id.swOfflineMode)
         rowDownloadQuality = v.findViewById(R.id.rowDownloadQuality)
         rowStreamingQuality = v.findViewById(R.id.rowStreamingQuality)
+        rowOpenEqualizer = v.findViewById(R.id.rowOpenEqualizer)
         tvStreamingQualityValue = v.findViewById(R.id.tvStreamingQualityValue)
         tvDownloadQualityValue = v.findViewById(R.id.tvDownloadQualityValue)
         tvOfflineCrossfadeValue = v.findViewById(R.id.tvOfflineCrossfadeValue)
@@ -154,6 +156,7 @@ class SettingsFragment : Fragment() {
         
         rowDownloadQuality.setOnClickListener { showDownloadQualityPicker() }
         rowStreamingQuality.setOnClickListener { showStreamingQualityPicker() }
+        rowOpenEqualizer.setOnClickListener { (activity as? MainActivity)?.openEqualizerFromSettings() }
         btnDeleteSettingsCache.setOnClickListener { showDeleteCacheConfirmation() }
         updateDeleteCacheButtonState()
     }

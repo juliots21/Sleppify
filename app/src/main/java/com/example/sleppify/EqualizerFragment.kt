@@ -32,7 +32,7 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.slider.Slider
-import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.android.material.materialswitch.MaterialSwitch
 import java.util.Locale
 
 class EqualizerFragment : Fragment() {
@@ -46,7 +46,7 @@ class EqualizerFragment : Fragment() {
     private var cardBassTuner: View? = null
 
     private lateinit var eqCurveView: EqCurveEditorView
-    private var switchEqEnabled: SwitchMaterial? = null
+    private var switchEqEnabled: MaterialSwitch? = null
     private var activePopupWindow: PopupWindow? = null
     private lateinit var sliderBassGain: Slider
     private lateinit var tvBassGainValue: TextView

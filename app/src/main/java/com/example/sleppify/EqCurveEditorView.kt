@@ -410,16 +410,30 @@ class EqCurveEditorView : View {
     private fun findClosestBandByX(x: Float): Int {
         var closest = -1
         var minDistance = Float.MAX_VALUE
+        val minTouchTarget = dp(MIN_TOUCH_TARGET_DP)
 
         for (i in 0 until BAND_COUNT) {
             val distance = abs(x - bandX[i])
-            if (distance < minDistance) {
-                minDistance = distance
+            // For first and last bands, extend touch target beyond content bounds
+            val effectiveDistance = when (i) {
+                0 -> if (x < bandX[0]) minOf(distance, abs(x - (bandX[0] - minTouchTarget/2))) else distance
+                BAND_COUNT - 1 -> if (x > bandX[BAND_COUNT - 1]) minOf(distance, abs(x - (bandX[BAND_COUNT - 1] + minTouchTarget/2))) else distance
+                else -> distance
+            }
+            if (effectiveDistance < minDistance) {
+                minDistance = effectiveDistance
                 closest = i
             }
         }
 
-        return closest
+        // Accept the touch if within reasonable distance (including extended touch targets for edge bands)
+        val maxAcceptableDistance = if (closest == 0 || closest == BAND_COUNT - 1) {
+            minTouchTarget
+        } else {
+            (bandX[1] - bandX[0]) / 2f
+        }
+
+        return if (minDistance <= maxAcceptableDistance) closest else -1
     }
 
     private fun updateActiveBandFromTouch(touchY: Float, notify: Boolean) {
@@ -494,11 +508,12 @@ class EqCurveEditorView : View {
         private const val MAX_DB = AudioEffectsService.EQ_GAIN_MAX_DB
         private const val STEP_DB = 0.5f
         private const val CURVE_TENSION = 0.64f
-        private const val CONTENT_HORIZONTAL_INSET_DP = 0f
+        private const val CONTENT_HORIZONTAL_INSET_DP = 24f
         private const val CONTENT_VERTICAL_INSET_DP = 10f
         private const val GRID_CORNER_RADIUS_DP = 0f
         private const val MODAL_GUIDE_TOP_INSET_DP = 12f
         private const val MODAL_GUIDE_BOTTOM_INSET_DP = 8f
+        private const val MIN_TOUCH_TARGET_DP = 48f
 
         private val DB_GUIDE_VALUES = floatArrayOf(
             MAX_DB,

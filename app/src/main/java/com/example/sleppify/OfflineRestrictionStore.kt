@@ -16,6 +16,11 @@ object OfflineRestrictionStore {
 
     private val listeners = CopyOnWriteArrayList<RestrictionListener>()
 
+    // In-memory cache — loaded once from SharedPreferences on first access.
+    // All mutations keep it in sync so subsequent reads never hit disk.
+    private val CACHE_LOCK = Any()
+    @Volatile private var cachedRestrictedIds: Set<String>? = null
+
     @JvmStatic
     fun addRestrictionListener(listener: RestrictionListener) {
         if (!listeners.contains(listener)) listeners.add(listener)
@@ -55,9 +60,14 @@ object OfflineRestrictionStore {
 
     @JvmStatic
     fun getRestrictedIds(context: Context): Set<String> {
+        synchronized(CACHE_LOCK) {
+            cachedRestrictedIds?.let { return it }
+        }
+        // First access — load from disk
         val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val stored = prefs.getStringSet(KEY_RESTRICTED_IDS, emptySet())
         if (stored.isNullOrEmpty()) {
+            synchronized(CACHE_LOCK) { cachedRestrictedIds = emptySet() }
             return emptySet()
         }
 
@@ -79,7 +89,9 @@ object OfflineRestrictionStore {
             prefs.edit().putStringSet(KEY_RESTRICTED_IDS, normalized).apply()
         }
 
-        return normalized
+        val result: Set<String> = normalized
+        synchronized(CACHE_LOCK) { cachedRestrictedIds = result }
+        return result
     }
 
     @JvmStatic
@@ -91,12 +103,9 @@ object OfflineRestrictionStore {
     fun clearAllRestrictions(context: Context) {
         val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val editor = prefs.edit()
-        
-        // Remove ALL restrictions and auto-failure counters
         editor.clear()
         editor.apply()
-        
-        // Notify listeners with empty to maybe trigger refresh if needed
+        synchronized(CACHE_LOCK) { cachedRestrictedIds = emptySet() }
         for (l in listeners) {
             try { l.onRestrictionChanged("", false) } catch (_: Exception) {}
         }
@@ -119,6 +128,7 @@ object OfflineRestrictionStore {
             .edit()
             .putStringSet(KEY_RESTRICTED_IDS, ids)
             .apply()
+        synchronized(CACHE_LOCK) { cachedRestrictedIds = ids }
 
         notifyRestrictionChanged(safeVideoId, true)
     }
@@ -183,6 +193,7 @@ object OfflineRestrictionStore {
             .edit()
             .putStringSet(KEY_RESTRICTED_IDS, ids)
             .apply()
+        synchronized(CACHE_LOCK) { cachedRestrictedIds = ids }
 
         notifyRestrictionChanged(safeVideoId, false)
     }

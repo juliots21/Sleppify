@@ -170,6 +170,135 @@ class YouTubeMusicService @JvmOverloads constructor(
         }
     }
 
+    /** Fallback search via YouTube Music Innertube API — no API key needed, no quota. */
+    fun searchTracksViaInnertube(query: String, maxResults: Int, callback: SearchCallback) {
+        val normalized = query.trim()
+        if (normalized.isEmpty()) {
+            callback.onError("Escribe algo para buscar.")
+            return
+        }
+        executor.execute {
+            try {
+                val results = performInnertubeSearchRequest(normalized, maxResults)
+                mainHandler.post { callback.onSuccess(results) }
+            } catch (e: Exception) {
+                val error = e.message ?: "No se pudo completar la busqueda."
+                mainHandler.post { callback.onError(error) }
+            }
+        }
+    }
+
+    @Throws(Exception::class)
+    private fun performInnertubeSearchRequest(query: String, maxResults: Int): List<TrackResult> {
+        val endpoint = "https://music.youtube.com/youtubei/v1/search?prettyPrint=false"
+        val body = JSONObject().apply {
+            put("context", JSONObject().apply {
+                put("client", JSONObject().apply {
+                    put("clientName", "WEB_REMIX")
+                    put("clientVersion", "1.20240101.01.00")
+                    put("hl", "en")
+                })
+            })
+            put("query", query)
+            put("params", "EgWKAQIIAWoKEAkQChAFEAMQBA%3D%3D") // songs filter
+        }.toString().toByteArray(StandardCharsets.UTF_8)
+
+        val url = URL(endpoint)
+        val connection = url.openConnection() as HttpURLConnection
+        connection.requestMethod = "POST"
+        connection.connectTimeout = 14000
+        connection.readTimeout = 18000
+        connection.doOutput = true
+        connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+        connection.setRequestProperty("Accept", "application/json")
+        connection.setRequestProperty("User-Agent", "Mozilla/5.0")
+        connection.setRequestProperty("Origin", "https://music.youtube.com")
+        connection.setRequestProperty("Referer", "https://music.youtube.com/")
+        try {
+            connection.outputStream.use { it.write(body) }
+            val statusCode = connection.responseCode
+            val responseBody = readResponse(connection, statusCode >= 400)
+            if (statusCode != HttpURLConnection.HTTP_OK) {
+                throw IllegalStateException("Innertube search error $statusCode")
+            }
+            return parseInnertubeSearchResults(JSONObject(responseBody), maxResults)
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun parseInnertubeSearchResults(root: JSONObject, maxResults: Int): List<TrackResult> {
+        val results = mutableListOf<TrackResult>()
+        try {
+            val contents = root
+                .optJSONObject("contents")
+                ?.optJSONObject("tabbedSearchResultsRenderer")
+                ?.optJSONArray("tabs")
+                ?.optJSONObject(0)
+                ?.optJSONObject("tabRenderer")
+                ?.optJSONObject("content")
+                ?.optJSONObject("sectionListRenderer")
+                ?.optJSONArray("contents")
+                ?: return results
+
+            for (i in 0 until contents.length()) {
+                val section = contents.optJSONObject(i) ?: continue
+                val items = section.optJSONObject("musicShelfRenderer")
+                    ?.optJSONArray("contents") ?: continue
+                for (j in 0 until items.length()) {
+                    if (results.size >= maxResults) break
+                    val item = items.optJSONObject(j)
+                        ?.optJSONObject("musicResponsiveListItemRenderer") ?: continue
+                    val flexCols = item.optJSONArray("flexColumns") ?: continue
+                    val title = flexCols.optJSONObject(0)
+                        ?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")
+                        ?.optJSONObject("text")
+                        ?.optJSONArray("runs")
+                        ?.optJSONObject(0)
+                        ?.optString("text", "") ?: ""
+                    if (title.isEmpty()) continue
+                    val videoId = item.optJSONObject("overlay")
+                        ?.optJSONObject("musicItemThumbnailOverlayRenderer")
+                        ?.optJSONObject("content")
+                        ?.optJSONObject("musicPlayButtonRenderer")
+                        ?.optJSONObject("playNavigationEndpoint")
+                        ?.optJSONObject("watchEndpoint")
+                        ?.optString("videoId", "") ?: ""
+                    // Also try navigationEndpoint path
+                    val finalVideoId = if (videoId.isNotEmpty()) videoId else {
+                        item.optJSONObject("overlay")?.let { null } ?: ""
+                    }
+                    if (finalVideoId.isEmpty()) continue
+                    val artist = flexCols.optJSONObject(1)
+                        ?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")
+                        ?.optJSONObject("text")
+                        ?.optJSONArray("runs")
+                        ?.optJSONObject(0)
+                        ?.optString("text", "") ?: ""
+                    val thumbnails = item.optJSONObject("thumbnail")
+                        ?.optJSONObject("musicThumbnailRenderer")
+                        ?.optJSONObject("thumbnail")
+                        ?.optJSONArray("thumbnails")
+                    val thumbnailUrl = thumbnails?.let {
+                        it.optJSONObject(it.length() - 1)?.optString("url", "") ?: ""
+                    } ?: ""
+                    if (!shouldIncludeMusicSearchResult(title, artist)) continue
+                    results.add(TrackResult(
+                        resultType = "video",
+                        contentId = finalVideoId,
+                            rawTitle = title,
+                        rawSubtitle = artist,
+                        thumbnailUrl = thumbnailUrl
+                    ))
+                }
+                if (results.size >= maxResults) break
+            }
+        } catch (e: Exception) {
+            Log.w("YouTubeMusicService", "parseInnertubeSearchResults error: ${e.message}")
+        }
+        return results
+    }
+
     fun fetchMyPlaylists(accessToken: String, maxResults: Int, callback: PlaylistsCallback) {
         val token = accessToken.trim()
         if (token.isEmpty()) {
