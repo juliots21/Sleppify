@@ -3127,9 +3127,15 @@ public class PlaylistDetailFragment extends Fragment
             firstTrackArtwork = track.imageUrl;
             break;
         }
-        if (!TextUtils.isEmpty(firstTrackArtwork)
-                && (isFavoritesPlaylistContext(playlistId) || TextUtils.isEmpty(headerPlaylistThumbnail))) {
-            headerPlaylistThumbnail = firstTrackArtwork;
+        // Update header artwork for favorites, custom playlists, and when empty
+        // For other playlists (YouTube Music), also update to reflect current first track
+        if (!TextUtils.isEmpty(firstTrackArtwork)) {
+            boolean shouldUpdate = isFavoritesPlaylistContext(playlistId)
+                    || isCustomPlaylistContext(playlistId)
+                    || TextUtils.isEmpty(headerPlaylistThumbnail);
+            if (shouldUpdate) {
+                headerPlaylistThumbnail = firstTrackArtwork;
+            }
         }
 
         trackAdapter.submitTracks(currentTracks);

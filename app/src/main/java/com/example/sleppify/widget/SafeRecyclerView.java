@@ -58,4 +58,25 @@ public class SafeRecyclerView extends RecyclerView {
             post(this::requestLayout);
         }
     }
+
+    @Override
+    public boolean onTouchEvent(android.view.MotionEvent e) {
+        try {
+            return super.onTouchEvent(e);
+        } catch (IndexOutOfBoundsException ex) {
+            Log.w(TAG, "Caught RecyclerView inconsistency during onTouchEvent — recovering.", ex);
+            post(this::requestLayout);
+            return true;
+        }
+    }
+
+    @Override
+    public boolean onInterceptTouchEvent(android.view.MotionEvent e) {
+        try {
+            return super.onInterceptTouchEvent(e);
+        } catch (IndexOutOfBoundsException ex) {
+            Log.w(TAG, "Caught RecyclerView inconsistency during onInterceptTouchEvent — recovering.", ex);
+            return false;
+        }
+    }
 }

@@ -215,6 +215,8 @@
             android:layout_height="16dp"
             android:layout_marginTop="0dp"
             android:enabled="false"
+            android:clickable="false"
+            android:focusable="false"
             android:max="1000"
             android:paddingStart="0dp"
             android:paddingEnd="0dp"

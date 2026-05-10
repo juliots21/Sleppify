@@ -6107,8 +6107,11 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 return;
             }
             if (!rv.isComputingLayout() && !rv.isLayoutRequested()) {
-                // Post to RecyclerView to ensure we're in the next layout pass
-                rv.post(action);
+                // Run directly on the main thread — do NOT use rv.post() here.
+                // rv.post() defers by one full frame, during which a pending touch/scroll
+                // event can call consumePendingUpdateOperations with stale item counts,
+                // causing the "Inconsistency detected" IndexOutOfBoundsException crash.
+                action.run();
             } else {
                 int delay = attempt < 3 ? 16 : 32;
                 mainHandler.postDelayed(() -> dispatchWhenIdle(action, attempt + 1), delay);

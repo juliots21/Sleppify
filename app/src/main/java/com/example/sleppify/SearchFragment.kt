@@ -137,6 +137,7 @@ class SearchFragment : Fragment() {
     private var lastMiniArtUrl = ""
     private var miniPlaying = false
 
+    private var autoPlayOnFirstResult = false
     private var backPressedCallback: OnBackPressedCallback? = null
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
@@ -151,12 +152,17 @@ class SearchFragment : Fragment() {
         setupRecentSearchImagesRecyclerView()
         setupSearchInput()
         setupBackButton()
-        
+
         restoreRecentSearchQueries()
         loadRecentSearchesFromFirebase()
         refreshSearchSuggestions("")
 
         setupBackNavigation()
+
+        // Show scoped overlay immediately so no blank frame is visible while the
+        // fragment inflates. Reveal after the layout has drawn.
+        showModuleLoadingOverlay()
+        view.postDelayed({ if (isAdded && !isHidden) revealModuleContent() }, 120L)
     }
 
     private fun initViews(root: View) {
@@ -290,6 +296,7 @@ class SearchFragment : Fragment() {
         val suggestionsAdapter = SuggestionsAdapter {
             etSearchQuery.setText(it)
             etSearchQuery.setSelection(it.length)
+            autoPlayOnFirstResult = true
             performSearch(it)
             hideKeyboard()
         }
@@ -460,10 +467,15 @@ class SearchFragment : Fragment() {
                     if (!append) setSearchLoadingState(false, "No encontré resultados para: $query")
                 } else if (!append) {
                     setSearchLoadingState(false, "")
-                    // Pre-fetch opcional para mejor latencia
-                    allTracks.firstOrNull()?.videoId?.let { id ->
-                        lifecycleScope.launch(Dispatchers.IO) {
-                            InnertubeResolver.resolveStreamUrl(requireContext(), id)
+                    if (autoPlayOnFirstResult) {
+                        autoPlayOnFirstResult = false
+                        allTracks.firstOrNull { it.videoId?.isNotEmpty() == true }?.let { onTrackClicked(it) }
+                    } else {
+                        // Pre-fetch opcional para mejor latencia
+                        allTracks.firstOrNull()?.videoId?.let { id ->
+                            lifecycleScope.launch(Dispatchers.IO) {
+                                InnertubeResolver.resolveStreamUrl(requireContext(), id)
+                            }
                         }
                     }
                 }
@@ -491,6 +503,10 @@ class SearchFragment : Fragment() {
                                 setSearchLoadingState(false, "No encontré resultados para: $query")
                             } else {
                                 setSearchLoadingState(false, "")
+                                if (autoPlayOnFirstResult) {
+                                    autoPlayOnFirstResult = false
+                                    allTracks.firstOrNull { it.videoId?.isNotEmpty() == true }?.let { onTrackClicked(it) }
+                                }
                             }
                             revealModuleContent()
                             rvSearchResults.alpha = 0f
@@ -499,11 +515,13 @@ class SearchFragment : Fragment() {
                         }
                         override fun onError(innerError: String) {
                             if (activity == null || !isAdded || requestId != latestSearchRequestId) return
+                            autoPlayOnFirstResult = false
                             setSearchLoadingState(false, "Error: $innerError")
                             revealModuleContent()
                         }
                     })
                 } else {
+                    autoPlayOnFirstResult = false
                     if (allTracks.isEmpty()) {
                         setSearchLoadingState(false, "Error: $error")
                     } else {
@@ -1051,23 +1069,60 @@ class SearchFragment : Fragment() {
 
     private fun refreshSearchSuggestions(draft: String?) {
         val norm = draft?.trim() ?: ""
-        val suggestions = poolSuggestions(norm)
-        (rvSearchSuggestions.adapter as? SuggestionsAdapter)?.updateSuggestions(suggestions)
-        rvSearchSuggestions.visibility = if (suggestions.isEmpty()) View.GONE else View.VISIBLE
+        val items = poolSuggestionItems(norm)
+        (rvSearchSuggestions.adapter as? SuggestionsAdapter)?.updateItems(items)
+        rvSearchSuggestions.visibility = if (items.isEmpty()) View.GONE else View.VISIBLE
     }
 
-    private fun poolSuggestions(draft: String): List<String> {
+    private fun poolSuggestionItems(draft: String): List<SuggestionItem> {
         val normDraft = normalizeForFilter(draft)
         val recentQueries = recentSearchData.map { it.query }
-        return (recentQueries + DEFAULT_SEARCH_SUGGESTIONS.toList()).distinct()
-            .filter { candidate ->
+
+        val matchingRecent = recentQueries.filter { candidate ->
+            if (normDraft.isEmpty()) true
+            else normalizeForFilter(candidate).let { it.contains(normDraft) || normDraft.contains(it) }
+        }.take(SEARCH_SUGGESTION_RECENT_LIMIT)
+
+        val matchingGenerated = DEFAULT_SEARCH_SUGGESTIONS.toList().filter { candidate ->
+            !recentQueries.contains(candidate) && (
                 if (normDraft.isEmpty()) true
-                else {
-                    val normCand = normalizeForFilter(candidate)
-                    normCand.contains(normDraft) || normDraft.contains(normCand)
-                }
-            }
-            .take(SEARCH_SUGGESTION_RECENT_LIMIT)
+                else normalizeForFilter(candidate).let { it.contains(normDraft) || normDraft.contains(it) }
+            )
+        }.take(4)
+
+        val result = mutableListOf<SuggestionItem>()
+
+        if (matchingRecent.isNotEmpty()) {
+            result.add(SuggestionItem.Header("Búsquedas recientes"))
+            matchingRecent.forEach { result.add(SuggestionItem.Recent(it)) }
+        }
+
+        if (matchingGenerated.isNotEmpty()) {
+            val label = buildRelatedLabel(draft, matchingRecent)
+            result.add(SuggestionItem.Header(label))
+            matchingGenerated.forEach { result.add(SuggestionItem.Suggestion(it)) }
+        }
+
+        return result
+    }
+
+    private fun buildRelatedLabel(draft: String, recents: List<String>): String {
+        if (draft.isNotBlank()) return "Temas relacionados"
+        if (recents.isEmpty()) return "Sugerencias para ti"
+        val genres = recents.flatMap { q ->
+            q.lowercase().split(Regex("\\s+"))
+        }.filter { it.length > 3 }
+        val latinTokens = setOf("latin", "latino", "reggaeton", "trap", "salsa", "bachata", "cumbia")
+        val electroTokens = setOf("edm", "house", "techno", "electronic", "electro", "rave", "bass")
+        val calmTokens  = setOf("lofi", "chill", "ambient", "relax", "sleep", "study", "jazz")
+        val popTokens   = setOf("pop", "top", "hits", "charts", "radio")
+        return when {
+            genres.any { it in latinTokens }    -> "Temas relacionados"
+            genres.any { it in electroTokens }   -> "Sugerencias electrónicas"
+            genres.any { it in calmTokens }      -> "Para relajarte"
+            genres.any { it in popTokens }       -> "Más populares"
+            else                                  -> "Temas relacionados"
+        }
     }
 
     private fun loadArtworkInto(target: ImageView, url: String?, videoId: String? = null) {
@@ -1217,14 +1272,26 @@ class SearchFragment : Fragment() {
         } else {
             // Re-enable back pressed callback when fragment becomes visible again
             backPressedCallback?.isEnabled = true
+            // Show scoped overlay while content re-draws
+            showModuleLoadingOverlay()
+            view?.postDelayed({ if (isAdded && !isHidden) revealModuleContent() }, 80L)
             // Hide global header when fragment becomes visible
             (activity as? MainActivity)?.findViewById<View>(R.id.topAppBar)?.visibility = View.GONE
             // Clear input on every entry
             etSearchQuery.setText("")
             showSuggestionsMode()
             lastMiniArtUrl = "" // Resetear para forzar recarga de imagen
-            llMiniPlayer.translationY = 0f
-            llMiniPlayer.visibility = View.VISIBLE
+            // Animate mini player slide-up if not already visible and in place
+            // (mirrors MusicPlayerFragment / PlaylistDetailFragment onHiddenChanged logic)
+            if (llMiniPlayer.visibility == View.VISIBLE && llMiniPlayer.translationY == 0f) {
+                // Already visible and in position — no animation needed
+            } else {
+                val distance = if (llMiniPlayer.height > 0) llMiniPlayer.height.toFloat() else 300f
+                llMiniPlayer.translationY = distance
+                llMiniPlayer.visibility = View.VISIBLE
+                llMiniPlayer.animate().cancel()
+                llMiniPlayer.animate().translationY(0f).setDuration(280).start()
+            }
             startMiniProgressTicker()
             updateMiniPlayerUi()
         }
@@ -1290,10 +1357,16 @@ class SearchFragment : Fragment() {
         }
 
         if (llMiniPlayer.visibility != View.VISIBLE) {
-            // Se muestra de inmediato para evitar la sensación de "duplicación" o retraso
-            // al entrar desde otra pantalla donde ya era visible
+            val distance = if (llMiniPlayer.height > 0) llMiniPlayer.height.toFloat() else 300f
+            llMiniPlayer.translationY = distance
             llMiniPlayer.visibility = View.VISIBLE
-            llMiniPlayer.translationY = 0f 
+            llMiniPlayer.animate().cancel()
+            llMiniPlayer.animate()
+                .translationY(0f)
+                .setDuration(250)
+                .setInterpolator(PathInterpolator(0.4f, 0f, 0.2f, 1f))
+                .withEndAction(null)
+                .start()
         }
 
         val displayTitle: String
@@ -1359,34 +1432,70 @@ class SearchFragment : Fragment() {
         }
     }
 
-    private inner class SuggestionsAdapter(val onClick: (String) -> Unit) : RecyclerView.Adapter<SuggestionsAdapter.ViewHolder>() {
-        private val data = mutableListOf<String>()
+    sealed class SuggestionItem {
+        data class Header(val label: String) : SuggestionItem()
+        data class Recent(val query: String) : SuggestionItem()
+        data class Suggestion(val query: String) : SuggestionItem()
+    }
 
-        fun updateSuggestions(newList: List<String>) {
+    private inner class SuggestionsAdapter(val onClick: (String) -> Unit) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+        private val data = mutableListOf<SuggestionItem>()
+
+        private val TYPE_HEADER = 0
+        private val TYPE_RECENT = 1
+        private val TYPE_SUGGESTION = 2
+
+        fun updateItems(newList: List<SuggestionItem>) {
             data.clear()
             data.addAll(newList)
             notifyDataSetChanged()
         }
 
-        override fun onCreateViewHolder(p: ViewGroup, t: Int) = ViewHolder(LayoutInflater.from(p.context).inflate(R.layout.item_search_suggestion, p, false))
+        override fun getItemViewType(position: Int) = when (data[position]) {
+            is SuggestionItem.Header -> TYPE_HEADER
+            is SuggestionItem.Recent -> TYPE_RECENT
+            is SuggestionItem.Suggestion -> TYPE_SUGGESTION
+        }
 
-        override fun onBindViewHolder(h: ViewHolder, p: Int) {
-            val s = data[p]
-            h.text.text = s
-            val recent = recentSearchData.any { it.query == s }
-            h.icon.setImageResource(if (recent) R.drawable.ic_time_24 else R.drawable.ic_search)
-            h.icon.setColorFilter(android.graphics.Color.WHITE)
-            h.icon.alpha = 1.0f
-            h.itemView.setOnClickListener { onClick(s) }
-            h.itemView.setOnLongClickListener {
-                if (recent) showDeleteSearchDialog(s)
-                true
+        override fun onCreateViewHolder(p: ViewGroup, t: Int): RecyclerView.ViewHolder {
+            val inflater = LayoutInflater.from(p.context)
+            return when (t) {
+                TYPE_HEADER -> HeaderViewHolder(inflater.inflate(R.layout.item_search_suggestion_header, p, false))
+                else -> RowViewHolder(inflater.inflate(R.layout.item_search_suggestion, p, false))
+            }
+        }
+
+        override fun onBindViewHolder(h: RecyclerView.ViewHolder, p: Int) {
+            when (val item = data[p]) {
+                is SuggestionItem.Header -> (h as HeaderViewHolder).label.text = item.label
+                is SuggestionItem.Recent -> {
+                    (h as RowViewHolder).apply {
+                        text.text = item.query
+                        icon.setImageResource(R.drawable.ic_time_24)
+                        icon.setColorFilter(android.graphics.Color.WHITE)
+                        itemView.setOnClickListener { onClick(item.query) }
+                        itemView.setOnLongClickListener { showDeleteSearchDialog(item.query); true }
+                    }
+                }
+                is SuggestionItem.Suggestion -> {
+                    (h as RowViewHolder).apply {
+                        text.text = item.query
+                        icon.setImageResource(R.drawable.ic_search)
+                        icon.setColorFilter(android.graphics.Color.WHITE)
+                        itemView.setOnClickListener { onClick(item.query) }
+                        itemView.setOnLongClickListener { true }
+                    }
+                }
             }
         }
 
         override fun getItemCount() = data.size
 
-        inner class ViewHolder(v: View) : RecyclerView.ViewHolder(v) {
+        inner class HeaderViewHolder(v: View) : RecyclerView.ViewHolder(v) {
+            val label: TextView = v.findViewById(R.id.tvSuggestionHeader)
+        }
+
+        inner class RowViewHolder(v: View) : RecyclerView.ViewHolder(v) {
             val text: TextView = v.findViewById(R.id.tvSuggestionText)
             val icon: ImageView = v.findViewById(R.id.ivSuggestionIcon)
         }

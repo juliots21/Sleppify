@@ -110,7 +110,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var bottomNav: BottomNavigationView
     private lateinit var navRail: com.google.android.material.navigationrail.NavigationRailView
     private lateinit var tvModuleTitle: TextView
-    private lateinit var btnSettings: ImageView
+    private lateinit var btnSettings: com.google.android.material.imageview.ShapeableImageView
     private lateinit var btnHeaderSearch: ImageView
     private lateinit var btnCamera: ImageView
     private lateinit var topAppBar: View
@@ -913,9 +913,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun configureHeaderActionForScanner() {
         btnSettings.visibility = View.VISIBLE
-        btnSettings.setImageResource(R.drawable.ic_settings)
         btnSettings.contentDescription = getString(R.string.header_action_settings)
         btnSettings.setOnClickListener { exitScannerBack() }
+        loadProfilePhotoIntoSettings()
         btnCamera.visibility = View.GONE
 
         tvModuleTitle.apply {
@@ -1060,9 +1060,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun configureHeaderActionForEqualizer() {
         btnSettings.visibility = View.VISIBLE
-        btnSettings.setImageResource(R.drawable.ic_settings)
         btnSettings.contentDescription = getString(R.string.header_action_settings)
         btnSettings.setOnClickListener { exitEqualizerToSettings() }
+        loadProfilePhotoIntoSettings()
         btnCamera.visibility = View.VISIBLE
 
         tvModuleTitle.apply {
@@ -1184,34 +1184,30 @@ class MainActivity : AppCompatActivity() {
 
     fun openSearchFragment() {
         if (isFinishing || isDestroyed) return
-        showModuleLoadingOverlay()
-        
+        // Do NOT use the activity-level overlay here — it is constrained to the same bounds as
+        // fragmentContainer and would cover the SearchFragment's mini player.
+        // The SearchFragment shows its own scoped moduleLoadingOverlay that respects llMiniPlayer.
+        revealModuleContent()
+
         val target = searchFragment ?: SearchFragment.newInstance().also { searchFragment = it }
-        val isNew = !target.isAdded
-        
+
         supportFragmentManager.beginTransaction().apply {
             setReorderingAllowed(true)
             playlistDetailFragment = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL)
             songPlayerFragment = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER)
             val current = getMainModuleFragment(currentMainNavItemId)
-            
+
             hideIfVisible(this, current, target)
             hideIfVisible(this, playlistDetailFragment, target)
             hideIfVisible(this, songPlayerFragment, target)
             hideIfVisible(this, settingsFragment, target)
-            
+
             if (target.isAdded) show(target) else add(R.id.fragmentContainer, target, TAG_MODULE_SEARCH).addToBackStack(TAG_MODULE_SEARCH)
             setMaxLifecycle(target, Lifecycle.State.RESUMED)
             commit()
         }
 
-        // Keep topAppBar hidden — SearchFragment has its own header
         topAppBar.visibility = View.GONE
-        
-        lifecycleScope.launch {
-            delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
-            revealModuleContent()
-        }
     }
 
     fun closeSearchFragment() {

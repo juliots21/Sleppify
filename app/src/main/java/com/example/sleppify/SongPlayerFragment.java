@@ -174,7 +174,8 @@ public class SongPlayerFragment extends Fragment {
     private final List<PlayerTrack> nextUpTracks = new ArrayList<>();
     private final List<PlayerTrack> originalQueueOrder = new ArrayList<>();
 
-    private ShapeableImageView ivPlayerCover;
+    private ImageView ivPlayerCover;
+    private ImageView ivPlayerCoverIncoming;
     private ShapeableImageView ivPlayerBackdrop;
     private AnimatedEqualizerView animatedEqPlayer;
     private FrameLayout flPlayerHero;
@@ -245,6 +246,15 @@ public class SongPlayerFragment extends Fragment {
     private boolean playerEnterAnimationRunning = false;
     private int swipeDismissTouchSlopPx = 12;
     private int swipeDismissMinDistancePx = 120;
+    private boolean coverSwipeGestureActive = false;
+    private boolean coverSwipeAnimationRunning = false;
+    private float coverSwipeStartX = 0f;
+    private float coverSwipeStartY = 0f;
+    private int coverSwipeTouchSlopPx = 12;
+    private int coverSwipeMinChangePx = 120;
+    private boolean coverSwipeCommitPending = false;
+    @Nullable private Bitmap pendingIncomingBitmap = null;
+    @Nullable private android.widget.ImageView.ScaleType pendingIncomingScaleType = null;
     private int consecutiveStreamFailures = 0;
     private long lastBackgroundResumeAttemptMs = 0L;
     @Nullable
@@ -497,6 +507,7 @@ public class SongPlayerFragment extends Fragment {
 
         // ✅ CRITICAL: Only findViewById here (fast path)
         ivPlayerCover = view.findViewById(R.id.ivPlayerCover);
+        ivPlayerCoverIncoming = view.findViewById(R.id.ivPlayerCoverIncoming);
         // ivPlayerBackdrop now only used as container for background color
         ivPlayerBackdrop = view.findViewById(R.id.ivPlayerBackdrop);
         playerBackgroundContainer = ivPlayerBackdrop;
@@ -518,6 +529,7 @@ public class SongPlayerFragment extends Fragment {
         tvTotalTime = view.findViewById(R.id.tvTotalTime);
         sbPlaybackProgress = view.findViewById(R.id.sbPlaybackProgress);
         svSongPlayerContent = view.findViewById(R.id.svSongPlayerContent);
+        disablePlayerContentScroll();
         btnShuffle = view.findViewById(R.id.btnShuffle);
         btnRepeat = view.findViewById(R.id.btnRepeat);
         vPlayerShuffleIndicator = view.findViewById(R.id.vPlayerShuffleIndicator);
@@ -570,6 +582,7 @@ public class SongPlayerFragment extends Fragment {
             setupMediaSession();
             setupAudioDeviceCallback();
             setupSwipeToDismiss(view);
+            setupCoverSwipeGesture(view);
             setupBackPressToMiniMode();
             resetPlayerScrollToTop();
 
@@ -803,6 +816,16 @@ public class SongPlayerFragment extends Fragment {
                 svSongPlayerContent.scrollTo(0, 0);
             }
         });
+    }
+
+    private void disablePlayerContentScroll() {
+        if (svSongPlayerContent == null) return;
+        svSongPlayerContent.setNestedScrollingEnabled(false);
+        // Force scroll position back to top any time it drifts
+        svSongPlayerContent.setOnScrollChangeListener(
+                (NestedScrollView.OnScrollChangeListener) (v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
+                    if (scrollY != 0) v.scrollTo(0, 0);
+                });
     }
 
     private void setupMediaSession() {
@@ -2845,6 +2868,13 @@ public class SongPlayerFragment extends Fragment {
                         ivPlayerCover.animate().cancel();
                         ivPlayerCover.setTranslationX(0f);
                         ivPlayerCover.setAlpha(0f);
+                        // Adjust scaleType based on bitmap aspect ratio after crop:
+                        // wide/panoramic → fitCenter (show full width); square/tall → centerCrop
+                        if (processedResource != null && processedResource.getWidth() > processedResource.getHeight() * 1.2f) {
+                            ivPlayerCover.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+                        } else {
+                            ivPlayerCover.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
+                        }
                         // Set image and promote to hardware layer BEFORE starting the animation.
                         // This uploads the bitmap to the GPU in the current vsync so the first
                         // animated frame has zero upload cost — eliminating the "10fps" jank.
@@ -2888,7 +2918,7 @@ public class SongPlayerFragment extends Fragment {
         };
 
         // Limit image size to reduce memory pressure and GPU load during fade animations
-        final int maxCoverSize = 800;
+        final int maxCoverSize = 640;
 
         com.bumptech.glide.RequestManager requestManager = Glide.with(this);
         requestManager
@@ -2935,13 +2965,8 @@ public class SongPlayerFragment extends Fragment {
         activeBackdropVideoId = requestVideoId;
         clearPlayerBackdropRequest();
 
-        // Loading state: mostrar fondo negro inmediatamente
-        if (!bootstrapArtwork) {
-            fadeOutBackdropToBlack();
-        }
-
         if (TextUtils.isEmpty(preferredImageUrl)) {
-            fadeOutBackdropToBlack();
+            if (bootstrapArtwork) fadeOutBackdropToBlack();
             completePlayerArtworkBootstrap();
             return;
         }
@@ -3101,12 +3126,14 @@ public class SongPlayerFragment extends Fragment {
         updatePlayPauseIcon();
 
         boolean bootstrapArtwork = playerArtworkBootstrapPending;
+        boolean fromSwipeCommit = coverSwipeCommitPending;
+        coverSwipeCommitPending = false;
         int coverAnimationDirection = pendingTrackChangeDirection == 0 ? 1 : pendingTrackChangeDirection;
         pendingTrackChangeDirection = 1;
         if (bootstrapArtwork) {
             showPlayerArtworkLoadingState();
             if (!isAdded()) return;
-        } else {
+        } else if (!fromSwipeCommit) {
             if (ivPlayerCover != null) {
                 ivPlayerCover.animate().cancel();
                 ivPlayerCover.animate().alpha(0f).setDuration(180).start();
@@ -3115,11 +3142,43 @@ public class SongPlayerFragment extends Fragment {
         
         // ✅ Only load artwork if player is actually visible (not hidden/miniplayer mode)
         if (!isHidden()) {
-            // ✅ PRIORITY 1: Load cover art (visible immediately)
-            loadPlayerCover(track, bootstrapArtwork, coverAnimationDirection);
+            if (fromSwipeCommit) {
+                // Cover already displayed via swipe animation — promote incoming to cover
+                if (ivPlayerCover != null) {
+                    ivPlayerCover.animate().cancel();
+                    Bitmap bmp = pendingIncomingBitmap;
+                    android.widget.ImageView.ScaleType st = pendingIncomingScaleType;
+                    pendingIncomingBitmap = null;
+                    pendingIncomingScaleType = null;
+                    if (bmp != null) {
+                        if (st != null) ivPlayerCover.setScaleType(st);
+                        ivPlayerCover.setImageBitmap(bmp);
+                        ivPlayerCover.setAlpha(1f);
+                        ivPlayerCover.setTranslationX(0f);
+                        adjustPlayerHeroForCover(bmp);
+                    } else if (ivPlayerCoverIncoming != null) {
+                        android.graphics.drawable.Drawable d = ivPlayerCoverIncoming.getDrawable();
+                        if (d != null) {
+                            ivPlayerCover.setScaleType(ivPlayerCoverIncoming.getScaleType());
+                            ivPlayerCover.setImageDrawable(d);
+                            ivPlayerCover.setAlpha(1f);
+                            ivPlayerCover.setTranslationX(0f);
+                        } else {
+                            loadPlayerCover(track, false, coverAnimationDirection);
+                        }
+                    }
+                    if (ivPlayerCoverIncoming != null) {
+                        ivPlayerCoverIncoming.setVisibility(android.view.View.INVISIBLE);
+                        ivPlayerCoverIncoming.setImageDrawable(null);
+                    }
+                }
+            } else {
+                // ✅ PRIORITY 1: Load cover art (visible immediately)
+                loadPlayerCover(track, bootstrapArtwork, coverAnimationDirection);
+            }
 
-            // ✅ BACKDROP: Set to black immediately (now using solid background, not image)
-            if (!bootstrapArtwork && playerBackgroundContainer != null) {
+            // ✅ BACKDROP: Only fade to black on first bootstrap, otherwise crossfade to new dominant color
+            if (bootstrapArtwork && playerBackgroundContainer != null) {
                 fadeOutBackdropToBlack();
             }
 
@@ -5071,8 +5130,6 @@ public class SongPlayerFragment extends Fragment {
         attachSwipeDismissListener(scrollView, swipeListener);
         attachSwipeDismissListener(root.findViewById(R.id.clPlayerContent), swipeListener);
         attachSwipeDismissListener(root.findViewById(R.id.ivPlayerBackdrop), swipeListener);
-        attachSwipeDismissListener(root.findViewById(R.id.flPlayerHero), swipeListener);
-        attachSwipeDismissListener(root.findViewById(R.id.ivPlayerCover), swipeListener);
         attachSwipeDismissListener(root.findViewById(R.id.llPlayerInfo), swipeListener);
         attachSwipeDismissListener(root.findViewById(R.id.hsSocialActions), swipeListener);
         attachSwipeDismissListener(root.findViewById(R.id.actionLike), swipeListener);
@@ -5096,6 +5153,264 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
         view.setOnTouchListener(listener);
+    }
+
+    private void setupCoverSwipeGesture(@NonNull View root) {
+        View heroView = root.findViewById(R.id.flPlayerHero);
+        if (heroView == null || ivPlayerCover == null || ivPlayerCoverIncoming == null) return;
+
+        coverSwipeTouchSlopPx = ViewConfiguration.get(requireContext()).getScaledTouchSlop();
+
+        View.OnTouchListener coverSwipeListener = new View.OnTouchListener() {
+            private float startX;
+            private float startY;
+            private boolean isDragging = false;
+            private boolean decidedDirection = false;
+
+            @Override
+            public boolean onTouch(View v, MotionEvent event) {
+                if (coverSwipeAnimationRunning) {
+                    return true;
+                }
+                switch (event.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        if (swipeDismissGestureActive || swipeDismissAnimationRunning) {
+                            return false;
+                        }
+                        startX = event.getRawX();
+                        startY = event.getRawY();
+                        isDragging = false;
+                        decidedDirection = false;
+                        coverSwipeStartX = startX;
+                        coverSwipeStartY = startY;
+                        coverSwipeMinChangePx = 120;
+                        ivPlayerCover.animate().cancel();
+                        break;
+
+                    case MotionEvent.ACTION_MOVE:
+                        if (swipeDismissGestureActive || swipeDismissAnimationRunning) {
+                            if (isDragging) resetCoverSwipePositions();
+                            return false;
+                        }
+                        float dx = event.getRawX() - startX;
+                        float dy = event.getRawY() - startY;
+
+                        if (!decidedDirection) {
+                            if (Math.abs(dx) < coverSwipeTouchSlopPx && Math.abs(dy) < coverSwipeTouchSlopPx) {
+                                break;
+                            }
+                            if (Math.abs(dx) > Math.abs(dy) * 1.3f) {
+                                decidedDirection = true;
+                                isDragging = true;
+                                coverSwipeGestureActive = true;
+                                heroView.bringToFront();
+                                heroView.setElevation(32f);
+                                ivPlayerCoverIncoming.bringToFront();
+                                ivPlayerCoverIncoming.setElevation(32f);
+                                if (heroView.getParent() != null) {
+                                    ((android.view.ViewParent) heroView.getParent()).requestDisallowInterceptTouchEvent(true);
+                                }
+                                int swipeDirection = dx > 0 ? -1 : 1;
+                                int neighborIndex = (currentIndex + swipeDirection + tracks.size()) % tracks.size();
+                                PlayerTrack neighborTrack = tracks.isEmpty() ? null : tracks.get(neighborIndex);
+                                ivPlayerCoverIncoming.setVisibility(android.view.View.VISIBLE);
+                                ivPlayerCoverIncoming.setAlpha(1f);
+                                ivPlayerCoverIncoming.setImageDrawable(null);
+                                if (neighborTrack != null) {
+                                    String nVid = neighborTrack.videoId == null ? "" : neighborTrack.videoId.trim();
+                                    String nFallback = neighborTrack.imageUrl == null ? "" : neighborTrack.imageUrl.trim();
+                                    String nUrl = !TextUtils.isEmpty(nVid)
+                                            ? "https://i.ytimg.com/vi/" + Uri.encode(nVid) + "/maxresdefault.jpg"
+                                            : nFallback;
+                                    if (!TextUtils.isEmpty(nUrl)) {
+                                        Glide.with(SongPlayerFragment.this)
+                                                .asBitmap()
+                                                .load(nUrl)
+                                                .transform(SHARED_YT_CROP)
+                                                .diskCacheStrategy(DiskCacheStrategy.ALL)
+                                                .override(640, 640)
+                                                .into(new com.bumptech.glide.request.target.CustomTarget<Bitmap>() {
+                                                    @Override
+                                                    public void onResourceReady(@NonNull Bitmap resource, @Nullable com.bumptech.glide.request.transition.Transition<? super Bitmap> transition) {
+                                                        if (!isAdded() || ivPlayerCoverIncoming == null) return;
+                                                        android.widget.ImageView.ScaleType st = resource.getWidth() > resource.getHeight() * 1.2f
+                                                                ? android.widget.ImageView.ScaleType.FIT_CENTER
+                                                                : android.widget.ImageView.ScaleType.CENTER_CROP;
+                                                        ivPlayerCoverIncoming.setScaleType(st);
+                                                        ivPlayerCoverIncoming.setImageBitmap(resource);
+                                                        pendingIncomingBitmap = resource;
+                                                        pendingIncomingScaleType = st;
+                                                    }
+                                                    @Override
+                                                    public void onLoadCleared(@Nullable android.graphics.drawable.Drawable placeholder) {
+                                                        if (ivPlayerCoverIncoming != null) ivPlayerCoverIncoming.setImageDrawable(null);
+                                                        pendingIncomingBitmap = null;
+                                                        pendingIncomingScaleType = null;
+                                                    }
+                                                });
+                                    }
+                                }
+                                int heroWidth = heroView.getWidth();
+                                int coverGapPx = dpToPx(24);
+                                if (dx > 0) {
+                                    ivPlayerCoverIncoming.setTranslationX(-(heroWidth + coverGapPx));
+                                } else {
+                                    ivPlayerCoverIncoming.setTranslationX(heroWidth + coverGapPx);
+                                }
+                            } else {
+                                decidedDirection = true;
+                                isDragging = false;
+                                break;
+                            }
+                        }
+
+                        if (isDragging) {
+                            int heroWidth = Math.max(1, heroView.getWidth());
+                            if (coverSwipeMinChangePx == 120) {
+                                coverSwipeMinChangePx = Math.round(heroWidth * 0.250f);
+                            }
+                            int gapPx = dpToPx(24);
+                            ivPlayerCover.setTranslationX(dx);
+                            float incomingTx;
+                            if (dx > 0) {
+                                incomingTx = -(heroWidth + gapPx) + dx;
+                            } else {
+                                incomingTx = (heroWidth + gapPx) + dx;
+                            }
+                            ivPlayerCoverIncoming.setTranslationX(incomingTx);
+                            return true;
+                        }
+                        break;
+
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
+                        if (isDragging) {
+                            float finalDx = event.getRawX() - startX;
+                            boolean isCancel = event.getActionMasked() == MotionEvent.ACTION_CANCEL;
+                            boolean shouldChange = !isCancel && Math.abs(finalDx) >= coverSwipeMinChangePx;
+                            if (shouldChange) {
+                                int direction = finalDx < 0 ? 1 : -1;
+                                commitCoverSwipe(direction, heroView);
+                            } else {
+                                bounceCoverBack();
+                            }
+                            isDragging = false;
+                            decidedDirection = false;
+                            coverSwipeGestureActive = false;
+                            if (heroView.getParent() != null) {
+                                ((android.view.ViewParent) heroView.getParent()).requestDisallowInterceptTouchEvent(false);
+                            }
+                            return true;
+                        }
+                        coverSwipeGestureActive = false;
+                        break;
+                }
+                return false;
+            }
+        };
+
+        heroView.setOnTouchListener(coverSwipeListener);
+        ivPlayerCover.setOnTouchListener(coverSwipeListener);
+    }
+
+    private void commitCoverSwipe(int direction, @NonNull View heroView) {
+        if (!isAdded() || tracks.isEmpty()) {
+            resetCoverSwipePositions();
+            return;
+        }
+        coverSwipeAnimationRunning = true;
+        int heroWidth = heroView.getWidth();
+        float exitX = direction < 0 ? heroWidth : -heroWidth;
+
+        ivPlayerCover.animate().cancel();
+        ivPlayerCoverIncoming.animate().cancel();
+
+        ivPlayerCover.animate()
+                .translationX(exitX)
+                .setDuration(200)
+                .setInterpolator(new android.view.animation.AccelerateInterpolator())
+                .withEndAction(() -> {
+                    if (!isAdded()) {
+                        coverSwipeAnimationRunning = false;
+                        resetCoverSwipePositions();
+                        return;
+                    }
+                    ivPlayerCover.setTranslationX(0f);
+                    ivPlayerCoverIncoming.setTranslationX(0f);
+                    ivPlayerCoverIncoming.setVisibility(android.view.View.VISIBLE);
+                    ivPlayerCoverIncoming.setElevation(0f);
+                    heroView.setElevation(0f);
+                    coverSwipeAnimationRunning = false;
+                    coverSwipeCommitPending = true;
+                    pendingTrackChangeDirection = direction;
+                    int targetIndex = (currentIndex + direction + tracks.size()) % tracks.size();
+                    currentIndex = targetIndex;
+                    isPlaying = true;
+                    currentSeconds = 0;
+                    consecutiveStreamFailures = 0;
+                    cancelOfflineCrossfade();
+                    bindCurrentTrack(false);
+                    playCurrentTrack();
+                    scheduleAutoplayRecoveryForCurrentTrack();
+                    syncMiniStateWithPlaylist();
+                })
+                .start();
+
+        ivPlayerCoverIncoming.animate()
+                .translationX(0f)
+                .setDuration(200)
+                .setInterpolator(new android.view.animation.AccelerateInterpolator())
+                .start();
+    }
+
+    private void bounceCoverBack() {
+        if (ivPlayerCover == null || ivPlayerCoverIncoming == null) return;
+        View hero = flPlayerHero;
+        ivPlayerCover.animate().cancel();
+        ivPlayerCoverIncoming.animate().cancel();
+        ivPlayerCover.animate()
+                .translationX(0f)
+                .setDuration(220)
+                .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                .withEndAction(() -> {
+                    if (hero != null) hero.setElevation(0f);
+                })
+                .start();
+        ivPlayerCoverIncoming.animate()
+                .alpha(0f)
+                .setDuration(200)
+                .withEndAction(() -> {
+                    if (ivPlayerCoverIncoming != null) {
+                        ivPlayerCoverIncoming.setVisibility(android.view.View.INVISIBLE);
+                        ivPlayerCoverIncoming.setAlpha(1f);
+                        ivPlayerCoverIncoming.setTranslationX(0f);
+                        ivPlayerCoverIncoming.setElevation(0f);
+                        ivPlayerCoverIncoming.setImageDrawable(null);
+                        pendingIncomingBitmap = null;
+                        pendingIncomingScaleType = null;
+                    }
+                })
+                .start();
+    }
+
+    private void resetCoverSwipePositions() {
+        if (ivPlayerCover != null) {
+            ivPlayerCover.animate().cancel();
+            ivPlayerCover.setTranslationX(0f);
+        }
+        if (ivPlayerCoverIncoming != null) {
+            ivPlayerCoverIncoming.animate().cancel();
+            ivPlayerCoverIncoming.setTranslationX(0f);
+            ivPlayerCoverIncoming.setAlpha(1f);
+            ivPlayerCoverIncoming.setElevation(0f);
+            ivPlayerCoverIncoming.setVisibility(android.view.View.INVISIBLE);
+            ivPlayerCoverIncoming.setImageDrawable(null);
+        }
+        if (flPlayerHero != null) flPlayerHero.setElevation(0f);
+        pendingIncomingBitmap = null;
+        pendingIncomingScaleType = null;
+        coverSwipeGestureActive = false;
+        coverSwipeAnimationRunning = false;
     }
 
     private void releaseLocalExoMediaPlayer() {
@@ -5340,49 +5655,91 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void resetPlayerHeroContainerHeight() {
-        setPlayerHeroContainerHeight(dpToPx(PLAYER_HERO_DEFAULT_HEIGHT_DP));
+        if (flPlayerHero == null) return;
+        int defaultMargin = dpToPx(20);
+        int defaultHeight = dpToPx(PLAYER_HERO_DEFAULT_HEIGHT_DP);
+        androidx.constraintlayout.widget.ConstraintLayout.LayoutParams p =
+                (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) flPlayerHero.getLayoutParams();
+        if (p != null) {
+            p.leftMargin = defaultMargin;
+            p.rightMargin = defaultMargin;
+            p.height = defaultHeight;
+            flPlayerHero.setLayoutParams(p);
+            if (getContext() != null) {
+                flPlayerHero.setBackground(androidx.core.content.ContextCompat.getDrawable(getContext(), R.drawable.bg_player_cover_rounded));
+            }
+        }
+        if (ivPlayerCoverIncoming != null) {
+            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams ip =
+                    (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) ivPlayerCoverIncoming.getLayoutParams();
+            if (ip != null) {
+                ip.leftMargin = defaultMargin;
+                ip.rightMargin = defaultMargin;
+                ip.height = defaultHeight;
+                ivPlayerCoverIncoming.setLayoutParams(ip);
+            }
+        }
     }
 
     private void setPlayerHeroContainerHeight(int heightPx) {
-        // Disabled to allow ConstraintLayout 1:1 ratio to rule
-        if (true) return;
-        
         if (flPlayerHero == null || heightPx <= 0) {
             return;
         }
-
         ViewGroup.LayoutParams params = flPlayerHero.getLayoutParams();
         if (params == null || params.height == heightPx) {
             return;
         }
-
         params.height = heightPx;
         flPlayerHero.setLayoutParams(params);
     }
 
     private void adjustPlayerHeroForCover(@NonNull Bitmap bitmap) {
-        if (flPlayerHero == null) {
-            return;
-        }
-
-        int width = flPlayerHero.getWidth();
-        if (width <= 0) {
-            flPlayerHero.post(() -> adjustPlayerHeroForCover(bitmap));
-            return;
-        }
+        if (flPlayerHero == null || getContext() == null) return;
 
         int bmpWidth = Math.max(1, bitmap.getWidth());
         int bmpHeight = Math.max(1, bitmap.getHeight());
-        float aspect = bmpHeight / (float) bmpWidth;
+        boolean isWide = bmpWidth > bmpHeight * 1.2f;
 
+        // clPlayerContent has NO horizontal padding now; hero default margin=20dp.
+        // Wide images: margin=0 → full screen width. Square/tall: margin=20dp.
+        int heroMarginPx = isWide ? 0 : dpToPx(20);
+
+        // Always keep the same height so controls below don't jump.
+        // Wide images use fitCenter scaleType so they show fully inside the fixed container.
         int targetHeight = dpToPx(PLAYER_HERO_DEFAULT_HEIGHT_DP);
-        if (aspect > 1.02f) {
-            targetHeight = Math.round(width * aspect);
-            targetHeight = Math.max(dpToPx(PLAYER_HERO_MIN_HEIGHT_DP), targetHeight);
-            targetHeight = Math.min(dpToPx(PLAYER_HERO_MAX_HEIGHT_DP), targetHeight);
+
+        androidx.constraintlayout.widget.ConstraintLayout.LayoutParams heroParams =
+                (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) flPlayerHero.getLayoutParams();
+        if (heroParams != null) {
+            heroParams.leftMargin = heroMarginPx;
+            heroParams.rightMargin = heroMarginPx;
+            heroParams.height = targetHeight;
+            flPlayerHero.setLayoutParams(heroParams);
+            if (flPlayerHero.getParent() instanceof android.view.View) {
+                ((android.view.View) flPlayerHero.getParent()).requestLayout();
+            }
+        }
+        // Rounded corners only for square/tall images; flat edges for full-width wide images
+        if (isWide) {
+            flPlayerHero.setBackground(androidx.core.content.ContextCompat.getDrawable(getContext(), R.drawable.bg_player_cover_flat));
+        } else {
+            flPlayerHero.setBackground(androidx.core.content.ContextCompat.getDrawable(getContext(), R.drawable.bg_player_cover_rounded));
         }
 
-        setPlayerHeroContainerHeight(targetHeight);
+        // Mirror on ivPlayerCoverIncoming
+        if (ivPlayerCoverIncoming != null) {
+            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams inParams =
+                    (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) ivPlayerCoverIncoming.getLayoutParams();
+            if (inParams != null) {
+                inParams.leftMargin = heroMarginPx;
+                inParams.rightMargin = heroMarginPx;
+                inParams.height = targetHeight;
+                ivPlayerCoverIncoming.setLayoutParams(inParams);
+                ivPlayerCoverIncoming.requestLayout();
+            }
+            ivPlayerCoverIncoming.setBackground(androidx.core.content.ContextCompat.getDrawable(getContext(),
+                    isWide ? R.drawable.bg_player_cover_flat : R.drawable.bg_player_cover_rounded));
+        }
     }
 
     private int dpToPx(int dp) {

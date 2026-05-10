@@ -5,6 +5,8 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/surface_dark"
+    android:clipChildren="false"
+    android:clipToPadding="false"
     tools:context=".SongPlayerFragment">
 
     <com.google.android.material.imageview.ShapeableImageView
@@ -68,7 +70,9 @@
         android:id="@+id/svSongPlayerContent"
         android:layout_width="0dp"
         android:layout_height="0dp"
+        android:clipChildren="false"
         android:clipToPadding="false"
+        android:overScrollMode="never"
         android:paddingBottom="24dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
@@ -78,26 +82,27 @@
         <androidx.constraintlayout.widget.ConstraintLayout
             android:id="@+id/clPlayerContent"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:paddingHorizontal="24dp"
+            android:layout_height="match_parent"
+            android:clipChildren="false"
+            android:clipToPadding="false"
             android:paddingTop="8dp"
             android:paddingBottom="40dp">
 
-            <com.google.android.material.card.MaterialCardView
+            <FrameLayout
                 android:id="@+id/flPlayerHero"
                 android:layout_width="0dp"
                 android:layout_height="360dp"
                 android:layout_marginTop="20dp"
-                android:layout_marginHorizontal="4dp"
-                app:cardBackgroundColor="@android:color/transparent"
-                app:cardElevation="0dp"
-                app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Small"
-                app:strokeWidth="0dp"
+                android:layout_marginHorizontal="20dp"
+                android:background="@drawable/bg_player_cover_rounded"
+                android:clipChildren="false"
+                android:clipToPadding="false"
+                android:clipToOutline="true"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toTopOf="parent">
 
-                <com.google.android.material.imageview.ShapeableImageView
+                <ImageView
                     android:id="@+id/ivPlayerCover"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
@@ -105,8 +110,7 @@
                     android:clickable="false"
                     android:focusable="false"
                     android:scaleType="centerCrop"
-                    android:src="@android:color/transparent"
-                    app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Small" />
+                    android:src="@android:color/transparent" />
 
                 <com.example.sleppify.AnimatedEqualizerView
                     android:id="@+id/animatedEqPlayer"
@@ -116,13 +120,31 @@
                     android:layout_margin="12dp"
                     android:visibility="gone"
                     app:barColor="@color/stitch_blue" />
-            </com.google.android.material.card.MaterialCardView>
+            </FrameLayout>
+
+            <ImageView
+                android:id="@+id/ivPlayerCoverIncoming"
+                android:layout_width="0dp"
+                android:layout_height="360dp"
+                android:layout_marginTop="20dp"
+                android:layout_marginHorizontal="20dp"
+                android:background="@drawable/bg_player_cover_rounded"
+                android:clickable="false"
+                android:clipToOutline="true"
+                android:focusable="false"
+                android:scaleType="centerCrop"
+                android:src="@android:color/transparent"
+                android:visibility="invisible"
+                app:layout_constraintEnd_toEndOf="@id/flPlayerHero"
+                app:layout_constraintStart_toStartOf="@id/flPlayerHero"
+                app:layout_constraintTop_toTopOf="@id/flPlayerHero" />
 
             <LinearLayout
                 android:id="@+id/llPlayerInfo"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="24dp"
+                android:layout_marginHorizontal="24dp"
                 android:orientation="vertical"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
@@ -163,6 +185,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
+                android:layout_marginHorizontal="24dp"
                 android:clipToPadding="false"
                 android:overScrollMode="never"
                 android:paddingHorizontal="0dp"
@@ -256,13 +279,12 @@
                 android:layout_height="wrap_content"
                 android:minHeight="48dp"
                 android:layout_marginTop="12dp"
-                android:layout_marginStart="0dp"
-                android:layout_marginEnd="0dp"
+                android:layout_marginHorizontal="24dp"
                 android:max="1000"
                 android:progress="0"
                 android:thumbTint="@color/stitch_blue"
-                app:layout_constraintEnd_toEndOf="@id/llPlayerInfo"
-                app:layout_constraintStart_toStartOf="@id/llPlayerInfo"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toBottomOf="@id/hsSocialActions" />
 
             <TextView
@@ -270,12 +292,13 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="-8dp"
+                android:layout_marginStart="24dp"
                 android:fontFamily="@font/inter_variable"
                 android:text="00:00"
                 android:textColor="@color/text_secondary"
                 android:textSize="13sp"
                 android:textStyle="bold"
-                app:layout_constraintStart_toStartOf="@id/llPlayerInfo"
+                app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toBottomOf="@id/sbPlaybackProgress" />
 
             <TextView
@@ -283,24 +306,26 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="-8dp"
+                android:layout_marginEnd="24dp"
                 android:fontFamily="@font/inter_variable"
                 android:text="00:00"
                 android:textColor="@color/text_secondary"
                 android:textSize="13sp"
                 android:textStyle="bold"
-                app:layout_constraintEnd_toEndOf="@id/llPlayerInfo"
+                app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintTop_toBottomOf="@id/sbPlaybackProgress" />
 
             <LinearLayout
                 android:id="@+id/llPlayerControls"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginHorizontal="24dp"
                 android:gravity="center"
                 android:orientation="horizontal"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@id/tvCurrentTime">
+                app:layout_constraintTop_toBottomOf="@id/tvCurrentTime"
+                app:layout_constraintBottom_toTopOf="@id/llPlayerFooter">
 
                 <LinearLayout android:layout_width="64dp" android:layout_height="wrap_content" android:gravity="center_horizontal" android:orientation="vertical">
                     <ImageButton android:id="@+id/btnShuffle" android:layout_width="64dp" android:layout_height="64dp" android:background="?attr/selectableItemBackgroundBorderless" android:padding="1dp" android:src="@drawable/ic_shuffle_custom" app:tint="@color/text_primary" />
@@ -321,9 +346,9 @@
                 android:id="@+id/llPlayerFooter"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="80dp"
-                android:layout_marginStart="14dp"
-                android:layout_marginEnd="14dp"
+                android:layout_marginBottom="8dp"
+                android:layout_marginStart="38dp"
+                android:layout_marginEnd="38dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
                 app:layout_constraintEnd_toEndOf="parent"
