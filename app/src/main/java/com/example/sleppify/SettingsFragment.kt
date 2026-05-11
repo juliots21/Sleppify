@@ -21,6 +21,10 @@ import android.widget.*
 import androidx.appcompat.app.AlertDialog
 import android.app.UiModeManager
 import android.content.res.Configuration
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
@@ -58,9 +62,6 @@ class SettingsFragment : Fragment() {
     private lateinit var swAmoledMode: MaterialSwitch
     private lateinit var swDownloadOnMobileData: MaterialSwitch
     private lateinit var swOfflineMode: MaterialSwitch
-    private lateinit var swTvMode: MaterialSwitch
-    private lateinit var rowTvMode: View
-    private lateinit var dividerTvMode: View
     private lateinit var rowDownloadQuality: View
     private lateinit var tvDownloadQualityValue: TextView
     private lateinit var rowStreamingQuality: View
@@ -104,7 +105,40 @@ class SettingsFragment : Fragment() {
     private var lastProfileDisplayName: String? = null
     private var lastProfileEmail: String? = null
     private var lastProfilePhotoUrl: String? = null
-    private var lastTvModeEnabled = false
+
+    private val connectivityManager by lazy {
+        requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    }
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) = checkAndAutoSetOfflineMode()
+        override fun onLost(network: Network) = checkAndAutoSetOfflineMode()
+        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = checkAndAutoSetOfflineMode()
+    }
+
+    private fun checkAndAutoSetOfflineMode() {
+        val ctx = context ?: return
+        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = cm.activeNetwork
+        val caps = if (network != null) cm.getNetworkCapabilities(network) else null
+        val hasInternet = caps != null &&
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        val prefs = ctx.getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE)
+        val currentOffline = prefs.getBoolean(CloudSyncManager.KEY_OFFLINE_MODE_ENABLED, false)
+        if (!hasInternet && !currentOffline) {
+            prefs.edit().putBoolean(CloudSyncManager.KEY_OFFLINE_MODE_ENABLED, true).apply()
+            activity?.runOnUiThread {
+                hasSettingsSnapshot = false
+                renderSettingsState()
+            }
+        } else if (hasInternet && currentOffline) {
+            prefs.edit().putBoolean(CloudSyncManager.KEY_OFFLINE_MODE_ENABLED, false).apply()
+            activity?.runOnUiThread {
+                hasSettingsSnapshot = false
+                renderSettingsState()
+            }
+        }
+    }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
         return inflater.inflate(R.layout.fragment_settings, container, false)
@@ -143,9 +177,6 @@ class SettingsFragment : Fragment() {
         vStorageCache = v.findViewById(R.id.vStorageCache)
         vStorageFree = v.findViewById(R.id.vStorageFree)
         btnDeleteSettingsCache = v.findViewById(R.id.btnDeleteSettingsCache)
-        swTvMode = v.findViewById(R.id.swTvMode)
-        rowTvMode = v.findViewById(R.id.rowTvMode)
-        dividerTvMode = v.findViewById(R.id.dividerTvMode)
     }
 
     private fun setupInteractions() {
@@ -163,9 +194,19 @@ class SettingsFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        try { connectivityManager.registerNetworkCallback(request, networkCallback) } catch (_: Exception) {}
+        checkAndAutoSetOfflineMode()
         renderSettingsState()
         renderProfileState()
         refreshStorageBreakdownAsync()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        try { connectivityManager.unregisterNetworkCallback(networkCallback) } catch (_: Exception) {}
     }
 
     private fun showDeleteCacheConfirmation() {
@@ -326,7 +367,6 @@ class SettingsFragment : Fragment() {
         val crossfade = settingsPrefs.getInt(CloudSyncManager.KEY_OFFLINE_CROSSFADE_SECONDS, 0).coerceIn(0, 12)
         val mobileDownloads = settingsPrefs.getBoolean(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false)
         val offlineMode = settingsPrefs.getBoolean(CloudSyncManager.KEY_OFFLINE_MODE_ENABLED, false)
-        val tvMode = localPrefs.getBoolean("tv_mode_enabled", false)
         val quality = normalizeQuality(settingsPrefs.getString(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_QUALITY, CloudSyncManager.DOWNLOAD_QUALITY_MEDIUM))
         val streamingQuality = normalizeStreamingQuality(settingsPrefs.getString(CloudSyncManager.KEY_STREAMING_QUALITY, CloudSyncManager.STREAMING_QUALITY_MEDIUM))
 
@@ -334,14 +374,13 @@ class SettingsFragment : Fragment() {
             lastOfflineCrossfadeSeconds == crossfade &&
             lastAllowMobileDataDownloads == mobileDownloads && lastOfflineModeEnabled == offlineMode &&
             lastDownloadQuality == quality &&
-            lastStreamingQuality == streamingQuality && lastTvModeEnabled == tvMode) return
+            lastStreamingQuality == streamingQuality) return
 
         hasSettingsSnapshot = true
         lastAmoledModeEnabled = amoled
         lastOfflineCrossfadeSeconds = crossfade
         lastAllowMobileDataDownloads = mobileDownloads; lastOfflineModeEnabled = offlineMode; lastDownloadQuality = quality
         lastStreamingQuality = streamingQuality
-        lastTvModeEnabled = tvMode
 
         swAmoledMode.apply {
             setOnCheckedChangeListener(null)
@@ -369,24 +408,6 @@ class SettingsFragment : Fragment() {
                 settingsPrefs.edit().putBoolean(CloudSyncManager.KEY_OFFLINE_MODE_ENABLED, c).apply()
                 renderSettingsState()
             }
-        }
-
-        val isRunningOnTv = SystemType.isTv(requireContext())
-        
-        if (isRunningOnTv) {
-            rowTvMode.visibility = View.VISIBLE
-            dividerTvMode.visibility = View.VISIBLE
-            swTvMode.apply {
-                setOnCheckedChangeListener(null)
-                isChecked = tvMode
-                setOnCheckedChangeListener { _, c ->
-                    localPrefs.edit().putBoolean("tv_mode_enabled", c).apply()
-                    // No sync to cloud
-                }
-            }
-        } else {
-            rowTvMode.visibility = View.GONE
-            dividerTvMode.visibility = View.GONE
         }
 
         tvDownloadQualityValue.text = labelForQuality(quality)

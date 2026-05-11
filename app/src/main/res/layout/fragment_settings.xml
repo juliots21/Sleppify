@@ -17,7 +17,7 @@
             android:id="@+id/cardProfile"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
+            android:layout_marginTop="8dp"
             android:clickable="true"
             android:focusable="true"
             android:foreground="?attr/selectableItemBackground"
@@ -31,7 +31,8 @@
                 android:layout_height="wrap_content"
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
-                android:padding="20dp">
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="12dp">
 
                 <com.google.android.material.imageview.ShapeableImageView
                     android:id="@+id/ivProfilePhoto"

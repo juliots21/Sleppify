@@ -38,7 +38,6 @@ import com.bumptech.glide.request.target.Target
 import com.bumptech.glide.load.DataSource
 import com.bumptech.glide.load.engine.GlideException
 import android.graphics.drawable.Drawable
-import com.example.sleppify.SystemType
 import com.example.sleppify.utils.YouTubeCropTransformation
 import com.google.android.material.imageview.ShapeableImageView
 import com.google.android.material.textfield.TextInputEditText
@@ -72,12 +71,7 @@ class SearchFragment : Fragment() {
         private const val SEARCH_SUGGESTION_RECENT_LIMIT = 6
         private const val SEARCH_SCROLL_LOAD_MORE_THRESHOLD = 4
 
-        private val DEFAULT_SEARCH_SUGGESTIONS = arrayOf(
-            "Lofi Chill",
-            "EDM House",
-            "Trap Latino",
-            "Pop Latino"
-        )
+        private val DEFAULT_SEARCH_SUGGESTIONS = emptyArray<String>()
 
         fun newInstance() = SearchFragment()
     }
@@ -86,7 +80,8 @@ class SearchFragment : Fragment() {
         val query: String,
         val videoId: String = "",
         val title: String = "",
-        val thumbnail: String = ""
+        val thumbnail: String = "",
+        val artist: String = ""
     )
 
     private val youTubeMusicService = YouTubeMusicService()
@@ -159,10 +154,7 @@ class SearchFragment : Fragment() {
 
         setupBackNavigation()
 
-        // Show scoped overlay immediately so no blank frame is visible while the
-        // fragment inflates. Reveal after the layout has drawn.
-        showModuleLoadingOverlay()
-        view.postDelayed({ if (isAdded && !isHidden) revealModuleContent() }, 120L)
+        // Overlay starts visible from XML; onResume will hide it after layout is complete.
     }
 
     private fun initViews(root: View) {
@@ -211,22 +203,14 @@ class SearchFragment : Fragment() {
 
         root.findViewById<View>(R.id.btnFeaturedShare).setOnClickListener {
             featuredTrack?.let { track ->
-                val sendIntent: Intent = Intent().apply {
-                    action = Intent.ACTION_SEND
-                    putExtra(Intent.EXTRA_TEXT, "Escucha ${track.title} en Sleppify: https://music.youtube.com/watch?v=${track.videoId}")
+                val sendIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, "https://youtu.be/${track.videoId}")
                 }
-                val shareIntent = Intent.createChooser(sendIntent, null)
-                startActivity(shareIntent)
+                startActivity(Intent.createChooser(sendIntent, "Compartir"))
             }
         }
         
-        if (SystemType.isTv(requireContext())) {
-            moduleLoadingOverlay.setBackgroundColor(Color.TRANSPARENT)
-            moduleLoadingOverlay.isClickable = false
-            moduleLoadingOverlay.isFocusable = false
-        }
-
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             root.setPadding(systemBars.left, 0, systemBars.right, 0)
@@ -296,7 +280,6 @@ class SearchFragment : Fragment() {
         val suggestionsAdapter = SuggestionsAdapter {
             etSearchQuery.setText(it)
             etSearchQuery.setSelection(it.length)
-            autoPlayOnFirstResult = true
             performSearch(it)
             hideKeyboard()
         }
@@ -308,10 +291,19 @@ class SearchFragment : Fragment() {
         val layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
         rvRecentSearchImages.layoutManager = layoutManager
         rvRecentSearchImages.adapter = RecentSearchImageAdapter { recentSearch ->
-            etSearchQuery.setText(recentSearch.query)
-            etSearchQuery.setSelection(recentSearch.query.length)
-            performSearch(recentSearch.query)
-            hideKeyboard()
+            if (recentSearch.videoId.isNotEmpty()) {
+                val track = YouTubeMusicService.TrackResult(
+                    "video",
+                    recentSearch.videoId,
+                    recentSearch.title,
+                    recentSearch.artist,
+                    recentSearch.thumbnail
+                )
+                playTrackDirectly(track)
+            } else {
+                etSearchQuery.setText(recentSearch.query)
+                etSearchQuery.setSelection(recentSearch.query.length)
+            }
         }
         
         // Snap helper para centrar items
@@ -467,15 +459,10 @@ class SearchFragment : Fragment() {
                     if (!append) setSearchLoadingState(false, "No encontré resultados para: $query")
                 } else if (!append) {
                     setSearchLoadingState(false, "")
-                    if (autoPlayOnFirstResult) {
-                        autoPlayOnFirstResult = false
-                        allTracks.firstOrNull { it.videoId?.isNotEmpty() == true }?.let { onTrackClicked(it) }
-                    } else {
-                        // Pre-fetch opcional para mejor latencia
-                        allTracks.firstOrNull()?.videoId?.let { id ->
-                            lifecycleScope.launch(Dispatchers.IO) {
-                                InnertubeResolver.resolveStreamUrl(requireContext(), id)
-                            }
+                    // Pre-fetch opcional para mejor latencia
+                    allTracks.firstOrNull()?.videoId?.let { id ->
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            InnertubeResolver.resolveStreamUrl(requireContext(), id)
                         }
                     }
                 }
@@ -503,25 +490,19 @@ class SearchFragment : Fragment() {
                                 setSearchLoadingState(false, "No encontré resultados para: $query")
                             } else {
                                 setSearchLoadingState(false, "")
-                                if (autoPlayOnFirstResult) {
-                                    autoPlayOnFirstResult = false
-                                    allTracks.firstOrNull { it.videoId?.isNotEmpty() == true }?.let { onTrackClicked(it) }
-                                }
                             }
                             revealModuleContent()
                             rvSearchResults.alpha = 0f
                             rvSearchResults.animate().alpha(1f).setDuration(250).start()
                             hideKeyboard()
                         }
-                        override fun onError(innerError: String) {
+                        override fun onError(error: String) {
                             if (activity == null || !isAdded || requestId != latestSearchRequestId) return
-                            autoPlayOnFirstResult = false
-                            setSearchLoadingState(false, "Error: $innerError")
+                            setSearchLoadingState(false, "Error: $error")
                             revealModuleContent()
                         }
                     })
                 } else {
-                    autoPlayOnFirstResult = false
                     if (allTracks.isEmpty()) {
                         setSearchLoadingState(false, "Error: $error")
                     } else {
@@ -540,10 +521,10 @@ class SearchFragment : Fragment() {
         val scored = mutableListOf<Pair<YouTubeMusicService.TrackResult, Int>>()
         val seenIds = mutableSetOf<String>()
 
-        fun tryAdd(track: FavoritesPlaylistStore.FavoriteTrack) {
+        fun tryAdd(track: FavoritesPlaylistStore.FavoriteTrack, sourceBonus: Int = 0) {
             val key = "video|${track.videoId}"
             if (key in seenIds) return
-            val score = computeFuzzyScore(track.title, track.artist, normalizedQuery, queryTokens)
+            val score = computeFuzzyScore(track.title, track.artist, normalizedQuery, queryTokens, sourceBonus)
             if (score <= 0) return
             seenIds.add(key)
             scored.add(YouTubeMusicService.TrackResult(
@@ -551,12 +532,15 @@ class SearchFragment : Fragment() {
             ) to score)
         }
 
-        FavoritesPlaylistStore.loadFavorites(requireContext()).forEach { tryAdd(it) }
+        // Favorites: highest user signal (matches Spotify "liked songs" priority)
+        FavoritesPlaylistStore.loadFavorites(requireContext()).forEach { tryAdd(it, sourceBonus = 500) }
 
+        // Custom playlists: strong user signal
         for (name in CustomPlaylistsStore.getAllPlaylistNames(requireContext())) {
-            CustomPlaylistsStore.getTracksFromPlaylist(requireContext(), name).forEach { tryAdd(it) }
+            CustomPlaylistsStore.getTracksFromPlaylist(requireContext(), name).forEach { tryAdd(it, sourceBonus = 300) }
         }
 
+        // Cached online playlists: moderate signal
         try {
             val streamingCache = requireContext().getSharedPreferences("streaming_cache", Context.MODE_PRIVATE)
             val allKeys = streamingCache.all
@@ -572,7 +556,7 @@ class SearchFragment : Fragment() {
                             obj.optString("duration", ""),
                             obj.optString("imageUrl")
                         )
-                        tryAdd(track)
+                        tryAdd(track, sourceBonus = 100)
                     }
                 }
             }
@@ -580,13 +564,14 @@ class SearchFragment : Fragment() {
             Log.e("SearchFragment", "Error searching cached playlists: ${e.message}")
         }
 
+        // Playback history: listening behavior signal
         try {
             val history = PlaybackHistoryStore.load(requireContext())
             history.queue.forEach { q ->
                 val track = FavoritesPlaylistStore.FavoriteTrack(
                     q.videoId, q.title, q.artist, q.duration, q.imageUrl
                 )
-                tryAdd(track)
+                tryAdd(track, sourceBonus = 200)
             }
         } catch (e: Exception) {
             Log.e("SearchFragment", "Error searching history: ${e.message}")
@@ -596,7 +581,7 @@ class SearchFragment : Fragment() {
         return scored.map { it.first }
     }
 
-    private fun computeFuzzyScore(title: String, artist: String, query: String, tokens: List<String>): Int {
+    private fun computeFuzzyScore(title: String, artist: String, query: String, tokens: List<String>, sourceBonus: Int = 0): Int {
         val t = normalizeForFilter(title)
         val a = normalizeForFilter(artist)
         var score = 0
@@ -617,10 +602,10 @@ class SearchFragment : Fragment() {
         val titleWords = t.split(Regex("\\s+"))
         val artistWords = a.split(Regex("\\s+"))
 
-        val anyHits = tokens.count { 
-            titleWords.contains(it) || artistWords.contains(it) || 
-            titleWords.any { w -> isFuzzyMatch(it, w) } || 
-            artistWords.any { w -> isFuzzyMatch(it, w) } 
+        val anyHits = tokens.count {
+            titleWords.contains(it) || artistWords.contains(it) ||
+            titleWords.any { w -> isFuzzyMatch(it, w) } ||
+            artistWords.any { w -> isFuzzyMatch(it, w) }
         }
 
         val exactMatchFallback = t.contains(query) || a.contains(query)
@@ -638,19 +623,22 @@ class SearchFragment : Fragment() {
             }
         }
 
-        if (a == query) score += 80
-        else if (a.startsWith("$query ")) score += 70
-        else if (a.startsWith(query)) score += 60
-        else if (a.contains(query)) score += 40
-        
+        // Artist match — explicit bonus (Spotify-style: artist relevance matters)
+        if (a == query) score += 200
+        else if (a.startsWith("$query ")) score += 150
+        else if (a.startsWith(query)) score += 120
+        else if (a.contains(query)) score += 80
+
         for (tok in tokens) {
             if (artistWords.contains(tok)) {
-                score += 15
+                score += 30
             } else if (artistWords.any { isFuzzyMatch(tok, it) }) {
-                score += 5
+                score += 10
             }
         }
 
+        // Source bonus: favorites > custom playlists > history > cached
+        score += sourceBonus
         score += 5
         return score
     }
@@ -666,12 +654,37 @@ class SearchFragment : Fragment() {
         allTracks.addAll(newOnes)
     }
 
+    private data class UserSignals(
+        val favoriteIds: Set<String>,
+        val customPlaylistIds: Set<String>,
+        val historyIds: Set<String>
+    )
+
+    private fun loadUserSignals(): UserSignals {
+        val ctx = context ?: return UserSignals(emptySet(), emptySet(), emptySet())
+        val favIds = try {
+            FavoritesPlaylistStore.loadFavorites(ctx).map { it.videoId }.toSet()
+        } catch (e: Exception) { emptySet() }
+        val customIds = try {
+            val ids = mutableSetOf<String>()
+            for (name in CustomPlaylistsStore.getAllPlaylistNames(ctx)) {
+                CustomPlaylistsStore.getTracksFromPlaylist(ctx, name).forEach { ids.add(it.videoId) }
+            }
+            ids
+        } catch (e: Exception) { emptySet() }
+        val historyIds = try {
+            PlaybackHistoryStore.load(ctx).queue.map { it.videoId }.toSet()
+        } catch (e: Exception) { emptySet() }
+        return UserSignals(favIds, customIds, historyIds)
+    }
+
     private fun applyActiveFilter(query: String?, forceSort: Boolean = false) {
         val normalizedQuery = query?.trim() ?: ""
         val filtered = allTracks.toMutableList()
 
         if (forceSort && normalizedQuery.isNotEmpty() && filtered.size > 1) {
-            sortResults(filtered, normalizedQuery)
+            val signals = loadUserSignals()
+            sortResults(filtered, normalizedQuery, signals)
         }
 
         tracks.clear()
@@ -688,19 +701,29 @@ class SearchFragment : Fragment() {
         view?.requestLayout()
     }
 
-    private fun sortResults(list: MutableList<YouTubeMusicService.TrackResult>, query: String) {
+    private fun sortResults(list: MutableList<YouTubeMusicService.TrackResult>, query: String, signals: UserSignals = UserSignals(emptySet(), emptySet(), emptySet())) {
         val normalized = normalizeForFilter(query)
         val tokens = normalized.split(Regex("\\s+")).filter { it.isNotEmpty() }
-        list.sortByDescending { computeScore(it, normalized, tokens) }
+        list.sortByDescending { computeScore(it, normalized, tokens, signals) }
     }
 
-    private fun computeScore(track: YouTubeMusicService.TrackResult, query: String, tokens: List<String>): Int {
+    private fun computeScore(track: YouTubeMusicService.TrackResult, query: String, tokens: List<String>, signals: UserSignals = UserSignals(emptySet(), emptySet(), emptySet())): Int {
         val t = normalizeForFilter(track.title)
         val s = normalizeForFilter(track.subtitle)
         var score = 0
-        
+
+        // --- Result type priority (Spotify/YT Music: tracks first, playlists last) ---
+        val type = track.resultType?.lowercase() ?: ""
+        when {
+            type == "track" || type == "video" || type == "song" -> score += 3000
+            type == "artist" -> score += 500
+            type == "album" -> score += 200
+            type == "playlist" -> score -= 2000
+        }
+
+        // --- Exact and prefix title matches ---
         if (t == query) {
-            score += 10000 
+            score += 10000
         } else if (t.startsWith("$query ")) {
             score += 8000
         } else if (t.startsWith(query)) {
@@ -711,10 +734,10 @@ class SearchFragment : Fragment() {
 
         val titleWords = t.split(Regex("\\s+")).filter { it.isNotEmpty() }
         val subtitleWords = s.split(Regex("\\s+")).filter { it.isNotEmpty() }
-        
+
         var titleHits = 0
         var subtitleHits = 0
-        
+
         tokens.forEach { tok ->
             if (titleWords.contains(tok)) {
                 titleHits++
@@ -722,13 +745,12 @@ class SearchFragment : Fragment() {
             } else if (titleWords.any { it.startsWith(tok) }) {
                 score += 200
             }
-            
             if (subtitleWords.contains(tok)) {
                 subtitleHits++
                 score += 100
             }
         }
-        
+
         if (titleHits >= tokens.size && tokens.isNotEmpty()) {
             score += 2000
         } else if (titleHits + subtitleHits >= tokens.size && tokens.isNotEmpty()) {
@@ -737,12 +759,19 @@ class SearchFragment : Fragment() {
 
         if (s == query) score += 200
         else if (s.contains(query)) score += 100
-        
-        val isDownloaded = track.videoId.isNotEmpty() && OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), track.videoId, null)
-        if (isDownloaded) {
-            score += 5000
+
+        // --- User signals (Spotify-style: content the user knows floats up) ---
+        val vid = track.videoId ?: ""
+        if (vid.isNotEmpty()) {
+            if (vid in signals.favoriteIds) score += 2000
+            if (vid in signals.customPlaylistIds) score += 1500
+            if (vid in signals.historyIds) score += 800
         }
-        
+
+        // --- Offline availability boost ---
+        val isDownloaded = vid.isNotEmpty() && OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), vid, null)
+        if (isDownloaded) score += 5000
+
         return score
     }
 
@@ -814,6 +843,33 @@ class SearchFragment : Fragment() {
         // Save to recent searches only when user plays a track from search results
         if (activeSearchQuery.isNotEmpty()) {
             rememberRecentSearchQuery(activeSearchQuery, track)
+        }
+
+        if (requireActivity() is MainActivity) {
+            (requireActivity() as MainActivity).handlePlayFromSearchIntent(playbackIntent)
+        }
+    }
+
+    private fun playTrackDirectly(track: YouTubeMusicService.TrackResult) {
+        val tracksArray = JSONArray()
+        val obj = JSONObject()
+        obj.put("resultType", track.resultType)
+        obj.put("videoId", track.videoId)
+        obj.put("contentId", track.contentId)
+        obj.put("title", track.title)
+        obj.put("subtitle", track.subtitle)
+        obj.put("thumbnailUrl", track.thumbnailUrl)
+        tracksArray.put(obj)
+
+        val playbackIntent = Intent(requireContext(), MainActivity::class.java).apply {
+            action = MainActivity.ACTION_PLAY_FROM_SEARCH
+            putExtra(EXTRA_RESULT_TYPE, track.resultType ?: "")
+            putExtra(EXTRA_RESULT_VIDEO_ID, track.videoId ?: "")
+            putExtra(EXTRA_RESULT_CONTENT_ID, track.contentId ?: "")
+            putExtra(EXTRA_RESULT_TITLE, track.title ?: "")
+            putExtra(EXTRA_RESULT_SUBTITLE, track.subtitle ?: "")
+            putExtra(EXTRA_RESULT_THUMBNAIL, track.thumbnailUrl ?: "")
+            putExtra(EXTRA_RESULT_TRACKS_JSON, tracksArray.toString())
         }
 
         if (requireActivity() is MainActivity) {
@@ -914,9 +970,9 @@ class SearchFragment : Fragment() {
     private fun shareTrack(track: YouTubeMusicService.TrackResult) {
         val shareIntent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, "Escucha ${track.title} de ${track.subtitle} en Sleppify: https://music.youtube.com/watch?v=${track.videoId}")
+            putExtra(Intent.EXTRA_TEXT, "https://youtu.be/${track.videoId}")
         }
-        startActivity(Intent.createChooser(shareIntent, "Compartir canción"))
+        startActivity(Intent.createChooser(shareIntent, "Compartir"))
     }
 
     private fun setSearchLoadingState(loading: Boolean, msg: String) {
@@ -950,7 +1006,8 @@ class SearchFragment : Fragment() {
                     query = obj.optString("query", ""),
                     videoId = obj.optString("videoId", ""),
                     title = obj.optString("title", ""),
-                    thumbnail = obj.optString("thumbnail", "")
+                    thumbnail = obj.optString("thumbnail", ""),
+                    artist = obj.optString("artist", "")
                 ))
             }
         } catch (e: Exception) {
@@ -974,7 +1031,8 @@ class SearchFragment : Fragment() {
             query = norm,
             videoId = firstResult?.videoId ?: "",
             title = firstResult?.title ?: "",
-            thumbnail = firstResult?.thumbnailUrl ?: ""
+            thumbnail = firstResult?.thumbnailUrl ?: "",
+            artist = firstResult?.subtitle ?: ""
         )
         
         recentSearchData.run {
@@ -994,6 +1052,7 @@ class SearchFragment : Fragment() {
             obj.put("videoId", search.videoId)
             obj.put("title", search.title)
             obj.put("thumbnail", search.thumbnail)
+            obj.put("artist", search.artist)
             array.put(obj)
         }
         requireContext().getSharedPreferences(PREFS_STREAMING_CACHE, Context.MODE_PRIVATE).edit()
@@ -1012,7 +1071,8 @@ class SearchFragment : Fragment() {
                 "query" to search.query,
                 "videoId" to search.videoId,
                 "title" to search.title,
-                "thumbnail" to search.thumbnail
+                "thumbnail" to search.thumbnail,
+                "artist" to search.artist
             )
         }
         db.collection("users").document(uid)
@@ -1038,7 +1098,8 @@ class SearchFragment : Fragment() {
                         query = map["query"] as? String ?: return@mapNotNull null,
                         videoId = map["videoId"] as? String ?: "",
                         title = map["title"] as? String ?: "",
-                        thumbnail = map["thumbnail"] as? String ?: ""
+                        thumbnail = map["thumbnail"] as? String ?: "",
+                        artist = map["artist"] as? String ?: ""
                     )
                 }
                 if (parsed.isNotEmpty() && recentSearchData.isEmpty()) {
@@ -1083,12 +1144,7 @@ class SearchFragment : Fragment() {
             else normalizeForFilter(candidate).let { it.contains(normDraft) || normDraft.contains(it) }
         }.take(SEARCH_SUGGESTION_RECENT_LIMIT)
 
-        val matchingGenerated = DEFAULT_SEARCH_SUGGESTIONS.toList().filter { candidate ->
-            !recentQueries.contains(candidate) && (
-                if (normDraft.isEmpty()) true
-                else normalizeForFilter(candidate).let { it.contains(normDraft) || normDraft.contains(it) }
-            )
-        }.take(4)
+        val smartSuggestions = buildSmartSuggestions(normDraft, recentQueries)
 
         val result = mutableListOf<SuggestionItem>()
 
@@ -1097,32 +1153,48 @@ class SearchFragment : Fragment() {
             matchingRecent.forEach { result.add(SuggestionItem.Recent(it)) }
         }
 
-        if (matchingGenerated.isNotEmpty()) {
-            val label = buildRelatedLabel(draft, matchingRecent)
-            result.add(SuggestionItem.Header(label))
-            matchingGenerated.forEach { result.add(SuggestionItem.Suggestion(it)) }
+        if (smartSuggestions.isNotEmpty()) {
+            result.add(SuggestionItem.Header("Temas relacionados"))
+            smartSuggestions.forEach { result.add(SuggestionItem.Suggestion(it)) }
         }
 
         return result
     }
 
-    private fun buildRelatedLabel(draft: String, recents: List<String>): String {
-        if (draft.isNotBlank()) return "Temas relacionados"
-        if (recents.isEmpty()) return "Sugerencias para ti"
-        val genres = recents.flatMap { q ->
-            q.lowercase().split(Regex("\\s+"))
-        }.filter { it.length > 3 }
-        val latinTokens = setOf("latin", "latino", "reggaeton", "trap", "salsa", "bachata", "cumbia")
-        val electroTokens = setOf("edm", "house", "techno", "electronic", "electro", "rave", "bass")
-        val calmTokens  = setOf("lofi", "chill", "ambient", "relax", "sleep", "study", "jazz")
-        val popTokens   = setOf("pop", "top", "hits", "charts", "radio")
-        return when {
-            genres.any { it in latinTokens }    -> "Temas relacionados"
-            genres.any { it in electroTokens }   -> "Sugerencias electrónicas"
-            genres.any { it in calmTokens }      -> "Para relajarte"
-            genres.any { it in popTokens }       -> "Más populares"
-            else                                  -> "Temas relacionados"
+    private fun buildSmartSuggestions(normDraft: String, recentQueries: List<String>): List<String> {
+        val ctx = context ?: return emptyList()
+        val pool = LinkedHashSet<String>()
+
+        val snapshot = PlaybackHistoryStore.load(ctx)
+        val current = snapshot.currentTrack()
+        if (current != null) {
+            val artist = current.artist.trim()
+            val title = current.title.trim()
+            if (artist.isNotEmpty()) {
+                pool.add(artist)
+                pool.add("$artist mix")
+            }
+            val titleWords = title.split(Regex("\\s+")).filter { it.length > 3 }
+            titleWords.take(2).forEach { pool.add(it) }
         }
+
+        recentQueries.flatMap { q -> q.split(Regex("\\s+")) }
+            .filter { it.length > 3 }
+            .groupingBy { it.lowercase() }
+            .eachCount()
+            .entries
+            .sortedByDescending { it.value }
+            .take(4)
+            .forEach { pool.add(it.key.replaceFirstChar { c -> c.uppercaseChar() }) }
+
+        return pool
+            .filter { candidate ->
+                !recentQueries.contains(candidate) && (
+                    if (normDraft.isEmpty()) true
+                    else normalizeForFilter(candidate).let { it.contains(normDraft) || normDraft.contains(it) }
+                )
+            }
+            .take(4)
     }
 
     private fun loadArtworkInto(target: ImageView, url: String?, videoId: String? = null) {
@@ -1183,6 +1255,17 @@ class SearchFragment : Fragment() {
 
     private fun showModuleLoadingOverlay() { moduleLoadingOverlay.visibility = View.VISIBLE }
     private fun revealModuleContent() { moduleLoadingOverlay.visibility = View.GONE }
+
+    private fun scheduleOverlayRevealAfterDraw() {
+        val v = view ?: return
+        v.viewTreeObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                v.viewTreeObserver.removeOnPreDrawListener(this)
+                v.post { if (isAdded && !isHidden) revealModuleContent() }
+                return true
+            }
+        })
+    }
 
     private inner class SearchResultsAdapter(
         val onClick: (YouTubeMusicService.TrackResult) -> Unit,
@@ -1258,6 +1341,9 @@ class SearchFragment : Fragment() {
         lastMiniArtUrl = "" // Resetear para forzar recarga de imagen
         startMiniProgressTicker()
         updateMiniPlayerUi()
+        // Reveal content only after the layout pass triggered above has fully drawn.
+        showModuleLoadingOverlay()
+        scheduleOverlayRevealAfterDraw()
     }
 
     override fun onPause() {
@@ -1272,14 +1358,16 @@ class SearchFragment : Fragment() {
         } else {
             // Re-enable back pressed callback when fragment becomes visible again
             backPressedCallback?.isEnabled = true
-            // Show scoped overlay while content re-draws
-            showModuleLoadingOverlay()
-            view?.postDelayed({ if (isAdded && !isHidden) revealModuleContent() }, 80L)
             // Hide global header when fragment becomes visible
             (activity as? MainActivity)?.findViewById<View>(R.id.topAppBar)?.visibility = View.GONE
-            // Clear input on every entry
-            etSearchQuery.setText("")
-            showSuggestionsMode()
+            // Only reset to suggestions mode if there is no active search (e.g. entering fresh).
+            // When returning from the player after a search, preserve results and query.
+            if (activeSearchQuery.isEmpty()) {
+                etSearchQuery.setText("")
+                showSuggestionsMode()
+            }
+            showModuleLoadingOverlay()
+            scheduleOverlayRevealAfterDraw()
             lastMiniArtUrl = "" // Resetear para forzar recarga de imagen
             // Animate mini player slide-up if not already visible and in place
             // (mirrors MusicPlayerFragment / PlaylistDetailFragment onHiddenChanged logic)
@@ -1427,9 +1515,17 @@ class SearchFragment : Fragment() {
             }
             .start()
 
-        if (requireActivity() is MainActivity) {
-            (requireActivity() as MainActivity).openSongPlayer()
-        }
+        val mainActivity = requireActivity() as? MainActivity ?: return
+        val player = mainActivity.findSongPlayerFragment() ?: return
+        if (!player.isAdded) return
+
+        player.externalSetReturnTargetTag(MainActivity.TAG_MODULE_SEARCH)
+        parentFragmentManager.beginTransaction()
+            .setReorderingAllowed(true)
+            .show(player)
+            .setMaxLifecycle(player, androidx.lifecycle.Lifecycle.State.RESUMED)
+            .runOnCommit { player.externalAnimateEnterSlide() }
+            .commit()
     }
 
     sealed class SuggestionItem {

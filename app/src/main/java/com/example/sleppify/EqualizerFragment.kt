@@ -215,11 +215,6 @@ class EqualizerFragment : Fragment() {
         sliderBassGain.setOnFocusChangeListener { _, hasFocus ->
             sliderBassGain.haloRadius = if (hasFocus) dp(24) else dp(0)
         }
-        if (SystemType.isTv(requireContext())) {
-            sliderBassGain.isFocusable = true
-            sliderBassGain.isFocusableInTouchMode = true
-        }
-
         sliderBassFrequency.addOnChangeListener { _, value, _ ->
             tvBassFrequencyValue.text = formatHz(value)
             if (restoringUi) return@addOnChangeListener
@@ -230,11 +225,6 @@ class EqualizerFragment : Fragment() {
         sliderBassFrequency.setOnFocusChangeListener { _, hasFocus ->
             sliderBassFrequency.haloRadius = if (hasFocus) dp(24) else dp(0)
         }
-        if (SystemType.isTv(requireContext())) {
-            sliderBassFrequency.isFocusable = true
-            sliderBassFrequency.isFocusableInTouchMode = true
-        }
-
         cardBassTypeSelector?.setOnClickListener { showBassTypePopup() }
 
         eqCurveView.apply {
@@ -800,28 +790,6 @@ class EqualizerFragment : Fragment() {
             commitAcceptedGraphicEqChanges(draftBands)
             accepted = true
             dialog.dismiss()
-        }
-
-        if (SystemType.isTv(requireContext())) {
-            btnClose?.visibility = View.GONE
-            btnAccept?.visibility = View.GONE
-            dialogView.findViewById<View>(R.id.layoutEqEditorActions)?.visibility = View.GONE
-            
-            modalEqView?.isFocusable = true
-            modalEqView?.isFocusableInTouchMode = true
-            modalEqView?.requestFocus()
-            
-            modalEqView?.setOnKeyListener { _, keyCode, event ->
-                if (event.action == android.view.KeyEvent.ACTION_DOWN) {
-                    if (keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER || 
-                        keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
-                        keyCode == android.view.KeyEvent.KEYCODE_BACK) {
-                        btnAccept?.performClick()
-                        return@setOnKeyListener true
-                    }
-                }
-                false
-            }
         }
 
         dialog.show()

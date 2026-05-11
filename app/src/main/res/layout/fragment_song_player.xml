@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<com.example.sleppify.SwipeInterceptLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
@@ -82,7 +82,7 @@
         <androidx.constraintlayout.widget.ConstraintLayout
             android:id="@+id/clPlayerContent"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
+            android:layout_height="wrap_content"
             android:clipChildren="false"
             android:clipToPadding="false"
             android:paddingTop="8dp"
@@ -122,22 +122,6 @@
                     app:barColor="@color/stitch_blue" />
             </FrameLayout>
 
-            <ImageView
-                android:id="@+id/ivPlayerCoverIncoming"
-                android:layout_width="0dp"
-                android:layout_height="360dp"
-                android:layout_marginTop="20dp"
-                android:layout_marginHorizontal="20dp"
-                android:background="@drawable/bg_player_cover_rounded"
-                android:clickable="false"
-                android:clipToOutline="true"
-                android:focusable="false"
-                android:scaleType="centerCrop"
-                android:src="@android:color/transparent"
-                android:visibility="invisible"
-                app:layout_constraintEnd_toEndOf="@id/flPlayerHero"
-                app:layout_constraintStart_toStartOf="@id/flPlayerHero"
-                app:layout_constraintTop_toTopOf="@id/flPlayerHero" />
 
             <LinearLayout
                 android:id="@+id/llPlayerInfo"
@@ -315,6 +299,16 @@
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintTop_toBottomOf="@id/sbPlaybackProgress" />
 
+            <!-- Space that pushes controls + footer toward the bottom -->
+            <Space
+                android:id="@+id/spaceControlsPush"
+                android:layout_width="0dp"
+                android:layout_height="-200dp"
+                app:layout_constraintTop_toBottomOf="@id/tvCurrentTime"
+                app:layout_constraintBottom_toTopOf="@id/llPlayerControls"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="parent" />
+
             <LinearLayout
                 android:id="@+id/llPlayerControls"
                 android:layout_width="0dp"
@@ -324,7 +318,7 @@
                 android:orientation="horizontal"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@id/tvCurrentTime"
+                app:layout_constraintTop_toBottomOf="@id/spaceControlsPush"
                 app:layout_constraintBottom_toTopOf="@id/llPlayerFooter">
 
                 <LinearLayout android:layout_width="64dp" android:layout_height="wrap_content" android:gravity="center_horizontal" android:orientation="vertical">
@@ -346,6 +340,7 @@
                 android:id="@+id/llPlayerFooter"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="80dp"
                 android:layout_marginBottom="8dp"
                 android:layout_marginStart="38dp"
                 android:layout_marginEnd="38dp"
@@ -353,7 +348,8 @@
                 android:orientation="horizontal"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@id/llPlayerControls">
+                app:layout_constraintTop_toBottomOf="@id/llPlayerControls"
+                app:layout_constraintBottom_toBottomOf="parent">
 
                 <LinearLayout
                     android:id="@+id/llDeviceInfo"
@@ -415,4 +411,4 @@
         </androidx.constraintlayout.widget.ConstraintLayout>
     </androidx.core.widget.NestedScrollView>
 
-</androidx.constraintlayout.widget.ConstraintLayout>
+</com.example.sleppify.SwipeInterceptLayout>

@@ -249,8 +249,8 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:clipToPadding="false"
-                android:paddingStart="12dp"
-                android:paddingEnd="8dp"
+                android:paddingStart="0dp"
+                android:paddingEnd="0dp"
                 android:paddingBottom="120dp"
                 android:nestedScrollingEnabled="false" />
         </LinearLayout>
@@ -263,7 +263,6 @@
         android:layout_height="0dp"
         android:orientation="vertical"
         android:clipToPadding="false"
-        android:paddingBottom="100dp"
         android:visibility="visible"
         app:layout_constraintTop_toBottomOf="@id/llSearchBar"
         app:layout_constraintBottom_toTopOf="@id/llMiniPlayer">
@@ -313,7 +312,7 @@
         android:layout_height="0dp"
         android:background="@color/surface_dark"
         android:elevation="4dp"
-        android:visibility="gone"
+        android:visibility="visible"
         android:clickable="true"
         android:focusable="true"
         app:layout_constraintBottom_toTopOf="@id/llMiniPlayer"

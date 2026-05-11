@@ -108,7 +108,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private lateinit var bottomNav: BottomNavigationView
-    private lateinit var navRail: com.google.android.material.navigationrail.NavigationRailView
     private lateinit var tvModuleTitle: TextView
     private lateinit var btnSettings: com.google.android.material.imageview.ShapeableImageView
     private lateinit var btnHeaderSearch: ImageView
@@ -123,6 +122,7 @@ class MainActivity : AppCompatActivity() {
 
     private var inSettings = false
     private var inEqualizerFromSettings = false
+    private var inEqualizerFromPlayer = false
     private var inScannerFromSettings = false
     private var forceInitialOauthGate = false
     private var loginGateAuthInProgress = false
@@ -181,6 +181,10 @@ class MainActivity : AppCompatActivity() {
                 exitScannerBack()
                 return
             }
+            if (inEqualizerFromPlayer) {
+                exitEqualizerToMusic()
+                return
+            }
             if (inEqualizerFromSettings) {
                 exitEqualizerToSettings()
                 return
@@ -227,7 +231,6 @@ class MainActivity : AppCompatActivity() {
         settingsPrefs = getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE)
         localPrefs = getSharedPreferences("sleppify_local_config", Context.MODE_PRIVATE)
         updateNavigationForScreenSize()
-        observeSettingsChanges()
 
         forceInitialOauthGate = !isInitialOauthGateCompleted()
         val shouldShowLoginGate = shouldShowLoginGateAtStartup()
@@ -289,7 +292,6 @@ class MainActivity : AppCompatActivity() {
     private fun initViews() {
         val root = findViewById<View>(R.id.main)
         bottomNav = findViewById(R.id.bottomNavigation)
-        navRail = findViewById(R.id.navigationRail)
         tvModuleTitle = findViewById(R.id.tvModuleTitle)
         btnSettings = findViewById(R.id.btnSettings)
         btnHeaderSearch = findViewById(R.id.btnHeaderSearch)
@@ -301,12 +303,6 @@ class MainActivity : AppCompatActivity() {
         loginGateContainer = findViewById(R.id.loginGateContainer)
         tvLoginStatus = findViewById(R.id.tvLoginStatus)
         btnLoginGoogle = findViewById(R.id.btnLoginGoogle)
-
-        if (SystemType.isTv(this)) {
-            moduleLoadingOverlay.setBackgroundColor(Color.TRANSPARENT)
-            moduleLoadingOverlay.isClickable = false
-            moduleLoadingOverlay.isFocusable = false
-        }
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -327,30 +323,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateNavigationForScreenSize() {
-        applyTvModeLayout()
-    }
-
-    private fun applyTvModeLayout() {
-        val isTvMode = localPrefs.getBoolean("tv_mode_enabled", false)
-        val navRailView = findViewById<View>(R.id.navigationRail) ?: return
-
-        if (isTvMode) {
-            bottomNav.visibility = View.GONE
-            navRailView.visibility = View.VISIBLE
-            topAppBar.visibility = View.GONE
-        } else {
-            navRailView.visibility = View.GONE
-            bottomNav.visibility = if (inSettings || inEqualizerFromSettings || inScannerFromSettings) View.GONE else View.VISIBLE
-            if (!isSearchFragmentVisible() && !isPlaylistDetailVisible()) topAppBar.visibility = View.VISIBLE
-        }
-    }
-
-    private fun observeSettingsChanges() {
-        localPrefs.registerOnSharedPreferenceChangeListener { _, key ->
-            if (key == "tv_mode_enabled") {
-                runOnUiThread { applyTvModeLayout() }
-            }
-        }
+        bottomNav.visibility = if (inSettings || inEqualizerFromSettings || inScannerFromSettings) View.GONE else View.VISIBLE
     }
 
     private fun setupListeners() {
@@ -360,16 +333,6 @@ class MainActivity : AppCompatActivity() {
         bottomNav.setOnItemSelectedListener { item ->
             if (inSettings) exitSettings()
             switchToMainModule(item.itemId)
-        }
-        navRail.setOnItemSelectedListener { item ->
-            if (item.itemId == R.id.nav_settings) {
-                if (!inSettings) enterSettings()
-                true
-            } else {
-                if (inSettings) exitSettings()
-                switchToMainModule(item.itemId)
-                true
-            }
         }
         cloudSyncManager.setSyncStateListener(this::setSyncOverlayVisible)
         onBackPressedDispatcher.addCallback(this, backPressedCallback)
@@ -781,7 +744,7 @@ class MainActivity : AppCompatActivity() {
     private fun showMainShell() {
         loginGateContainer?.visibility = View.GONE
         fragmentContainer.visibility = View.VISIBLE
-        applyTvModeLayout()
+        bottomNav.visibility = View.VISIBLE
     }
 
     private fun handleSignedInUser(user: FirebaseUser, onSuccess: Runnable?) {
@@ -912,10 +875,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun configureHeaderActionForScanner() {
-        btnSettings.visibility = View.VISIBLE
-        btnSettings.contentDescription = getString(R.string.header_action_settings)
-        btnSettings.setOnClickListener { exitScannerBack() }
-        loadProfilePhotoIntoSettings()
+        btnSettings.visibility = View.GONE
         btnCamera.visibility = View.GONE
 
         tvModuleTitle.apply {
@@ -961,7 +921,7 @@ class MainActivity : AppCompatActivity() {
 
         configureHeaderActionForSettings()
         setSolidNavigationBar(true)
-        applyTvModeLayout()
+        bottomNav.visibility = View.GONE
         lifecycleScope.launch {
             delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
             revealModuleContent()
@@ -989,10 +949,77 @@ class MainActivity : AppCompatActivity() {
 
         configureHeaderActionForMainModules()
         setSolidNavigationBar(false)
-        applyTvModeLayout()
+        bottomNav.visibility = View.VISIBLE
         updateHeaderTitleForModule(selectedId)
         lifecycleScope.launch {
             delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
+            revealModuleContent()
+        }
+    }
+
+    fun openEqualizerFromPlayer() {
+        if (isNavigating) return
+        inEqualizerFromPlayer = true
+        showModuleLoadingOverlay()
+
+        val target = equalizerFragment ?: EqualizerFragment().also { equalizerFragment = it }
+        val isNew = !target.isAdded
+
+        supportFragmentManager.beginTransaction().apply {
+            setReorderingAllowed(true)
+            val current = getMainModuleFragment(currentMainNavItemId)
+            hideIfVisible(this, current, target)
+            hideIfVisible(this, supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL), target)
+            hideIfVisible(this, supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER), target)
+            hideIfVisible(this, settingsFragment, target)
+            if (target.isAdded) show(target) else add(R.id.fragmentContainer, target, TAG_MODULE_EQUALIZER)
+            setMaxLifecycle(target, Lifecycle.State.RESUMED)
+            commit()
+        }
+
+        // Header: back arrow that returns to current music module (not settings)
+        btnSettings.visibility = View.GONE
+        btnCamera.visibility = View.GONE
+        btnHeaderSearch.visibility = View.GONE
+        tvModuleTitle.apply {
+            text = "Ecualizador"
+            isAllCaps = false
+            letterSpacing = 0f
+            typeface = resolveHeaderSettingsTypeface()
+            setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_arrow_back, 0, 0, 0)
+            compoundDrawablePadding = (10 * resources.displayMetrics.density).toInt()
+            setOnClickListener { exitEqualizerToMusic() }
+        }
+
+        setSolidNavigationBar(true)
+        bottomNav.visibility = View.GONE
+
+        lifecycleScope.launch {
+            delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
+            revealModuleContent()
+        }
+    }
+
+    private fun exitEqualizerToMusic() {
+        if (!inEqualizerFromPlayer) return
+        inEqualizerFromPlayer = false
+        showModuleLoadingOverlay()
+        val current = getMainModuleFragment(currentMainNavItemId)
+
+        supportFragmentManager.beginTransaction().apply {
+            setReorderingAllowed(true)
+            equalizerFragment?.let { if (it.isAdded) { hide(it); setMaxLifecycle(it, Lifecycle.State.STARTED) } }
+            if (current != null && current.isAdded) show(current)
+            setMaxLifecycle(current ?: return@apply, Lifecycle.State.RESUMED)
+            commit()
+        }
+
+        configureHeaderActionForMainModules()
+        setSolidNavigationBar(false)
+        bottomNav.visibility = View.VISIBLE
+
+        lifecycleScope.launch {
+            delay(MODULE_LOAD_OVERLAY_MIN_MS)
             revealModuleContent()
         }
     }
@@ -1023,7 +1050,7 @@ class MainActivity : AppCompatActivity() {
 
         configureHeaderActionForEqualizer()
         setSolidNavigationBar(true)
-        applyTvModeLayout()
+        bottomNav.visibility = View.GONE
 
         lifecycleScope.launch {
             delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
@@ -1050,7 +1077,7 @@ class MainActivity : AppCompatActivity() {
 
         configureHeaderActionForSettings()
         setSolidNavigationBar(true)
-        applyTvModeLayout()
+        bottomNav.visibility = View.GONE
 
         lifecycleScope.launch {
             delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
@@ -1059,10 +1086,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun configureHeaderActionForEqualizer() {
-        btnSettings.visibility = View.VISIBLE
-        btnSettings.contentDescription = getString(R.string.header_action_settings)
-        btnSettings.setOnClickListener { exitEqualizerToSettings() }
-        loadProfilePhotoIntoSettings()
+        btnSettings.visibility = View.GONE
         btnCamera.visibility = View.VISIBLE
 
         tvModuleTitle.apply {
@@ -1143,7 +1167,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (returnToEqualizer) configureHeaderActionForEqualizer() else configureHeaderActionForSettings()
-        applyTvModeLayout()
+        bottomNav.visibility = View.GONE
         setSolidNavigationBar(true)
 
         lifecycleScope.launch {
@@ -1160,9 +1184,10 @@ class MainActivity : AppCompatActivity() {
         val player = findSongPlayerFragment() ?: return
         if (player.isAdded) {
             supportFragmentManager.beginTransaction()
-                .setCustomAnimations(R.anim.player_screen_enter, R.anim.hold)
+                .setReorderingAllowed(true)
                 .show(player)
                 .setMaxLifecycle(player, Lifecycle.State.RESUMED)
+                .runOnCommit { player.externalAnimateEnterSlide() }
                 .commit()
         }
     }
@@ -1238,7 +1263,6 @@ class MainActivity : AppCompatActivity() {
             commit()
         }
 
-        applyTvModeLayout()
         if (wasPlaylistDetailActive) {
             topAppBar.visibility = View.GONE
         } else {
@@ -1315,7 +1339,6 @@ class MainActivity : AppCompatActivity() {
             if (currentMainNavItemId == R.id.nav_music && itemId != R.id.nav_music) markStreamingEntryAsLibrary()
 
             if (bottomNav.selectedItemId != itemId) bottomNav.selectedItemId = itemId
-            if (navRail.selectedItemId != itemId) navRail.selectedItemId = itemId
 
             val isTrulySwitching = currentMainNavItemId != itemId || !target.isAdded
             if (!isTrulySwitching && !inSettings) {

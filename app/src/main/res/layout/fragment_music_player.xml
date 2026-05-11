@@ -234,9 +234,6 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <!-- TV PLAYER PANE (Embedded Player) -->
-        <include layout="@layout/layout_tv_split_player" />
-
         <com.example.sleppify.widget.SafeRecyclerView
             android:id="@+id/rvMusicResults"
             android:layout_width="0dp"
@@ -244,7 +241,6 @@
             android:layout_weight="1.8"
             android:clipToPadding="false"
             android:paddingBottom="18dp"
-            android:nextFocusLeft="@id/btnTvPlayPause"
             android:focusable="true"
             android:focusableInTouchMode="true"
             android:descendantFocusability="afterDescendants"
