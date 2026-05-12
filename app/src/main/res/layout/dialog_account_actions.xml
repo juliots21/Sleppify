@@ -40,20 +40,22 @@
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnSignOutSleppify"
-            style="@style/Widget.Material3.Button.OutlinedButton"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Cerrar sesión"
+            android:textColor="@color/text_primary" />
+
+        <Space
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Cerrar sesión"
-            android:textColor="@color/text_primary"
-            app:strokeColor="#33FFFFFF" />
+            android:layout_weight="1" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnDeleteSleppify"
             style="@style/Widget.Material3.Button.TextButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
             android:text="Eliminar cuenta"
             android:textColor="#FF6E6E" />
     </LinearLayout>
@@ -71,10 +73,9 @@
         android:orientation="horizontal">
 
         <ImageView
-            android:layout_width="20dp"
-            android:layout_height="20dp"
-            android:src="@drawable/ic_youtube_logo"
-            app:tint="@color/text_secondary" />
+            android:layout_width="14dp"
+            android:layout_height="14dp"
+            android:src="@drawable/ic_ytmusic_custom" />
 
         <TextView
             android:layout_width="wrap_content"
@@ -106,12 +107,12 @@
 
     <com.google.android.material.button.MaterialButton
         android:id="@+id/btnChangeYt"
-        style="@style/Widget.Material3.Button.TonalButton"
-        android:layout_width="match_parent"
+        style="@style/Widget.Material3.Button.TextButton"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
+        android:layout_gravity="end"
         android:text="Cambiar cuenta de YouTube"
-        android:textColor="@color/text_primary"
-        app:backgroundTint="#1AFFFFFF" />
+        android:textColor="@color/text_primary" />
 
 </LinearLayout>

@@ -535,10 +535,10 @@ class SettingsFragment : Fragment() {
         
         if (InnertubeResolver.getAuthCookieHeader().isNotEmpty()) {
             ivYoutubeMusicStatus.visibility = View.VISIBLE
-            ivYoutubeMusicStatus.setColorFilter(ContextCompat.getColor(requireContext(), R.color.stitch_blue_light))
+            ivYoutubeMusicStatus.alpha = 1.0f
         } else {
             ivYoutubeMusicStatus.visibility = View.VISIBLE
-            ivYoutubeMusicStatus.setColorFilter(ContextCompat.getColor(requireContext(), R.color.text_secondary))
+            ivYoutubeMusicStatus.alpha = 0.4f
         }
 
         if (!photo.isNullOrEmpty()) {
