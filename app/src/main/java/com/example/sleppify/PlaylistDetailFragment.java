@@ -61,6 +61,7 @@ import androidx.work.WorkManager;
 import com.bumptech.glide.Glide;
 import com.bumptech.glide.load.engine.DiskCacheStrategy;
 import com.bumptech.glide.load.DecodeFormat;
+import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions;
 import com.bumptech.glide.request.RequestOptions;
 import com.google.android.gms.auth.api.signin.GoogleSignIn;
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount;
@@ -1129,6 +1130,7 @@ public class PlaylistDetailFragment extends Fragment
                 .transform(SHARED_YT_CROP)
                 .format(DecodeFormat.PREFER_RGB_565)
                 .diskCacheStrategy(DiskCacheStrategy.ALL)
+                .transition(DrawableTransitionOptions.withCrossFade(200))
                 .override(px, px)
                 .into(target);
     }
@@ -4914,10 +4916,12 @@ public class PlaylistDetailFragment extends Fragment
                 PlaylistGridArtLoader.load(holder.ivPlaylistCover, headerGridUrls, 800);
                 PlaylistGridArtLoader.load(holder.ivPlaylistBackdrop, headerGridUrls, 320);
             } else {
+                // Grey placeholder until track data arrives and grid can be built
+                int placeholderColor = ContextCompat.getColor(requireContext(), R.color.surface_high);
                 holder.ivPlaylistCover.setTag(R.id.tag_artwork_signature, null);
-                holder.ivPlaylistCover.setImageDrawable(null);
+                holder.ivPlaylistCover.setImageDrawable(new android.graphics.drawable.ColorDrawable(placeholderColor));
                 holder.ivPlaylistBackdrop.setTag(R.id.tag_artwork_signature, null);
-                holder.ivPlaylistBackdrop.setImageDrawable(null);
+                holder.ivPlaylistBackdrop.setImageDrawable(new android.graphics.drawable.ColorDrawable(placeholderColor));
             }
 
             applyHeaderBackdropVisualState(holder.ivPlaylistBackdrop, amoledModeEnabled);
@@ -4928,6 +4932,7 @@ public class PlaylistDetailFragment extends Fragment
                         .diskCacheStrategy(DiskCacheStrategy.ALL)
                         .onlyRetrieveFromCache(!isInternetAvailable())
                         .circleCrop()
+                        .transition(DrawableTransitionOptions.withCrossFade(200))
                         .placeholder(android.R.drawable.ic_menu_myplaces)
                         .error(android.R.drawable.ic_menu_myplaces)
                         .into(holder.ivGoogleProfile);

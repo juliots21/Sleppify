@@ -71,7 +71,7 @@
             app:tint="@color/text_secondary" />
 
         <com.google.android.material.imageview.ShapeableImageView
-            android:id="@+id/btnSettings"
+            android:id="@+id/btnProfilePhoto"
             android:layout_width="28dp"
             android:layout_height="28dp"
             android:background="?attr/selectableItemBackgroundBorderless"
@@ -79,7 +79,6 @@
             android:contentDescription="@string/header_action_settings"
             android:focusable="true"
             android:padding="0dp"
-            android:src="@drawable/ic_settings"
             app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Full" />
     </LinearLayout>
 

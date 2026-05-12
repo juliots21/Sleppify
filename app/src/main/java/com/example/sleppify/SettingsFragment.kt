@@ -59,6 +59,7 @@ class SettingsFragment : Fragment() {
     private lateinit var ivProfilePhoto: ShapeableImageView
     private lateinit var tvProfileName: TextView
     private lateinit var tvProfileBadge: TextView
+    private lateinit var ivYoutubeMusicStatus: ImageView
     private lateinit var swAmoledMode: MaterialSwitch
     private lateinit var swDownloadOnMobileData: MaterialSwitch
     private lateinit var swOfflineMode: MaterialSwitch
@@ -89,6 +90,24 @@ class SettingsFragment : Fragment() {
     
     private val authManager: AuthManager by lazy { AuthManager.getInstance(requireContext()) }
     
+    private val webSessionLauncher = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val data = result.data
+            if (data != null) {
+                val cookieHeader = data.getStringExtra(YouTubeMusicWebSessionActivity.EXTRA_SESSION_COOKIE_HEADER)
+                if (!TextUtils.isEmpty(cookieHeader)) {
+                    requireContext().getSharedPreferences("player_state", Context.MODE_PRIVATE)
+                        .edit()
+                        .putString("stream_last_youtube_web_cookie", cookieHeader)
+                        .apply()
+                    InnertubeResolver.setAuthCookies(cookieHeader)
+                    Toast.makeText(requireContext(), "Cuenta de YouTube Music actualizada", Toast.LENGTH_SHORT).show()
+                    renderProfileState()
+                }
+            }
+        }
+    }
+
     private var deleteAccountInFlight = false
     private var storageCleanupInFlight = false
     private var hasSettingsSnapshot = false
@@ -158,6 +177,7 @@ class SettingsFragment : Fragment() {
         ivProfilePhoto = v.findViewById(R.id.ivProfilePhoto)
         tvProfileName = v.findViewById(R.id.tvProfileName)
         tvProfileBadge = v.findViewById(R.id.tvProfileBadge)
+        ivYoutubeMusicStatus = v.findViewById(R.id.ivYoutubeMusicStatus)
         swAmoledMode = v.findViewById(R.id.swAmoledMode)
         swDownloadOnMobileData = v.findViewById(R.id.swDownloadOnMobileData)
         swOfflineMode = v.findViewById(R.id.swOfflineMode)
@@ -506,12 +526,21 @@ class SettingsFragment : Fragment() {
             tvProfileName.text = "Sleppify"
             tvProfileBadge.text = "Inicia sesion para sincronizar"
             ivProfilePhoto.setImageDrawable(ColorDrawable(ContextCompat.getColor(requireContext(), R.color.surface_high)))
+            ivYoutubeMusicStatus.visibility = View.GONE
             return
         }
 
         tvProfileName.text = name?.takeIf { it.isNotBlank() } ?: "Usuario"
         tvProfileBadge.text = email?.takeIf { it.isNotBlank() } ?: "Cuenta conectada · toca para cerrar sesion"
         
+        if (InnertubeResolver.getAuthCookieHeader().isNotEmpty()) {
+            ivYoutubeMusicStatus.visibility = View.VISIBLE
+            ivYoutubeMusicStatus.setColorFilter(ContextCompat.getColor(requireContext(), R.color.stitch_blue_light))
+        } else {
+            ivYoutubeMusicStatus.visibility = View.VISIBLE
+            ivYoutubeMusicStatus.setColorFilter(ContextCompat.getColor(requireContext(), R.color.text_secondary))
+        }
+
         if (!photo.isNullOrEmpty()) {
             Glide.with(this).load(photo).circleCrop()
                 .placeholder(R.color.surface_high).error(R.color.surface_high).into(ivProfilePhoto)
@@ -521,17 +550,49 @@ class SettingsFragment : Fragment() {
     }
 
     private fun showAccountActionsDialog() {
+        val view = layoutInflater.inflate(R.layout.dialog_account_actions, null)
+        val tvSleppifyName = view.findViewById<TextView>(R.id.tvSleppifyName)
+        val tvSleppifyEmail = view.findViewById<TextView>(R.id.tvSleppifyEmail)
+        val btnSignOutSleppify = view.findViewById<MaterialButton>(R.id.btnSignOutSleppify)
+        val btnDeleteSleppify = view.findViewById<MaterialButton>(R.id.btnDeleteSleppify)
+        val tvYtStatus = view.findViewById<TextView>(R.id.tvYtStatus)
+        val btnChangeYt = view.findViewById<MaterialButton>(R.id.btnChangeYt)
+
+        tvSleppifyName.text = authManager.getDisplayName()
+        tvSleppifyEmail.text = authManager.getEmail()
+
+        val cookie = InnertubeResolver.getAuthCookieHeader()
+        if (cookie.isNotEmpty()) {
+            tvYtStatus.text = "Conectado"
+            tvYtStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_primary))
+        } else {
+            tvYtStatus.text = "No conectado"
+            tvYtStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_secondary))
+        }
+
         val dialog = MaterialAlertDialogBuilder(requireContext())
-            .setTitle(authManager.getDisplayName())
-            .setMessage(authManager.getEmail())
-            .setNeutralButton("Eliminar cuenta", null)
-            .setNegativeButton("Cancelar", null)
-            .setPositiveButton("Cerrar sesion") { _, _ -> performSignOut() }
+            .setView(view)
             .show()
 
-        dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.apply {
-            setTextColor(Color.parseColor("#FF6E6E"))
-            setOnClickListener { dialog.dismiss(); showDeleteAccountDataConfirmation() }
+        btnSignOutSleppify.setOnClickListener {
+            dialog.dismiss()
+            performSignOut()
+        }
+
+        btnDeleteSleppify.setOnClickListener {
+            dialog.dismiss()
+            showDeleteAccountDataConfirmation()
+        }
+
+        btnChangeYt.setOnClickListener {
+            dialog.dismiss()
+            requireContext().getSharedPreferences("player_state", Context.MODE_PRIVATE)
+                .edit()
+                .remove("stream_last_youtube_web_cookie")
+                .apply()
+            InnertubeResolver.setAuthCookies("")
+            val intent = Intent(requireContext(), YouTubeMusicWebSessionActivity::class.java)
+            webSessionLauncher.launch(intent)
         }
     }
 

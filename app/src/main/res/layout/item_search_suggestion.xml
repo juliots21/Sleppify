@@ -37,7 +37,7 @@
         android:id="@+id/ivSuggestionArrow"
         android:layout_width="27dp"
         android:layout_height="27dp"
-        android:layout_marginEnd="20dp"
+        android:layout_marginEnd="0dp"
         android:src="@drawable/ic_arrow_outward"
         app:tint="#FFFFFF" />
 

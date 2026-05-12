@@ -142,6 +142,8 @@ public final class PlaylistGridArtLoader {
                 }
             }
         }
+        target.setAlpha(0f);
         target.setImageBitmap(composite);
+        target.animate().alpha(1f).setDuration(200).start();
     }
 }

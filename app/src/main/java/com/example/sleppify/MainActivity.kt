@@ -109,7 +109,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var bottomNav: BottomNavigationView
     private lateinit var tvModuleTitle: TextView
-    private lateinit var btnSettings: com.google.android.material.imageview.ShapeableImageView
+    private lateinit var btnProfilePhoto: com.google.android.material.imageview.ShapeableImageView
     private lateinit var btnHeaderSearch: ImageView
     private lateinit var btnCamera: ImageView
     private lateinit var topAppBar: View
@@ -293,7 +293,7 @@ class MainActivity : AppCompatActivity() {
         val root = findViewById<View>(R.id.main)
         bottomNav = findViewById(R.id.bottomNavigation)
         tvModuleTitle = findViewById(R.id.tvModuleTitle)
-        btnSettings = findViewById(R.id.btnSettings)
+        btnProfilePhoto = findViewById(R.id.btnProfilePhoto)
         btnHeaderSearch = findViewById(R.id.btnHeaderSearch)
         btnCamera = findViewById(R.id.btnCamera)
         topAppBar = findViewById(R.id.topAppBar)
@@ -328,7 +328,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupListeners() {
         btnLoginGoogle?.setOnClickListener { startLoginFromGate() }
-        btnSettings.setOnClickListener { if (inSettings) exitSettings() else enterSettings() }
+        btnProfilePhoto.setOnClickListener { if (inSettings) exitSettings() else enterSettings() }
         btnCamera.setOnClickListener { openScannerFromSettings() }
         bottomNav.setOnItemSelectedListener { item ->
             if (inSettings) exitSettings()
@@ -743,8 +743,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun showMainShell() {
         loginGateContainer?.visibility = View.GONE
+        topAppBar.visibility = View.VISIBLE
         fragmentContainer.visibility = View.VISIBLE
         bottomNav.visibility = View.VISIBLE
+        // Refresh profile photo every time the main shell becomes visible (e.g. after first sign-in)
+        loadProfilePhoto()
     }
 
     private fun handleSignedInUser(user: FirebaseUser, onSuccess: Runnable?) {
@@ -815,10 +818,10 @@ class MainActivity : AppCompatActivity() {
         btnHeaderSearch.setOnClickListener { openSearchFragment() }
 
         // Profile photo as settings button
-        btnSettings.visibility = View.VISIBLE
-        btnSettings.contentDescription = getString(R.string.header_action_settings)
-        btnSettings.setOnClickListener { enterSettings() }
-        loadProfilePhotoIntoSettings()
+        btnProfilePhoto.visibility = View.VISIBLE
+        btnProfilePhoto.contentDescription = getString(R.string.header_action_settings)
+        btnProfilePhoto.setOnClickListener { enterSettings() }
+        loadProfilePhoto()
 
         tvModuleTitle.apply {
             text = getString(R.string.header_brand_title)
@@ -837,7 +840,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun loadProfilePhotoIntoSettings() {
+    private fun loadProfilePhoto() {
         val prefs = getSharedPreferences("streaming_cache", MODE_PRIVATE)
         val cachedUrl = prefs.getString("cached_google_profile_photo_url", "") ?: ""
         val account = com.google.android.gms.auth.api.signin.GoogleSignIn.getLastSignedInAccount(this)
@@ -850,16 +853,15 @@ class MainActivity : AppCompatActivity() {
                 .load(photoUri)
                 .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL)
                 .circleCrop()
-                .placeholder(R.drawable.ic_settings)
-                .error(R.drawable.ic_settings)
-                .into(btnSettings)
+                .into(btnProfilePhoto)
         } else {
-            btnSettings.setImageResource(R.drawable.ic_settings)
+            // Eliminar imagen residual por si acaso
+            btnProfilePhoto.setImageDrawable(null)
         }
     }
 
     private fun configureHeaderActionForSettings() {
-        btnSettings.visibility = View.GONE
+        btnProfilePhoto.visibility = View.GONE
         btnHeaderSearch.visibility = View.GONE
         btnCamera.visibility = View.VISIBLE
 
@@ -875,7 +877,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun configureHeaderActionForScanner() {
-        btnSettings.visibility = View.GONE
+        btnProfilePhoto.visibility = View.GONE
         btnCamera.visibility = View.GONE
 
         tvModuleTitle.apply {
@@ -978,7 +980,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Header: back arrow that returns to current music module (not settings)
-        btnSettings.visibility = View.GONE
+        btnProfilePhoto.visibility = View.GONE
         btnCamera.visibility = View.GONE
         btnHeaderSearch.visibility = View.GONE
         tvModuleTitle.apply {
@@ -1086,7 +1088,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun configureHeaderActionForEqualizer() {
-        btnSettings.visibility = View.GONE
+        btnProfilePhoto.visibility = View.GONE
         btnCamera.visibility = View.VISIBLE
 
         tvModuleTitle.apply {

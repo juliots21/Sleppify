@@ -193,7 +193,7 @@ class SearchFragment : Fragment() {
         root.findViewById<View>(R.id.btnFeaturedPlay).setOnClickListener { featuredTrack?.let { onTrackClicked(it) } }
         
         (requireActivity() as? MainActivity)?.let { mainActivity ->
-            mainActivity.findViewById<View>(R.id.btnSettings)?.setOnClickListener {
+            mainActivity.findViewById<View>(R.id.btnProfilePhoto)?.setOnClickListener {
                 mainActivity.enterSettings()
             }
             mainActivity.findViewById<TextView>(R.id.tvModuleTitle)?.setOnClickListener {

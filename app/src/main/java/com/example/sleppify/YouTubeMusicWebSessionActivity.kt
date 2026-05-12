@@ -12,12 +12,16 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import android.view.animation.AnimationUtils
 
 class YouTubeMusicWebSessionActivity : AppCompatActivity() {
 
     private var webView: WebView? = null
+    private var loginOverlay: View? = null
+    private var btnOverlayLogin: Button? = null
     private var lastCookieHeader: String = ""
     private var lastAutoLoginClickAtMs: Long = 0L
     private var autoConnectTriggered: Boolean = false
@@ -28,6 +32,17 @@ class YouTubeMusicWebSessionActivity : AppCompatActivity() {
         setContentView(R.layout.activity_youtube_web_session)
 
         webView = findViewById(R.id.webSessionView)
+        loginOverlay = findViewById(R.id.loginOverlay)
+        btnOverlayLogin = findViewById(R.id.btnOverlayLogin)
+
+        val imgAmbient = findViewById<ImageView>(R.id.imgAmbient)
+        val breatheAnim = AnimationUtils.loadAnimation(this, R.anim.bg_breathe)
+        imgAmbient?.startAnimation(breatheAnim)
+
+        btnOverlayLogin?.setOnClickListener {
+            // Ocultamos la capa negra para revelar el WebView que ya estuvo cargando en segundo plano
+            loginOverlay?.visibility = View.GONE
+        }
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)

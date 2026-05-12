@@ -6,9 +6,7 @@
     android:layout_height="wrap_content"
     android:orientation="vertical"
     android:clipChildren="false"
-    android:clipToPadding="false"
-    android:focusable="true"
-    android:focusableInTouchMode="true">
+    android:clipToPadding="false">
 
         <androidx.constraintlayout.widget.ConstraintLayout
             android:id="@+id/flPlaylistHeaderContainer"
@@ -153,17 +151,15 @@
                         android:layout_width="wrap_content"
                         android:layout_height="56dp"
                         android:backgroundTint="@android:color/white"
-                        android:fontFamily="@font/manrope_variable"
+                        android:fontFamily="sans-serif-black"
                         android:minWidth="168dp"
                         android:paddingStart="20dp"
                         android:paddingEnd="20dp"
                         android:text="Reproducir"
                         android:textAllCaps="false"
                         android:textColor="#101010"
-                        android:textFontWeight="800"
+                        android:textSize="14sp"
                         android:textStyle="bold"
-                        android:focusable="true"
-                        android:focusableInTouchMode="true"
                         app:cornerRadius="28dp"
                         app:icon="@drawable/ic_player_play"
                         app:iconGravity="textStart"
@@ -181,8 +177,6 @@
                         android:background="@drawable/bg_playlist_action_white"
                         android:padding="18dp"
                         android:src="@drawable/ic_download_bold"
-                        android:focusable="true"
-                        android:focusableInTouchMode="true"
                         app:tint="#101010" />
                 </LinearLayout>
 

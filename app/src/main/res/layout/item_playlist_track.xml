@@ -101,7 +101,7 @@
         app:layout_constraintBottom_toBottomOf="parent">
 
         <ImageView
-            android:id="@+id/ivOfflineState"
+            android:id="@+id/ivOfflineState"    
             android:layout_width="20dp"
             android:layout_height="20dp"
             android:background="@drawable/bg_offline_state_outline_muted"
