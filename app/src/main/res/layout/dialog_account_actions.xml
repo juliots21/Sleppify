@@ -105,14 +105,5 @@
         android:textColor="@color/text_secondary"
         android:textSize="13sp" />
 
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/btnChangeYt"
-        style="@style/Widget.Material3.Button.TextButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:layout_gravity="end"
-        android:text="Cambiar cuenta de YouTube"
-        android:textColor="@color/text_primary" />
 
 </LinearLayout>

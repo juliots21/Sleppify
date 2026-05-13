@@ -171,7 +171,7 @@
                     android:text="Iniciar sesión"
                     android:textColor="@android:color/white"
                     android:background="@drawable/bg_youtube_button"
-                    android:drawableStart="@drawable/ic_yt_music_logo_white"
+                    android:drawableStart="@drawable/ic_yt_music_logo"
                     android:drawablePadding="12dp"
                     android:paddingStart="24dp"
                     android:paddingEnd="32dp"

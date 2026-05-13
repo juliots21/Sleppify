@@ -21,9 +21,16 @@
         <item name="cornerSize">50%</item>
     </style>
 
+    <!-- Eliminate the active indicator pill in BottomNavigationView -->
+    <style name="BottomNavNoIndicator" parent="Widget.Material3.BottomNavigationView.ActiveIndicator">
+        <item name="android:width">0dp</item>
+        <item name="android:height">0dp</item>
+        <item name="shapeAppearance">@null</item>
+    </style>
+
     <!-- Compact styles for Bottom Navigation -->
     <style name="BottomNavLabel" parent="TextAppearance.Material3.LabelSmall">
-        <item name="android:textSize">13sp</item>
+        <item name="android:textSize">9.5sp</item>
         <item name="android:letterSpacing">0.02</item>
         <item name="android:includeFontPadding">false</item>
         <item name="lineHeight">14sp</item>

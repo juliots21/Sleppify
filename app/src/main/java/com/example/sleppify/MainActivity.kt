@@ -55,6 +55,7 @@ import java.util.ArrayList
 class MainActivity : AppCompatActivity() {
 
     companion object {
+        private const val TAG_MODULE_PRINCIPAL = "module_principal"
         private const val TAG_MODULE_MUSIC = "module_music"
         private const val TAG_MODULE_SCANNER = "module_scanner"
         private const val TAG_MODULE_EQUALIZER = "module_equalizer"
@@ -136,6 +137,7 @@ class MainActivity : AppCompatActivity() {
 
     private val cloudSyncManager: CloudSyncManager by lazy { CloudSyncManager.getInstance(this) }
     
+    private var principalFragment: Fragment? = null
     private var musicFragment: Fragment? = null
     private var scannerFragment: Fragment? = null
     private var equalizerFragment: Fragment? = null
@@ -461,6 +463,25 @@ class MainActivity : AppCompatActivity() {
         runDeferredResumeWork()
     }
 
+    fun onAllDownloadsDeleted() {
+        val music = supportFragmentManager.findFragmentByTag(TAG_MODULE_MUSIC)
+        if (music is MusicPlayerFragment && music.isAdded) {
+            music.refreshLibraryUi()
+        }
+    }
+
+    fun notifyOfflineModeChanged() {
+        val music = supportFragmentManager.findFragmentByTag(TAG_MODULE_MUSIC)
+        if (music is MusicPlayerFragment && music.isAdded) {
+            music.refreshLibraryUi()
+        } else {
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                val m = supportFragmentManager.findFragmentByTag(TAG_MODULE_MUSIC)
+                if (m is MusicPlayerFragment && m.isAdded) m.refreshLibraryUi()
+            }, 800)
+        }
+    }
+
     private fun runDeferredResumeWork() {
         if (isFinishing || isDestroyed || loginGateAuthInProgress) return
 
@@ -743,7 +764,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun showMainShell() {
         loginGateContainer?.visibility = View.GONE
-        topAppBar.visibility = View.VISIBLE
+        if (!isSearchFragmentVisible() && !isPlaylistDetailVisible()) {
+            topAppBar.visibility = View.VISIBLE
+        }
         fragmentContainer.visibility = View.VISIBLE
         bottomNav.visibility = View.VISIBLE
         // Refresh profile photo every time the main shell becomes visible (e.g. after first sign-in)
@@ -963,6 +986,7 @@ class MainActivity : AppCompatActivity() {
         if (isNavigating) return
         inEqualizerFromPlayer = true
         showModuleLoadingOverlay()
+        topAppBar.visibility = View.VISIBLE
 
         val target = equalizerFragment ?: EqualizerFragment().also { equalizerFragment = it }
         val isNew = !target.isAdded
@@ -974,6 +998,7 @@ class MainActivity : AppCompatActivity() {
             hideIfVisible(this, supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL), target)
             hideIfVisible(this, supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER), target)
             hideIfVisible(this, settingsFragment, target)
+            hideIfVisible(this, searchFragment, target)
             if (target.isAdded) show(target) else add(R.id.fragmentContainer, target, TAG_MODULE_EQUALIZER)
             setMaxLifecycle(target, Lifecycle.State.RESUMED)
             commit()
@@ -1280,6 +1305,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun restoreMainModuleReferences() {
+        principalFragment = supportFragmentManager.findFragmentByTag(TAG_MODULE_PRINCIPAL)
         musicFragment = supportFragmentManager.findFragmentByTag(TAG_MODULE_MUSIC)
         scannerFragment = supportFragmentManager.findFragmentByTag(TAG_MODULE_SCANNER)
         equalizerFragment = supportFragmentManager.findFragmentByTag(TAG_MODULE_EQUALIZER)
@@ -1292,6 +1318,7 @@ class MainActivity : AppCompatActivity() {
     private fun getOrCreateMainModuleFragment(itemId: Int): Fragment? {
         getMainModuleFragment(itemId)?.let { return it }
         val fragment: Fragment? = when (itemId) {
+            R.id.nav_principal -> MusicPlayerFragment()
             R.id.nav_music -> MusicPlayerFragment()
             R.id.nav_scanner -> ScannerFragment()
             R.id.nav_equalizer -> EqualizerFragment()
@@ -1299,6 +1326,7 @@ class MainActivity : AppCompatActivity() {
         }
         fragment?.let {
             when (itemId) {
+                R.id.nav_principal -> principalFragment = it
                 R.id.nav_music -> musicFragment = it
                 R.id.nav_scanner -> scannerFragment = it
                 R.id.nav_equalizer -> equalizerFragment = it
@@ -1308,6 +1336,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun getMainModuleFragment(itemId: Int): Fragment? = when (itemId) {
+        R.id.nav_principal -> principalFragment
         R.id.nav_music -> musicFragment
         R.id.nav_scanner -> scannerFragment
         R.id.nav_equalizer -> equalizerFragment
@@ -1315,6 +1344,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun moduleTagForItem(itemId: Int) = when (itemId) {
+        R.id.nav_principal -> TAG_MODULE_PRINCIPAL
         R.id.nav_music -> TAG_MODULE_MUSIC
         R.id.nav_scanner -> TAG_MODULE_SCANNER
         R.id.nav_equalizer -> TAG_MODULE_EQUALIZER

@@ -206,6 +206,8 @@ public class SongPlayerFragment extends Fragment {
     private View actionComments;
     private View actionFavorite;
     private ImageView ivActionFavoriteIcon;
+    private View actionShare;
+    private View actionRemoveFromPlaylist;
 
     private NextUpAdapter nextUpAdapter;
     @Nullable
@@ -299,6 +301,9 @@ public class SongPlayerFragment extends Fragment {
     @Nullable
     private Runnable localCrossfadeTicker;
     private long lastPlaybackStartRequestAtMs = 0L;
+    private long lastPrevPressAtMs = 0L;
+    private static final long PREV_DOUBLE_TAP_WINDOW_MS = 3000L;
+    private static final int PREV_RESTART_THRESHOLD_SECONDS = 3;
     private long activePlaybackRequestToken = 0L;
     @Nullable
     private Runnable autoplayRecoveryRunnable;
@@ -321,9 +326,6 @@ public class SongPlayerFragment extends Fragment {
     private Runnable pendingSocialStatsFetchRunnable;
     @Nullable
     private CustomTarget<Bitmap> playerCoverTarget;
-    private CustomTarget<Bitmap> notificationArtworkTarget;
-    @NonNull
-    private String activeNotificationArtworkVideoId = "";
 
     private View playerBackgroundContainer;
     private final java.util.LinkedHashMap<String, Integer> dominantColorCache = new java.util.LinkedHashMap<String, Integer>(50, 0.75f, true) {
@@ -342,10 +344,6 @@ public class SongPlayerFragment extends Fragment {
     @NonNull
     private String activeBackdropVideoId = "";
     private boolean playerArtworkBootstrapPending = true;
-    @Nullable
-    private Bitmap mediaNotificationLargeIcon;
-    @NonNull
-    private String mediaNotificationLargeIconVideoId = "";
     @Nullable
     private Bitmap mediaSessionArtwork;
     @NonNull
@@ -510,6 +508,8 @@ public class SongPlayerFragment extends Fragment {
         actionDislike = view.findViewById(R.id.actionDislike);
         actionComments = view.findViewById(R.id.actionComments);
         actionFavorite = view.findViewById(R.id.actionFavorite);
+        actionShare = view.findViewById(R.id.actionShare);
+        actionRemoveFromPlaylist = view.findViewById(R.id.actionRemoveFromPlaylist);
         tvActionLikeCount = view.findViewById(R.id.tvActionLikeCount);
         tvActionCommentCount = view.findViewById(R.id.tvActionCommentCount);
         tvActionFavoriteLabel = view.findViewById(R.id.tvActionFavoriteLabel);
@@ -918,10 +918,14 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void moveTrack(int delta) {
-        moveTrack(delta, false);
+        moveTrack(delta, false, false);
     }
 
     private void moveTrack(int delta, boolean fromCompletion) {
+        moveTrack(delta, fromCompletion, false);
+    }
+
+    private void moveTrack(int delta, boolean fromCompletion, boolean skipRestartCheck) {
         if (tracks.isEmpty()) {
             return;
         }
@@ -929,6 +933,34 @@ public class SongPlayerFragment extends Fragment {
         if (!fromCompletion) {
             consecutiveStreamFailures = 0; // Manual track change by user resets the loop protector
             cancelOfflineCrossfade();
+
+            // Spotify/YT Music behavior for "previous" button:
+            // - If current position > threshold OR it's not a double-tap: restart current song
+            // - If pressed again within PREV_DOUBLE_TAP_WINDOW_MS: go to previous track
+            if (delta == -1 && !skipRestartCheck) {
+                long now = SystemClock.elapsedRealtime();
+                boolean isDoubleTap = (now - lastPrevPressAtMs) < PREV_DOUBLE_TAP_WINDOW_MS;
+                lastPrevPressAtMs = now;
+                if (!isDoubleTap || currentSeconds > PREV_RESTART_THRESHOLD_SECONDS) {
+                    // Restart current track
+                    currentSeconds = 0;
+                    isPlaying = true;
+                    if (usingOfflineSource && localExoMediaPlayer != null) {
+                        try {
+                            localExoMediaPlayer.seekTo(0);
+                        } catch (Exception ignored) {
+                            playCurrentTrack();
+                        }
+                    } else {
+                        playCurrentTrack();
+                    }
+                    syncMiniStateWithPlaylist();
+                    return;
+                }
+                // Double-tap within window: fall through to go to previous track
+                lastPrevPressAtMs = 0L; // reset so a third press restarts again
+            }
+
             // Going back from first track: pop global history
             if (delta == -1 && currentIndex == 0 && !globalPlaybackHistory.isEmpty()) {
                 PlayerTrack histTrack = globalPlaybackHistory.pollFirst();
@@ -1320,7 +1352,7 @@ public class SongPlayerFragment extends Fragment {
             btnShuffle.setAlpha(1f);
         }
         if (vPlayerShuffleIndicator != null) {
-            vPlayerShuffleIndicator.setVisibility(View.GONE);
+            vPlayerShuffleIndicator.setVisibility(shuffleEnabled ? View.VISIBLE : View.INVISIBLE);
         }
 
         if (btnRepeat != null) {
@@ -1336,6 +1368,10 @@ public class SongPlayerFragment extends Fragment {
         if (!isAdded() || tracks.isEmpty()) {
             return;
         }
+
+        // Sync mono audio setting before starting playback
+        boolean mono = settingsPrefs != null && settingsPrefs.getBoolean(CloudSyncManager.KEY_MONO_AUDIO, false);
+        MonoAudioProcessor.setEnabled(mono);
 
         // Safety: ensure no crossfade is active and no duplicate players exist
         cancelOfflineCrossfade();
@@ -2697,16 +2733,6 @@ public class SongPlayerFragment extends Fragment {
         // Backdrop now uses solid background color - no Glide request to clear
     }
 
-    private void clearNotificationArtworkRequest() {
-        if (notificationArtworkTarget == null) {
-            return;
-        }
-        if (persistentAppContext != null) {
-            Glide.with(persistentAppContext).clear(notificationArtworkTarget);
-        }
-        notificationArtworkTarget = null;
-    }
-
     private void loadPlayerCover(@NonNull PlayerTrack track, boolean bootstrapArtwork, int animationDirection) {
         if (!isAdded() || getActivity() == null || ivPlayerCover == null) {
             return;
@@ -2723,10 +2749,6 @@ public class SongPlayerFragment extends Fragment {
             ivPlayerCover.setImageDrawable(null);
             updateMediaSessionMetadata();
             return;
-        }
-
-        if (!TextUtils.equals(requestVideoId, mediaNotificationLargeIconVideoId)) {
-            clearMediaNotificationArtwork();
         }
 
         activeCoverVideoId = requestVideoId;
@@ -2797,11 +2819,12 @@ public class SongPlayerFragment extends Fragment {
                     return;
                 }
                 resetPlayerHeroContainerHeight();
-                if (TextUtils.equals(mediaNotificationLargeIconVideoId, requestVideoId)) {
-                    clearMediaNotificationArtwork();
-                }
+                clearMediaNotificationArtwork();
+                ivPlayerCover.animate().cancel();
+                ivPlayerCover.setAlpha(1f);
                 ivPlayerCover.setImageDrawable(null);
                 updateMediaSessionMetadata();
+                updateMediaNotification();
             }
         };
 
@@ -2993,16 +3016,6 @@ public class SongPlayerFragment extends Fragment {
         return fallbackImageUrl;
     }
 
-    private String resolvePreferredCoverUrl(
-            @NonNull String videoId,
-            @NonNull String fallbackImageUrl
-    ) {
-        if (!TextUtils.isEmpty(videoId)) {
-            return "https://i.ytimg.com/vi/" + Uri.encode(videoId) + "/hqdefault.jpg";
-        }
-        return fallbackImageUrl;
-    }
-
     // ... (rest of the code remains the same)
 
     @Override
@@ -3036,6 +3049,7 @@ public class SongPlayerFragment extends Fragment {
         tvPlayerArtist.setText(track.artist);
         refreshSocialActionsForCurrentTrack(track);
         refreshFavoriteActionForCurrentTrack();
+        refreshRemoveChipVisibility();
 
         totalSeconds = Math.max(1, parseDurationSeconds(track.duration));
         currentSeconds = 0;
@@ -3076,19 +3090,12 @@ public class SongPlayerFragment extends Fragment {
                     scheduleBackdropLoad(track, bootstrapArtwork);
                 }, 500L);
             }
-        }
-
-        // ✅ Notification artwork can load regardless of player visibility
-        // Clear stale artwork immediately so the notification doesn't show the previous track's image
-        if (!bootstrapArtwork) {
+        } else {
+            // Player is hidden: clear activeCoverVideoId so onHiddenChanged forces a re-bind
+            activeCoverVideoId = "";
+            // Clear stale artwork so notification doesn't keep showing the previous track's image
             clearMediaNotificationArtwork();
             updateMediaNotification();
-        }
-        if (getView() != null) {
-            getView().postDelayed(() -> {
-                if (!isAdded()) return;
-                loadMediaNotificationArtwork(track);
-            }, 600L);
         }
 
         updateMediaSessionMetadata();
@@ -3125,9 +3132,16 @@ public class SongPlayerFragment extends Fragment {
             });
         }
         if (actionFavorite != null) {
-            actionFavorite.setOnClickListener(v -> toggleCurrentTrackFavorite());
+            actionFavorite.setOnClickListener(v -> showSaveToPlaylistSheetFromPlayer());
+        }
+        if (actionShare != null) {
+            actionShare.setOnClickListener(v -> shareCurrentTrack());
+        }
+        if (actionRemoveFromPlaylist != null) {
+            actionRemoveFromPlaylist.setOnClickListener(v -> showRemoveFromPlaylistPopup(actionRemoveFromPlaylist));
         }
         refreshFavoriteActionForCurrentTrack();
+        refreshRemoveChipVisibility();
     }
 
     private void toggleCurrentTrackFavorite() {
@@ -3222,28 +3236,135 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
-        boolean isFavorite = false;
-        if (!tracks.isEmpty() && currentIndex >= 0 && currentIndex < tracks.size()) {
-            String currentVideoId = tracks.get(currentIndex).videoId;
-            if (!TextUtils.isEmpty(currentVideoId)) {
-                isFavorite = FavoritesPlaylistStore.isFavorite(requireContext(), currentVideoId);
-            }
-        }
-
         if (tvActionFavoriteLabel != null) {
-            tvActionFavoriteLabel.setText(isFavorite
-                    ? "Guardado"
-                    : "Guardar en favoritos");
+            tvActionFavoriteLabel.setText("Añadir a playlist");
         }
 
         if (ivActionFavoriteIcon != null) {
+            ivActionFavoriteIcon.setImageResource(R.drawable.ic_stream_queue_add);
             int tint = ContextCompat.getColor(requireContext(), R.color.text_primary);
             ivActionFavoriteIcon.setColorFilter(tint);
         }
 
         if (actionFavorite != null) {
-            actionFavorite.setAlpha(isFavorite ? 1f : 0.92f);
+            actionFavorite.setAlpha(1f);
         }
+    }
+
+    private void shareCurrentTrack() {
+        if (!isAdded() || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) return;
+        PlayerTrack track = tracks.get(currentIndex);
+        if (TextUtils.isEmpty(track.videoId)) return;
+        String shareText = "https://youtu.be/" + track.videoId;
+        android.content.Intent shareIntent = new android.content.Intent(android.content.Intent.ACTION_SEND);
+        shareIntent.setType("text/plain");
+        shareIntent.putExtra(android.content.Intent.EXTRA_TEXT, shareText);
+        startActivity(android.content.Intent.createChooser(shareIntent, "Compartir"));
+    }
+
+    private void refreshRemoveChipVisibility() {
+        if (actionRemoveFromPlaylist == null) return;
+        if (!isAdded() || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) {
+            actionRemoveFromPlaylist.setVisibility(View.GONE);
+            return;
+        }
+        PlayerTrack track = tracks.get(currentIndex);
+        if (TextUtils.isEmpty(track.videoId)) {
+            actionRemoveFromPlaylist.setVisibility(View.GONE);
+            return;
+        }
+        java.util.List<String[]> containing = getPlaylistsContainingTrack(track.videoId);
+        actionRemoveFromPlaylist.setVisibility(containing.isEmpty() ? View.GONE : View.VISIBLE);
+    }
+
+    @NonNull
+    private java.util.List<String[]> getPlaylistsContainingTrack(@NonNull String videoId) {
+        java.util.List<String[]> result = new ArrayList<>();
+        if (!isAdded()) return result;
+        Context ctx = requireContext();
+        // Check Favoritos
+        if (FavoritesPlaylistStore.isFavorite(ctx, videoId)) {
+            result.add(new String[]{FavoritesPlaylistStore.PLAYLIST_ID, FavoritesPlaylistStore.PLAYLIST_TITLE});
+        }
+        // Check custom playlists
+        java.util.List<String> customNames = CustomPlaylistsStore.INSTANCE.getAllPlaylistNames(ctx);
+        for (String name : customNames) {
+            java.util.List<FavoritesPlaylistStore.FavoriteTrack> playlistTracks =
+                    CustomPlaylistsStore.INSTANCE.getTracksFromPlaylist(ctx, name);
+            for (FavoritesPlaylistStore.FavoriteTrack t : playlistTracks) {
+                if (videoId.equals(t.videoId)) {
+                    result.add(new String[]{CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX + name, name});
+                    break;
+                }
+            }
+        }
+        return result;
+    }
+
+    private void showRemoveFromPlaylistPopup(@NonNull View anchor) {
+        if (!isAdded() || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) return;
+        PlayerTrack track = tracks.get(currentIndex);
+        if (TextUtils.isEmpty(track.videoId)) return;
+
+        java.util.List<String[]> containing = getPlaylistsContainingTrack(track.videoId);
+        if (containing.isEmpty()) return;
+
+        float density = getResources().getDisplayMetrics().density;
+
+        android.widget.LinearLayout popupContent = new android.widget.LinearLayout(requireContext());
+        popupContent.setOrientation(android.widget.LinearLayout.VERTICAL);
+        popupContent.setBackgroundResource(R.drawable.bg_popup_menu);
+        int pad = (int) (12 * density);
+        popupContent.setPadding(pad, pad, pad, pad);
+
+        android.widget.PopupWindow popup = new android.widget.PopupWindow(
+                popupContent,
+                (int) (220 * density),
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                true);
+        popup.setElevation(12 * density);
+        popup.setOutsideTouchable(true);
+        popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
+
+        for (String[] entry : containing) {
+            String playlistKey = entry[0];
+            String playlistName = entry[1];
+
+            android.widget.LinearLayout row = new android.widget.LinearLayout(requireContext());
+            row.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+            row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            int rowPad = (int) (10 * density);
+            row.setPadding(rowPad, rowPad, rowPad, rowPad);
+            row.setBackgroundResource(android.R.attr.selectableItemBackground);
+            android.content.res.TypedArray ta = requireContext().obtainStyledAttributes(new int[]{android.R.attr.selectableItemBackground});
+            row.setBackground(ta.getDrawable(0));
+            ta.recycle();
+
+            ImageView ivIcon = new ImageView(requireContext());
+            ivIcon.setImageResource(R.drawable.ic_delete_modern);
+            ivIcon.setColorFilter(android.graphics.Color.WHITE);
+            int iconSize = (int) (18 * density);
+            android.widget.LinearLayout.LayoutParams iconParams = new android.widget.LinearLayout.LayoutParams(iconSize, iconSize);
+            ivIcon.setLayoutParams(iconParams);
+            row.addView(ivIcon);
+
+            TextView tvName = new TextView(requireContext());
+            tvName.setText(playlistName);
+            tvName.setTextColor(android.graphics.Color.WHITE);
+            tvName.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
+            tvName.setPadding((int) (10 * density), 0, 0, 0);
+            row.addView(tvName);
+
+            row.setOnClickListener(v -> {
+                popup.dismiss();
+                removeTrackFromPlaylistByKey(playlistKey, track.videoId);
+                refreshRemoveChipVisibility();
+            });
+
+            popupContent.addView(row);
+        }
+
+        popup.showAsDropDown(anchor, 0, (int) (4 * density), android.view.Gravity.START);
     }
 
     private void refreshSocialActionsForCurrentTrack(@Nullable PlayerTrack track) {
@@ -4812,59 +4933,233 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void showPlayerOptionsSheet() {
-        if (!isAdded()) return;
-        PlayerTrack track = tracks.isEmpty() ? null : tracks.get(currentIndex);
+        if (!isAdded() || btnPlayerMore == null) return;
 
-        BottomSheetDialog dialog = new BottomSheetDialog(requireContext());
-        View sheet = getLayoutInflater().inflate(R.layout.bottom_sheet_player_options, null);
-        dialog.setContentView(sheet);
+        float density = getResources().getDisplayMetrics().density;
 
-        // Header artwork + info
-        ImageView ivArt = sheet.findViewById(R.id.ivPoTrackArt);
-        TextView tvTitle = sheet.findViewById(R.id.tvPoTrackTitle);
-        TextView tvArtist = sheet.findViewById(R.id.tvPoTrackArtist);
-        if (track != null) {
-            tvTitle.setText(track.title != null ? track.title : "");
-            tvArtist.setText(track.artist != null ? track.artist : "");
-            if (ivArt != null && !TextUtils.isEmpty(track.videoId)) {
-                String artUrl = "https://i.ytimg.com/vi/" + android.net.Uri.encode(track.videoId) + "/mqdefault.jpg";
-                Glide.with(this).load(artUrl).centerCrop().into(ivArt);
+        // Build popup content
+        android.widget.LinearLayout popupContent = new android.widget.LinearLayout(requireContext());
+        popupContent.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        popupContent.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        popupContent.setBackgroundResource(R.drawable.bg_popup_menu);
+        int hPad = (int) (16 * density);
+        int vPad = (int) (14 * density);
+        popupContent.setPadding(hPad, vPad, hPad, vPad);
+
+        ImageView ivEq = new ImageView(requireContext());
+        ivEq.setImageResource(R.drawable.ic_equalizer);
+        ivEq.setColorFilter(android.graphics.Color.WHITE);
+        int iconSize = (int) (20 * density);
+        android.widget.LinearLayout.LayoutParams iconParams = new android.widget.LinearLayout.LayoutParams(iconSize, iconSize);
+        ivEq.setLayoutParams(iconParams);
+        popupContent.addView(ivEq);
+
+        TextView tvEq = new TextView(requireContext());
+        tvEq.setText("Ecualizador");
+        tvEq.setTextColor(android.graphics.Color.WHITE);
+        tvEq.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
+        tvEq.setTypeface(null, android.graphics.Typeface.BOLD);
+        tvEq.setPadding((int) (10 * density), 0, 0, 0);
+        popupContent.addView(tvEq);
+
+        android.widget.PopupWindow popup = new android.widget.PopupWindow(
+                popupContent,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                true);
+        popup.setElevation(12 * density);
+        popup.setOutsideTouchable(true);
+        popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
+
+        popupContent.setOnClickListener(v -> {
+            popup.dismiss();
+            if (getActivity() instanceof MainActivity) {
+                collapseToMiniMode(true);
+                ((MainActivity) getActivity()).openEqualizerFromPlayer();
             }
+        });
+
+        // Show below the anchor button
+        popup.showAsDropDown(btnPlayerMore, 0, (int) (4 * density), android.view.Gravity.END);
+    }
+
+    private void showSaveToPlaylistSheetFromPlayer() {
+        if (!isAdded() || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) return;
+        PlayerTrack current = tracks.get(currentIndex);
+        if (TextUtils.isEmpty(current.videoId)) return;
+        showSaveToPlaylistSheet(current, null);
+    }
+
+    private void showSaveToPlaylistSheet(@NonNull PlayerTrack track, @Nullable String previousPlaylistKey) {
+        if (!isAdded()) return;
+        Context ctx = requireContext();
+
+        BottomSheetDialog saveDialog = new BottomSheetDialog(ctx);
+        View sheet = getLayoutInflater().inflate(R.layout.bottom_sheet_save_to_playlist, null);
+        saveDialog.setContentView(sheet);
+
+        View parent = (View) sheet.getParent();
+        if (parent != null) parent.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+
+        ImageView ivClose = sheet.findViewById(R.id.ivSaveClose);
+        ivClose.setOnClickListener(v -> saveDialog.dismiss());
+
+        android.widget.LinearLayout llList = sheet.findViewById(R.id.llSavePlaylistList);
+        llList.removeAllViews();
+
+        // Build playlist entries: Favoritos first, then custom playlists
+        java.util.List<String[]> entries = new ArrayList<>();
+        java.util.List<FavoritesPlaylistStore.FavoriteTrack> favs = FavoritesPlaylistStore.loadFavorites(ctx);
+        String favThumb = "";
+        for (FavoritesPlaylistStore.FavoriteTrack f : favs) {
+            if (f != null && !TextUtils.isEmpty(f.imageUrl)) { favThumb = f.imageUrl; break; }
+        }
+        entries.add(new String[]{FavoritesPlaylistStore.PLAYLIST_ID, FavoritesPlaylistStore.PLAYLIST_TITLE,
+                favs.size() + " pistas", favThumb});
+
+        java.util.List<String> customNames = CustomPlaylistsStore.INSTANCE.getAllPlaylistNames(ctx);
+        for (String name : customNames) {
+            java.util.List<FavoritesPlaylistStore.FavoriteTrack> customTracks =
+                    CustomPlaylistsStore.INSTANCE.getTracksFromPlaylist(ctx, name);
+            String thumb = "";
+            for (FavoritesPlaylistStore.FavoriteTrack t : customTracks) {
+                if (!TextUtils.isEmpty(t.imageUrl)) { thumb = t.imageUrl; break; }
+            }
+            entries.add(new String[]{CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX + name, name,
+                    customTracks.size() + " pistas", thumb});
         }
 
-        // Equalizer
-        View btnEq = sheet.findViewById(R.id.btnPoEqualizer);
-        if (btnEq != null) {
-            btnEq.setOnClickListener(v -> {
-                dialog.dismiss();
-                if (getActivity() instanceof MainActivity) {
-                    collapseToMiniMode(true);
-                    ((MainActivity) getActivity()).openEqualizerFromPlayer();
+        for (String[] entry : entries) {
+            String playlistKey = entry[0];
+            String playlistName = entry[1];
+            String countLabel = entry[2];
+            String thumbUrl = entry[3];
+
+            View row = LayoutInflater.from(ctx).inflate(R.layout.item_save_playlist_row, llList, false);
+            ImageView ivThumb = row.findViewById(R.id.ivSavePlaylistThumb);
+            android.widget.TextView tvName = row.findViewById(R.id.tvSavePlaylistName);
+            android.widget.TextView tvCount = row.findViewById(R.id.tvSavePlaylistCount);
+
+            tvName.setText(playlistName);
+            tvCount.setText(countLabel);
+            if (!TextUtils.isEmpty(thumbUrl)) {
+                Glide.with(this).load(thumbUrl).centerCrop().into(ivThumb);
+            }
+
+            row.setOnClickListener(v -> {
+                saveDialog.dismiss();
+
+                // Move semantics: remove from previous playlist if changing
+                if (previousPlaylistKey != null && !previousPlaylistKey.equals(playlistKey)) {
+                    removeTrackFromPlaylistByKey(previousPlaylistKey, track.videoId);
                 }
+
+                // Save to the selected playlist
+                addTrackToPlaylistByKey(playlistKey, track);
+
+                // Show snackbar-like confirmation bar
+                showSavedInPlaylistBarPlayer(track, playlistKey, playlistName);
             });
+
+            llList.addView(row);
         }
 
-        // Add to playlist (placeholder — same pattern as queue sheet)
-        View btnPlaylist = sheet.findViewById(R.id.btnPoAddToPlaylist);
-        if (btnPlaylist != null) {
-            btnPlaylist.setOnClickListener(v -> dialog.dismiss());
+        saveDialog.show();
+    }
+
+    private void addTrackToPlaylistByKey(@NonNull String playlistKey, @NonNull PlayerTrack track) {
+        if (!isAdded()) return;
+        String title = TextUtils.isEmpty(track.title) ? "Tema" : track.title;
+        String artist = track.artist == null ? "" : track.artist;
+        String duration = track.duration == null ? "" : track.duration;
+        String imageUrl = track.imageUrl == null ? "" : track.imageUrl;
+
+        if (FavoritesPlaylistStore.PLAYLIST_ID.equals(playlistKey)) {
+            FavoritesPlaylistStore.upsertFavorite(requireContext(), track.videoId, title, artist, duration, imageUrl);
+        } else if (playlistKey.startsWith(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX)) {
+            String name = playlistKey.substring(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX.length());
+            CustomPlaylistsStore.INSTANCE.addTrackToPlaylist(requireContext(), name,
+                    track.videoId, title, artist, duration, imageUrl);
+        }
+    }
+
+    private void removeTrackFromPlaylistByKey(@NonNull String playlistKey, @NonNull String videoId) {
+        if (!isAdded() || TextUtils.isEmpty(videoId)) return;
+        if (FavoritesPlaylistStore.PLAYLIST_ID.equals(playlistKey)) {
+            FavoritesPlaylistStore.removeFavorite(requireContext(), videoId);
+        } else if (playlistKey.startsWith(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX)) {
+            String name = playlistKey.substring(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX.length());
+            CustomPlaylistsStore.INSTANCE.removeTrackFromPlaylist(requireContext(), name, videoId);
+        }
+    }
+
+    private void showSavedInPlaylistBarPlayer(@NonNull PlayerTrack track, @NonNull String playlistKey, @NonNull String playlistName) {
+        if (!isAdded() || getView() == null) return;
+
+        android.view.ViewGroup rootView = (android.view.ViewGroup) getView();
+
+        // Remove any existing saved bar
+        View existing = rootView.findViewWithTag("saved_bar");
+        if (existing != null) rootView.removeView(existing);
+
+        float density = getResources().getDisplayMetrics().density;
+
+        android.widget.LinearLayout bar = new android.widget.LinearLayout(requireContext());
+        bar.setTag("saved_bar");
+        bar.setId(View.generateViewId());
+        bar.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        bar.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        bar.setBackgroundColor(android.graphics.Color.parseColor("#FF1E1E1E"));
+        int hPad = (int) (16 * density);
+        int vPad = (int) (16 * density);
+        bar.setPadding(hPad, vPad, hPad, vPad);
+        bar.setElevation(8 * density);
+
+        TextView tvSaved = new TextView(requireContext());
+        tvSaved.setText("Se guardó en " + playlistName);
+        tvSaved.setTextColor(android.graphics.Color.WHITE);
+        tvSaved.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
+        tvSaved.setTypeface(null, android.graphics.Typeface.BOLD);
+        android.widget.LinearLayout.LayoutParams tvParams = new android.widget.LinearLayout.LayoutParams(
+                0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        tvSaved.setLayoutParams(tvParams);
+        bar.addView(tvSaved);
+
+        TextView btnChange = new TextView(requireContext());
+        btnChange.setText("Cambiar");
+        btnChange.setTextColor(android.graphics.Color.parseColor("#8AB4F8"));
+        btnChange.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
+        btnChange.setTypeface(null, android.graphics.Typeface.BOLD);
+        btnChange.setPadding((int) (12 * density), 0, 0, 0);
+        btnChange.setOnClickListener(v -> {
+            rootView.removeView(bar);
+            showSaveToPlaylistSheet(track, playlistKey);
+        });
+        bar.addView(btnChange);
+
+        if (rootView instanceof androidx.constraintlayout.widget.ConstraintLayout) {
+            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams clp =
+                    new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
+                            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.MATCH_PARENT,
+                            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.WRAP_CONTENT);
+            clp.bottomToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
+            clp.startToStart = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
+            clp.endToEnd = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
+            rootView.addView(bar, clp);
+        } else {
+            FrameLayout.LayoutParams flp = new FrameLayout.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+            flp.gravity = android.view.Gravity.BOTTOM;
+            rootView.addView(bar, flp);
         }
 
-        // Share
-        View btnShare = sheet.findViewById(R.id.btnPoShare);
-        if (btnShare != null) {
-            btnShare.setOnClickListener(v -> {
-                dialog.dismiss();
-                if (track == null || TextUtils.isEmpty(track.videoId)) return;
-                String shareText = "https://youtu.be/" + track.videoId;
-                android.content.Intent shareIntent = new android.content.Intent(android.content.Intent.ACTION_SEND);
-                shareIntent.setType("text/plain");
-                shareIntent.putExtra(android.content.Intent.EXTRA_TEXT, shareText);
-                startActivity(android.content.Intent.createChooser(shareIntent, "Compartir"));
-            });
-        }
-
-        dialog.show();
+        // Auto-dismiss after 4 seconds
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            if (bar.getParent() != null) {
+                ((android.view.ViewGroup) bar.getParent()).removeView(bar);
+            }
+        }, 4000L);
     }
 
     private void showQueueBottomSheet() {
@@ -5378,10 +5673,6 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void clearMediaNotificationArtwork() {
-        clearNotificationArtworkRequest();
-        activeNotificationArtworkVideoId = "";
-        mediaNotificationLargeIcon = null;
-        mediaNotificationLargeIconVideoId = "";
         mediaSessionArtwork = null;
         mediaSessionArtworkVideoId = "";
     }
@@ -5390,13 +5681,7 @@ public class SongPlayerFragment extends Fragment {
         if (source.isRecycled()) {
             return;
         }
-
-        Bitmap notificationBitmap = scaleArtworkBitmap(source, 1024);
-        Bitmap sessionBitmap = scaleArtworkBitmap(source, MEDIA_SESSION_ARTWORK_MAX_SIZE_PX);
-
-        mediaNotificationLargeIcon = notificationBitmap;
-        mediaNotificationLargeIconVideoId = videoId;
-        mediaSessionArtwork = sessionBitmap;
+        mediaSessionArtwork = scaleArtworkBitmap(source, MEDIA_SESSION_ARTWORK_MAX_SIZE_PX);
         mediaSessionArtworkVideoId = videoId;
     }
 
@@ -5487,61 +5772,6 @@ public class SongPlayerFragment extends Fragment {
         return Math.round(dp * requireContext().getResources().getDisplayMetrics().density);
     }
 
-    private void loadMediaNotificationArtwork(@NonNull PlayerTrack track) {
-        String requestVideoId = track.videoId == null ? "" : track.videoId.trim();
-        if (TextUtils.isEmpty(requestVideoId)) return;
-
-        String fallbackImageUrl = track.imageUrl == null ? "" : track.imageUrl.trim();
-        String preferredImageUrl = resolvePreferredCoverUrl(requestVideoId, fallbackImageUrl);
-        if (TextUtils.isEmpty(preferredImageUrl)) return;
-        if (persistentAppContext == null) return;
-
-        activeNotificationArtworkVideoId = requestVideoId;
-        clearNotificationArtworkRequest();
-
-        notificationArtworkTarget = new CustomTarget<Bitmap>() {
-            @Override
-            public void onResourceReady(@NonNull Bitmap resource, @Nullable Transition<? super Bitmap> transition) {
-                if (!TextUtils.equals(activeNotificationArtworkVideoId, requestVideoId)) {
-                    return;
-                }
-                cacheMediaNotificationArtwork(requestVideoId, resource);
-                updateMediaSessionMetadata();
-                updateMediaNotification();
-            }
-
-            @Override
-            public void onLoadCleared(@Nullable Drawable placeholder) {
-            }
-
-            @Override
-            public void onLoadFailed(@Nullable Drawable errorDrawable) {
-                if (!TextUtils.equals(activeNotificationArtworkVideoId, requestVideoId)) {
-                    return;
-                }
-                if (TextUtils.equals(mediaNotificationLargeIconVideoId, requestVideoId)) {
-                    new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
-                        clearMediaNotificationArtwork();
-                        updateMediaSessionMetadata();
-                        updateMediaNotification();
-                    });
-
-                    updateMediaSessionMetadata();
-                }
-            }
-        };
-
-        // ✅ OPTIMIZATION: Use LOW priority and skip memory cache for notification artwork
-        Glide.with(persistentAppContext)
-                .asBitmap()
-                .load(preferredImageUrl)
-                .priority(com.bumptech.glide.Priority.LOW)
-                .transform(SHARED_YT_CROP)
-                .format(DecodeFormat.PREFER_RGB_565)
-                .diskCacheStrategy(DiskCacheStrategy.ALL)
-                .skipMemoryCache(true)
-                .into(notificationArtworkTarget);
-    }
 
     private void fadeOutBackdropToBlack() {
         if (playerBackgroundContainer == null) return;

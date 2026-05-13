@@ -63,6 +63,7 @@ class SettingsFragment : Fragment() {
     private lateinit var swAmoledMode: MaterialSwitch
     private lateinit var swDownloadOnMobileData: MaterialSwitch
     private lateinit var swOfflineMode: MaterialSwitch
+    private lateinit var swMonoAudio: MaterialSwitch
     private lateinit var rowDownloadQuality: View
     private lateinit var tvDownloadQualityValue: TextView
     private lateinit var rowStreamingQuality: View
@@ -79,6 +80,7 @@ class SettingsFragment : Fragment() {
     private lateinit var vStorageCache: View
     private lateinit var vStorageFree: View
     private lateinit var btnDeleteSettingsCache: MaterialButton
+    private lateinit var btnDeleteAllDownloads: MaterialButton
 
     private val settingsPrefs: SharedPreferences by lazy { 
         requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE) 
@@ -110,6 +112,7 @@ class SettingsFragment : Fragment() {
 
     private var deleteAccountInFlight = false
     private var storageCleanupInFlight = false
+    private var downloadCleanupInFlight = false
     private var hasSettingsSnapshot = false
     private var hasProfileSnapshot = false
 
@@ -118,6 +121,7 @@ class SettingsFragment : Fragment() {
     private var lastOfflineCrossfadeSeconds = -1
     private var lastAllowMobileDataDownloads = false
     private var lastOfflineModeEnabled = false
+    private var lastMonoAudioEnabled = false
     private var lastDownloadQuality: String? = null
     private var lastStreamingQuality: String? = null
     private var lastProfileSignedIn = false
@@ -149,12 +153,14 @@ class SettingsFragment : Fragment() {
             activity?.runOnUiThread {
                 hasSettingsSnapshot = false
                 renderSettingsState()
+                (activity as? MainActivity)?.notifyOfflineModeChanged()
             }
         } else if (hasInternet && currentOffline) {
             prefs.edit().putBoolean(CloudSyncManager.KEY_OFFLINE_MODE_ENABLED, false).apply()
             activity?.runOnUiThread {
                 hasSettingsSnapshot = false
                 renderSettingsState()
+                (activity as? MainActivity)?.notifyOfflineModeChanged()
             }
         }
     }
@@ -181,6 +187,7 @@ class SettingsFragment : Fragment() {
         swAmoledMode = v.findViewById(R.id.swAmoledMode)
         swDownloadOnMobileData = v.findViewById(R.id.swDownloadOnMobileData)
         swOfflineMode = v.findViewById(R.id.swOfflineMode)
+        swMonoAudio = v.findViewById(R.id.swMonoAudio)
         rowDownloadQuality = v.findViewById(R.id.rowDownloadQuality)
         rowStreamingQuality = v.findViewById(R.id.rowStreamingQuality)
         rowOpenEqualizer = v.findViewById(R.id.rowOpenEqualizer)
@@ -197,6 +204,7 @@ class SettingsFragment : Fragment() {
         vStorageCache = v.findViewById(R.id.vStorageCache)
         vStorageFree = v.findViewById(R.id.vStorageFree)
         btnDeleteSettingsCache = v.findViewById(R.id.btnDeleteSettingsCache)
+        btnDeleteAllDownloads = v.findViewById(R.id.btnDeleteAllDownloads)
     }
 
     private fun setupInteractions() {
@@ -209,7 +217,9 @@ class SettingsFragment : Fragment() {
         rowStreamingQuality.setOnClickListener { showStreamingQualityPicker() }
         rowOpenEqualizer.setOnClickListener { (activity as? MainActivity)?.openEqualizerFromSettings() }
         btnDeleteSettingsCache.setOnClickListener { showDeleteCacheConfirmation() }
+        btnDeleteAllDownloads.setOnClickListener { showDeleteAllDownloadsConfirmation() }
         updateDeleteCacheButtonState()
+        updateDeleteDownloadsButtonState()
     }
 
     override fun onResume() {
@@ -289,8 +299,7 @@ class SettingsFragment : Fragment() {
         tvStorageCacheValue.text = getString(R.string.settings_storage_row_value_format, getString(R.string.settings_storage_cache), formatSize(b.cacheBytes))
         tvStorageFreeValue.text = getString(R.string.settings_storage_row_value_format, getString(R.string.settings_storage_free), formatSize(b.freeBytes))
 
-        val total = b.otherAppsBytes + b.downloadsBytes + b.cacheBytes + b.freeBytes
-        val safeTotal = total.coerceAtLeast(1L)
+        val safeTotal = b.totalBytes.coerceAtLeast(1L)
         
         applySegmentWeight(vStorageOtherApps, b.otherAppsBytes, safeTotal)
         applySegmentWeight(vStorageDownloads, b.downloadsBytes, safeTotal)
@@ -382,6 +391,51 @@ class SettingsFragment : Fragment() {
         btnDeleteSettingsCache.setText(if (storageCleanupInFlight) R.string.settings_storage_delete_cache_running else R.string.settings_storage_delete_cache)
     }
 
+    private fun updateDeleteDownloadsButtonState() {
+        btnDeleteAllDownloads.isEnabled = !downloadCleanupInFlight
+        btnDeleteAllDownloads.text = if (downloadCleanupInFlight) "Eliminando…" else "Eliminar descargas"
+    }
+
+    private fun showDeleteAllDownloadsConfirmation() {
+        if (!isAdded || downloadCleanupInFlight) return
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle("Eliminar todas las descargas")
+            .setMessage("Se eliminarán todos los archivos de audio descargados y se restablecerá el estado offline de todas las playlists.\n\nEsta acción no se puede deshacer.")
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Eliminar todo") { _, _ -> performDeleteAllDownloads() }
+            .show()
+    }
+
+    private fun performDeleteAllDownloads() {
+        if (!isAdded || downloadCleanupInFlight) return
+        downloadCleanupInFlight = true
+        updateDeleteDownloadsButtonState()
+
+        val appContext = requireContext().applicationContext
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            OfflineAudioStore.deleteAllOfflineAudio(appContext)
+
+            // Clear all playlist offline state prefs
+            val cachePrefs = appContext.getSharedPreferences(CloudSyncManager.PREFS_STREAMING_CACHE, Context.MODE_PRIVATE)
+            val editor = cachePrefs.edit()
+            for (key in cachePrefs.all.keys) {
+                if (key.startsWith("playlist_offline_complete_") || key.startsWith("playlist_offline_auto_")) {
+                    editor.remove(key)
+                }
+            }
+            editor.apply()
+
+            withContext(Dispatchers.Main) {
+                if (!isAdded) return@withContext
+                downloadCleanupInFlight = false
+                updateDeleteDownloadsButtonState()
+                Toast.makeText(requireContext(), "Todas las descargas eliminadas", Toast.LENGTH_SHORT).show()
+                refreshStorageBreakdownAsync()
+                (activity as? MainActivity)?.onAllDownloadsDeleted()
+            }
+        }
+    }
+
     private fun renderSettingsState() {
         val amoled = settingsPrefs.getBoolean(CloudSyncManager.KEY_AMOLED_MODE_ENABLED, false)
         val crossfade = settingsPrefs.getInt(CloudSyncManager.KEY_OFFLINE_CROSSFADE_SECONDS, 0).coerceIn(0, 12)
@@ -389,18 +443,21 @@ class SettingsFragment : Fragment() {
         val offlineMode = settingsPrefs.getBoolean(CloudSyncManager.KEY_OFFLINE_MODE_ENABLED, false)
         val quality = normalizeQuality(settingsPrefs.getString(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_QUALITY, CloudSyncManager.DOWNLOAD_QUALITY_MEDIUM))
         val streamingQuality = normalizeStreamingQuality(settingsPrefs.getString(CloudSyncManager.KEY_STREAMING_QUALITY, CloudSyncManager.STREAMING_QUALITY_MEDIUM))
+        val monoAudio = settingsPrefs.getBoolean(CloudSyncManager.KEY_MONO_AUDIO, false)
 
         if (hasSettingsSnapshot && lastAmoledModeEnabled == amoled &&
             lastOfflineCrossfadeSeconds == crossfade &&
             lastAllowMobileDataDownloads == mobileDownloads && lastOfflineModeEnabled == offlineMode &&
             lastDownloadQuality == quality &&
-            lastStreamingQuality == streamingQuality) return
+            lastStreamingQuality == streamingQuality &&
+            lastMonoAudioEnabled == monoAudio) return
 
         hasSettingsSnapshot = true
         lastAmoledModeEnabled = amoled
         lastOfflineCrossfadeSeconds = crossfade
         lastAllowMobileDataDownloads = mobileDownloads; lastOfflineModeEnabled = offlineMode; lastDownloadQuality = quality
         lastStreamingQuality = streamingQuality
+        lastMonoAudioEnabled = monoAudio
 
         swAmoledMode.apply {
             setOnCheckedChangeListener(null)
@@ -426,6 +483,23 @@ class SettingsFragment : Fragment() {
             isChecked = offlineMode
             setOnCheckedChangeListener { _, c ->
                 settingsPrefs.edit().putBoolean(CloudSyncManager.KEY_OFFLINE_MODE_ENABLED, c).apply()
+                (activity as? MainActivity)?.notifyOfflineModeChanged()
+                renderSettingsState()
+            }
+        }
+
+        swMonoAudio.apply {
+            setOnCheckedChangeListener(null)
+            isChecked = monoAudio
+            setOnCheckedChangeListener { _, c ->
+                settingsPrefs.edit().putBoolean(CloudSyncManager.KEY_MONO_AUDIO, c).apply()
+                MonoAudioProcessor.enabled = c
+                // Force ExoPlayer audio pipeline reconfiguration so onConfigure() re-runs immediately
+                ExoPlayerManager.getSharedExoPlayer()?.let { player ->
+                    if (player.isPlaying || player.playbackState != androidx.media3.common.Player.STATE_IDLE) {
+                        player.seekTo(player.currentPosition)
+                    }
+                }
                 renderSettingsState()
             }
         }
@@ -556,7 +630,7 @@ class SettingsFragment : Fragment() {
         val btnSignOutSleppify = view.findViewById<MaterialButton>(R.id.btnSignOutSleppify)
         val btnDeleteSleppify = view.findViewById<MaterialButton>(R.id.btnDeleteSleppify)
         val tvYtStatus = view.findViewById<TextView>(R.id.tvYtStatus)
-        val btnChangeYt = view.findViewById<MaterialButton>(R.id.btnChangeYt)
+        val tvYtInfo = view.findViewById<TextView>(R.id.tvYtInfo)
 
         tvSleppifyName.text = authManager.getDisplayName()
         tvSleppifyEmail.text = authManager.getEmail()
@@ -565,9 +639,13 @@ class SettingsFragment : Fragment() {
         if (cookie.isNotEmpty()) {
             tvYtStatus.text = "Conectado"
             tvYtStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_primary))
+            val displayName = authManager.getDisplayName()?.takeIf { it.isNotBlank() }
+            tvYtInfo.text = if (displayName != null) displayName else "Vinculada para streaming y descargas"
+            tvYtInfo.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_secondary))
         } else {
             tvYtStatus.text = "No conectado"
             tvYtStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_secondary))
+            tvYtInfo.text = "Vinculada para streaming y descargas"
         }
 
         val dialog = MaterialAlertDialogBuilder(requireContext())
@@ -582,17 +660,6 @@ class SettingsFragment : Fragment() {
         btnDeleteSleppify.setOnClickListener {
             dialog.dismiss()
             showDeleteAccountDataConfirmation()
-        }
-
-        btnChangeYt.setOnClickListener {
-            dialog.dismiss()
-            requireContext().getSharedPreferences("player_state", Context.MODE_PRIVATE)
-                .edit()
-                .remove("stream_last_youtube_web_cookie")
-                .apply()
-            InnertubeResolver.setAuthCookies("")
-            val intent = Intent(requireContext(), YouTubeMusicWebSessionActivity::class.java)
-            webSessionLauncher.launch(intent)
         }
     }
 

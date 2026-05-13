@@ -137,6 +137,8 @@ class CloudSyncManager private constructor(context: Context) {
             int(KEY_DEFAULT_DURATION_MINUTES, 60)
             string(KEY_OFFLINE_DOWNLOAD_QUALITY, DOWNLOAD_QUALITY_HIGH)
             bool(KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false)
+            bool(KEY_OFFLINE_MODE_ENABLED, false)
+            bool(KEY_MONO_AUDIO, false)
         }
     }
 
@@ -1391,14 +1393,17 @@ class CloudSyncManager private constructor(context: Context) {
         @JvmField val KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA = "offline_download_allow_mobile_data"
         @JvmField val KEY_OFFLINE_MODE_ENABLED = "offline_mode_enabled"
         @JvmField val KEY_STREAMING_QUALITY = "streaming_quality"
-        @JvmField val DOWNLOAD_QUALITY_LOW = "low"
-        @JvmField val DOWNLOAD_QUALITY_MEDIUM = "medium"
-        @JvmField val DOWNLOAD_QUALITY_HIGH = "high"
-        @JvmField val DOWNLOAD_QUALITY_VERY_HIGH = "very_high"
         @JvmField val STREAMING_QUALITY_LOW = "low"
         @JvmField val STREAMING_QUALITY_MEDIUM = "medium"
         @JvmField val STREAMING_QUALITY_HIGH = "high"
         @JvmField val STREAMING_QUALITY_VERY_HIGH = "very_high"
+
+        @JvmField val DOWNLOAD_QUALITY_LOW = "low"
+        @JvmField val DOWNLOAD_QUALITY_MEDIUM = "medium"
+        @JvmField val DOWNLOAD_QUALITY_HIGH = "high"
+        @JvmField val DOWNLOAD_QUALITY_VERY_HIGH = "very_high"
+
+        @JvmField val KEY_MONO_AUDIO = "mono_audio_enabled"
 
         private const val USERS_COLLECTION = "users"
         private const val APP_SCOPE_COLLECTION = "sleppify"

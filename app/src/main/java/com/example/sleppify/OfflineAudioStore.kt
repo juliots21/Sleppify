@@ -177,6 +177,20 @@ object OfflineAudioStore {
     }
 
     @JvmStatic
+    fun deleteAllOfflineAudio(context: Context): Int {
+        val dir = getOfflineAudioDir(context)
+        val files = dir.listFiles() ?: return 0
+        var removedCount = 0
+        for (file in files) {
+            if (file.isFile) {
+                if (file.delete()) removedCount++
+            }
+        }
+        clearOfflineAudioStateCache()
+        return removedCount
+    }
+
+    @JvmStatic
     fun normalizeTrackId(trackId: String): String {
         val raw = trackId.trim()
         if (raw.isEmpty()) {

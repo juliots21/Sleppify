@@ -91,6 +91,26 @@ object CustomPlaylistsStore {
         }
     }
 
+    fun removeTrackFromPlaylist(context: Context, playlistName: String, videoId: String) {
+        val prefs = getPrefs(context)
+        val key = CUSTOM_PLAYLIST_PREFIX + playlistName
+        val existingJson = prefs.getString(key, "[]")
+        val arr = try { JSONArray(existingJson) } catch (e: JSONException) { JSONArray() }
+        val newArr = JSONArray()
+        for (i in 0 until arr.length()) {
+            val obj = arr.getJSONObject(i)
+            if (obj.getString("videoId") != videoId) {
+                newArr.put(obj)
+            }
+        }
+        prefs.edit().putString(key, newArr.toString()).apply()
+
+        if (AuthManager.getInstance(context).isSignedIn()) {
+            val updatedTracks = getTracksFromPlaylist(context, playlistName)
+            CloudSyncManager.getInstance(context).syncPlaylistToCloud(playlistName, updatedTracks)
+        }
+    }
+
     fun getTracksFromPlaylist(context: Context, playlistName: String): List<FavoritesPlaylistStore.FavoriteTrack> {
         val prefs = getPrefs(context)
         val key = CUSTOM_PLAYLIST_PREFIX + playlistName

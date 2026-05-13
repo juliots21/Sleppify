@@ -16,6 +16,10 @@ class SleppifyApp : Application() {
             com.bumptech.glide.Glide.get(this)
         } catch (e: Exception) {}
         
+        // Restore mono audio setting before ExoPlayer init
+        val settingsPrefs = getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, MODE_PRIVATE)
+        MonoAudioProcessor.enabled = settingsPrefs.getBoolean(CloudSyncManager.KEY_MONO_AUDIO, false)
+
         // Pre-initialize ExoPlayer to reduce playback startup latency
         ExoPlayerManager.initialize(this)
 

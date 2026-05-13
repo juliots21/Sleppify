@@ -8,7 +8,10 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.audio.MediaCodecAudioRenderer
 
 /**
  * Singleton manager para una instancia compartida de ExoPlayer que reduce la latencia de inicio.
@@ -24,6 +27,9 @@ object ExoPlayerManager {
 
     @Volatile
     private var sharedExoPlayer: ExoPlayer? = null
+
+    @Volatile
+    private var monoProcessor: MonoAudioProcessor? = null
 
     private val initLock = Any()
 
@@ -59,7 +65,21 @@ object ExoPlayerManager {
                             .setPrioritizeTimeOverSizeThresholds(true)
                             .build()
 
-                        sharedExoPlayer = ExoPlayer.Builder(appContext)
+                        monoProcessor = MonoAudioProcessor()
+
+                        val audioSink = DefaultAudioSink.Builder(appContext)
+                            .setAudioProcessors(arrayOf(monoProcessor!!))
+                            .build()
+
+                        val renderersFactory = object : DefaultRenderersFactory(appContext) {
+                            override fun buildAudioSink(
+                                context: Context,
+                                enableFloatOutput: Boolean,
+                                enableAudioTrackPlaybackParams: Boolean
+                            ) = audioSink
+                        }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
+
+                        sharedExoPlayer = ExoPlayer.Builder(appContext, renderersFactory)
                             .setLoadControl(loadControl)
                             .setLooper(android.os.Looper.getMainLooper())
                             .setAudioAttributes(audioAttributes, true)

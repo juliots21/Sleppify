@@ -4,8 +4,8 @@
     <color name="white">#FFFFFFFF</color>
 
     <!-- Stitch Theme Colors -->
-    <color name="stitch_blue">#AEC7FD</color>
-    <color name="stitch_blue_light">#AEC7FD</color>
+    <color name="stitch_blue">#FFFFFFFF</color>
+    <color name="stitch_blue_light">#AFFFFFFF</color>
 
     <color name="surface_dark">#000000</color>
     <color name="surface_dark_overlay">#000000</color>

@@ -248,7 +248,27 @@
             
     </LinearLayout>
 
+    <!-- Loading overlay for first-install grid loading -->
+    <FrameLayout
+        android:id="@+id/flLibraryLoadingOverlay"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="@color/surface_dark"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/llFeaturedResult"
+        app:layout_constraintBottom_toTopOf="@id/llMiniPlayer"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
 
+        <ProgressBar
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_gravity="center"
+            android:indeterminate="true"
+            android:indeterminateTint="@android:color/white" />
+    </FrameLayout>
 
 
     <LinearLayout

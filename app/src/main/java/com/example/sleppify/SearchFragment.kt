@@ -292,13 +292,25 @@ class SearchFragment : Fragment() {
         rvRecentSearchImages.layoutManager = layoutManager
         rvRecentSearchImages.adapter = RecentSearchImageAdapter { recentSearch ->
             if (recentSearch.videoId.isNotEmpty()) {
+                var artist = recentSearch.artist
+                if (artist.isEmpty()) {
+                    artist = resolveArtistForVideoId(recentSearch.videoId)
+                }
                 val track = YouTubeMusicService.TrackResult(
                     "video",
                     recentSearch.videoId,
                     recentSearch.title,
-                    recentSearch.artist,
+                    artist,
                     recentSearch.thumbnail
                 )
+                // Back-fill artist into saved data if it was missing
+                if (recentSearch.artist.isEmpty() && artist.isNotEmpty()) {
+                    val idx = recentSearchData.indexOfFirst { it.videoId == recentSearch.videoId }
+                    if (idx >= 0) {
+                        recentSearchData[idx] = recentSearch.copy(artist = artist)
+                        saveRecentSearchQueries()
+                    }
+                }
                 playTrackDirectly(track)
             } else {
                 etSearchQuery.setText(recentSearch.query)
@@ -1020,6 +1032,19 @@ class SearchFragment : Fragment() {
                 }
             } catch (e2: Exception) {}
         }
+        // Back-fill missing artist for entries that have a videoId
+        var dirty = false
+        for (i in recentSearchData.indices) {
+            val entry = recentSearchData[i]
+            if (entry.videoId.isNotEmpty() && entry.artist.isEmpty()) {
+                val resolved = resolveArtistForVideoId(entry.videoId)
+                if (resolved.isNotEmpty()) {
+                    recentSearchData[i] = entry.copy(artist = resolved)
+                    dirty = true
+                }
+            }
+        }
+        if (dirty) saveRecentSearchQueries()
         updateRecentSearchImages()
     }
 
@@ -1197,6 +1222,48 @@ class SearchFragment : Fragment() {
             .take(4)
     }
 
+    private fun resolveArtistForVideoId(videoId: String): String {
+        val ctx = context ?: return ""
+        // 1. Playback history (most likely to have full metadata)
+        try {
+            val history = PlaybackHistoryStore.load(ctx)
+            history.queue.firstOrNull { it.videoId == videoId }?.let {
+                if (it.artist.isNotEmpty()) return it.artist
+            }
+        } catch (_: Exception) {}
+        // 2. Favorites
+        try {
+            FavoritesPlaylistStore.loadFavorites(ctx).firstOrNull { it.videoId == videoId }?.let {
+                if (it.artist.isNotEmpty()) return it.artist
+            }
+        } catch (_: Exception) {}
+        // 3. Custom playlists
+        try {
+            for (name in CustomPlaylistsStore.getAllPlaylistNames(ctx)) {
+                CustomPlaylistsStore.getTracksFromPlaylist(ctx, name).firstOrNull { it.videoId == videoId }?.let {
+                    if (it.artist.isNotEmpty()) return it.artist
+                }
+            }
+        } catch (_: Exception) {}
+        // 4. Cached online playlists
+        try {
+            val cache = ctx.getSharedPreferences("streaming_cache", Context.MODE_PRIVATE)
+            for ((key, value) in cache.all) {
+                if (key.startsWith("playlist_tracks_data_") && value is String) {
+                    val arr = org.json.JSONArray(value)
+                    for (i in 0 until arr.length()) {
+                        val obj = arr.getJSONObject(i)
+                        if (obj.optString("videoId") == videoId) {
+                            val artist = obj.optString("artist", "")
+                            if (artist.isNotEmpty()) return artist
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return ""
+    }
+
     private fun loadArtworkInto(target: ImageView, url: String?, videoId: String? = null) {
         var finalUrl = url?.trim()
         
@@ -1253,15 +1320,34 @@ class SearchFragment : Fragment() {
         imm?.showSoftInput(etSearchQuery, InputMethodManager.SHOW_IMPLICIT)
     }
 
-    private fun showModuleLoadingOverlay() { moduleLoadingOverlay.visibility = View.VISIBLE }
-    private fun revealModuleContent() { moduleLoadingOverlay.visibility = View.GONE }
+    private var overlayShownAtMs = 0L
+
+    private fun showModuleLoadingOverlay() {
+        moduleLoadingOverlay.alpha = 1f
+        moduleLoadingOverlay.visibility = View.VISIBLE
+        overlayShownAtMs = System.currentTimeMillis()
+    }
+
+    private fun revealModuleContent() {
+        moduleLoadingOverlay.animate().cancel()
+        moduleLoadingOverlay.animate()
+            .alpha(0f)
+            .setDuration(200)
+            .withEndAction { moduleLoadingOverlay.visibility = View.GONE }
+            .start()
+    }
 
     private fun scheduleOverlayRevealAfterDraw() {
         val v = view ?: return
         v.viewTreeObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
             override fun onPreDraw(): Boolean {
                 v.viewTreeObserver.removeOnPreDrawListener(this)
-                v.post { if (isAdded && !isHidden) revealModuleContent() }
+                val elapsed = System.currentTimeMillis() - overlayShownAtMs
+                val minVisibleMs = 350L
+                val delay = (minVisibleMs - elapsed).coerceAtLeast(0L)
+                v.postDelayed({
+                    if (isAdded && !isHidden) revealModuleContent()
+                }, delay)
                 return true
             }
         })

@@ -74,8 +74,8 @@
 
                 <ImageView
                     android:id="@+id/ivYoutubeMusicStatus"
-                    android:layout_width="16dp"
-                    android:layout_height="16dp"
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
                     android:layout_marginEnd="8dp"
                     android:src="@drawable/ic_ytmusic_custom" />
 
@@ -236,6 +236,8 @@
                         android:id="@+id/swDownloadOnMobileData"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
                         android:checked="false" />
                 </LinearLayout>
 
@@ -279,6 +281,53 @@
                         android:id="@+id/swOfflineMode"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:checked="false" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginHorizontal="16dp"
+                    android:background="#0AFFFFFF" />
+
+                <!-- Audio mono -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="16dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Audio mono"
+                            android:textColor="@color/text_primary"
+                            android:textSize="14sp" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="Combina canales al reproducir el audio"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/swMonoAudio"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
                         android:checked="false" />
                 </LinearLayout>
 
@@ -517,6 +566,8 @@
                         android:id="@+id/swAmoledMode"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
                         android:checked="false" />
                 </LinearLayout>
 
@@ -563,6 +614,8 @@
                         android:id="@+id/swTvMode"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
                         android:checked="false" />
                 </LinearLayout>
             </LinearLayout>
@@ -744,22 +797,47 @@
                     </LinearLayout>
                 </LinearLayout>
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnDeleteSettingsCache"
-                    android:layout_width="wrap_content"
-                    android:layout_height="36dp"
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
                     android:layout_marginTop="14dp"
-                    android:layout_gravity="center_horizontal"
-                    android:backgroundTint="#B0B0B0"
-                    android:insetTop="0dp"
-                    android:insetBottom="0dp"
-                    android:paddingHorizontal="24dp"
-                    android:text="@string/settings_storage_delete_cache"
-                    android:textAllCaps="false"
-                    android:textColor="#1A1F29"
-                    android:textSize="11sp"
-                    android:textStyle="bold"
-                    app:cornerRadius="18dp" />
+                    android:orientation="horizontal"
+                    android:gravity="center"
+                    android:weightSum="2">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnDeleteSettingsCache"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_weight="1"
+                        android:layout_marginEnd="4dp"
+                        android:backgroundTint="@color/surface_high"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:text="@string/settings_storage_delete_cache"
+                        android:textAllCaps="false"
+                        android:textColor="@color/text_primary"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        app:cornerRadius="18dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnDeleteAllDownloads"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_weight="1"
+                        android:layout_marginStart="4dp"
+                        android:backgroundTint="@color/surface_high"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:text="Eliminar descargas"
+                        android:textAllCaps="false"
+                        android:textColor="@color/text_primary"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        app:cornerRadius="18dp" />
+
+                </LinearLayout>
 
                 <TextView
                     android:id="@+id/tvStorageCacheHint"
