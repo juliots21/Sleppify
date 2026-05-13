@@ -1,0 +1,328 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/rootPrincipal"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/surface_dark">
+
+    <androidx.core.widget.NestedScrollView
+        android:id="@+id/nsvPrincipalContent"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:fillViewport="true"
+        android:overScrollMode="never"
+        app:layout_constraintBottom_toTopOf="@id/llMiniPlayer"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="10dp"
+            android:paddingBottom="16dp">
+
+            <!-- Section header: YT profile + Accesos directos -->
+            <LinearLayout
+                android:id="@+id/llShortcutsHeader"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="4dp"
+                android:paddingTop="12dp"
+                android:paddingBottom="8dp">
+
+                <com.google.android.material.imageview.ShapeableImageView
+                    android:id="@+id/ivShortcutProfilePhoto"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:background="@color/surface_high"
+                    android:scaleType="centerCrop"
+                    app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Full" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="10dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tvShortcutChannelName"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/inter_variable"
+                        android:textAllCaps="true"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="10sp"
+                        android:letterSpacing="0.06"
+                        tools:text="SLEPPY" />
+
+                    <TextView
+                        android:id="@+id/tvShortcutsLabel"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/inter_variable"
+                        android:text="Accesos directos"
+                        android:textColor="@color/text_primary"
+                        android:textSize="17sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <ImageView
+                    android:id="@+id/ivShortcutsMore"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:src="@drawable/ic_chevron_right"
+                    app:tint="@color/text_secondary" />
+            </LinearLayout>
+
+            <androidx.viewpager2.widget.ViewPager2
+                android:id="@+id/vpShortcuts"
+                android:layout_width="match_parent"
+                android:layout_height="420dp"
+                android:clipToPadding="false"
+                android:overScrollMode="never" />
+
+            <com.google.android.material.tabs.TabLayout
+                android:id="@+id/tabDotsShortcuts"
+                android:layout_width="wrap_content"
+                android:layout_height="16dp"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="4dp"
+                android:background="@android:color/transparent"
+                app:tabBackground="@drawable/selector_dot_indicator"
+                app:tabGravity="center"
+                app:tabIndicator="@null"
+                app:tabIndicatorHeight="0dp"
+                app:tabMaxWidth="8dp"
+                app:tabMinWidth="8dp"
+                app:tabPaddingEnd="3dp"
+                app:tabPaddingStart="3dp" />
+
+            <!-- Section: Mixes para ti (generic) -->
+            <TextView
+                android:id="@+id/tvMixesLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/inter_variable"
+                android:paddingHorizontal="4dp"
+                android:paddingTop="20dp"
+                android:paddingBottom="10dp"
+                android:text="Mixes para ti"
+                android:textColor="@color/text_primary"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvMixes"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:clipToPadding="false"
+                android:overScrollMode="never"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp" />
+
+            <TextView
+                android:id="@+id/tvMixesEmpty"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/inter_variable"
+                android:gravity="center"
+                android:paddingHorizontal="32dp"
+                android:paddingTop="24dp"
+                android:paddingBottom="24dp"
+                android:text="Inicia sesión en YouTube Music para ver tus mixes personalizados"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp"
+                android:visibility="gone" />
+
+            <!-- Section: Mis Mixes (personal daily mixes) -->
+            <TextView
+                android:id="@+id/tvPersonalMixesLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/inter_variable"
+                android:paddingHorizontal="4dp"
+                android:paddingTop="20dp"
+                android:paddingBottom="10dp"
+                android:text="Mis Mixes"
+                android:textColor="@color/text_primary"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvPersonalMixes"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:clipToPadding="false"
+                android:overScrollMode="never"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp"
+                android:visibility="gone" />
+
+            <!-- Section: Covers y Remixes -->
+            <LinearLayout
+                android:id="@+id/llCoversHeader"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="4dp"
+                android:paddingTop="20dp"
+                android:paddingBottom="10dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/tvCoversLabel"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:fontFamily="@font/inter_variable"
+                    android:text="Covers y remixes"
+                    android:textColor="@color/text_primary"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/btnCoversPlayAll"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/inter_variable"
+                    android:text="Reproducir todo"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:paddingHorizontal="8dp" />
+            </LinearLayout>
+
+            <androidx.viewpager2.widget.ViewPager2
+                android:id="@+id/vpCovers"
+                android:layout_width="match_parent"
+                android:layout_height="288dp"
+                android:clipToPadding="false"
+                android:overScrollMode="never"
+                android:visibility="gone" />
+
+            <com.google.android.material.tabs.TabLayout
+                android:id="@+id/tabDotsCovers"
+                android:layout_width="wrap_content"
+                android:layout_height="16dp"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="4dp"
+                android:background="@android:color/transparent"
+                app:tabBackground="@drawable/selector_dot_indicator"
+                app:tabGravity="center"
+                app:tabIndicator="@null"
+                app:tabIndicatorHeight="0dp"
+                app:tabMaxWidth="8dp"
+                app:tabMinWidth="8dp"
+                app:tabPaddingEnd="3dp"
+                app:tabPaddingStart="3dp"
+                android:visibility="gone" />
+
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+
+    <!-- Mini Player -->
+    <LinearLayout
+        android:id="@+id/llMiniPlayer"
+        android:layout_width="0dp"
+        android:layout_height="72dp"
+        android:background="@drawable/bg_playlist_footer_extension"
+        android:orientation="vertical"
+        android:paddingStart="0dp"
+        android:paddingTop="4dp"
+        android:paddingEnd="0dp"
+        android:paddingBottom="0dp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp">
+
+            <ImageView
+                android:id="@+id/ivMiniPlayerArt"
+                android:layout_width="50dp"
+                android:layout_height="50dp"
+                android:background="@color/surface_high"
+                android:scaleType="centerCrop" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tvMiniPlayerTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="16dp"
+                    android:ellipsize="end"
+                    android:fontFamily="sans-serif-black"
+                    android:maxLines="2"
+                    android:text="Selecciona una canción"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvMiniPlayerSubtitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:fontFamily="@font/inter_variable"
+                    android:maxLines="1"
+                    android:text=""
+                    android:textColor="@color/text_secondary"
+                    android:textSize="14sp" />
+            </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/btnMiniPlayPause"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
+                android:background="@drawable/bg_mini_play_ripple"
+                android:padding="8dp"
+                android:src="@drawable/ic_mini_play"
+                app:tint="@color/stitch_blue" />
+        </LinearLayout>
+
+        <SeekBar
+            android:id="@+id/sbMiniPlayerProgress"
+            android:layout_width="match_parent"
+            android:layout_height="16dp"
+            android:layout_marginTop="0dp"
+            android:clickable="false"
+            android:enabled="false"
+            android:focusable="false"
+            android:max="1000"
+            android:paddingStart="0dp"
+            android:paddingEnd="0dp"
+            android:progress="0"
+            android:progressTint="@color/stitch_blue"
+            android:splitTrack="false"
+            android:thumb="@null"
+            android:thumbTint="@android:color/transparent" />
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

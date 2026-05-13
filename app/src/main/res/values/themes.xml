@@ -21,6 +21,10 @@
         <item name="cornerSize">50%</item>
     </style>
 
+    <style name="ShapeAppearance.Sleppify.MixRound" parent="ShapeAppearance.Material3.MediumComponent">
+        <item name="cornerSize">8dp</item>
+    </style>
+
     <!-- Eliminate the active indicator pill in BottomNavigationView -->
     <style name="BottomNavNoIndicator" parent="Widget.Material3.BottomNavigationView.ActiveIndicator">
         <item name="android:width">0dp</item>

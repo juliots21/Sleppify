@@ -1300,6 +1300,40 @@ class CloudSyncManager private constructor(context: Context) {
             .ifEmpty { "playlist" }
     }
 
+    fun syncPlayCountsToCloud(context: Context) {
+        val uid = activeUserId
+        if (uid.isNullOrEmpty()) return
+        val entries = PlayCountStore.exportToJson(context)
+        val data = hashMapOf<String, Any>(
+            "entries" to entries.toString(),
+            FIELD_UPDATED_AT to com.google.firebase.firestore.FieldValue.serverTimestamp()
+        )
+        firestore.collection(USERS_COLLECTION).document(uid)
+            .collection(APP_SCOPE_COLLECTION).document(DOC_PLAY_COUNTS)
+            .set(data, SetOptions.merge())
+            .addOnSuccessListener { Log.d(TAG, "Play counts synced to cloud") }
+            .addOnFailureListener { e -> Log.e(TAG, "Error syncing play counts", e) }
+    }
+
+    fun fetchCloudPlayCounts(context: Context) {
+        val uid = activeUserId
+        if (uid.isNullOrEmpty()) return
+        firestore.collection(USERS_COLLECTION).document(uid)
+            .collection(APP_SCOPE_COLLECTION).document(DOC_PLAY_COUNTS)
+            .get()
+            .addOnSuccessListener { doc ->
+                val raw = doc.getString("entries") ?: return@addOnSuccessListener
+                try {
+                    val arr = org.json.JSONArray(raw)
+                    PlayCountStore.importFromJson(context, arr)
+                    Log.d(TAG, "Play counts restored from cloud: ${arr.length()} entries")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error parsing cloud play counts", e)
+                }
+            }
+            .addOnFailureListener { e -> Log.e(TAG, "Error fetching cloud play counts", e) }
+    }
+
     fun deleteCloudPlaylist(playlistName: String) {
         val uid = activeUserId
         if (uid.isNullOrEmpty()) return
@@ -1410,6 +1444,7 @@ class CloudSyncManager private constructor(context: Context) {
         private const val DOC_EQ = "eq"
         private const val DOC_SETTINGS = "settings"
         private const val DOC_STREAMING = "streaming"
+        private const val DOC_PLAY_COUNTS = "play_counts"
         private const val COLLECTION_PLAYLISTS = "playlists"
         private const val COLLECTION_PLAYLIST_OVERRIDES = "playlist_overrides"
 

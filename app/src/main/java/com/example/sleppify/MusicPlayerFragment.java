@@ -845,6 +845,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         startMiniProgressTicker();
         maybeRestoreHiddenMiniPlayerFromPausedSnapshot();
         maybeAutoLaunchWebSessionIfNeeded();
+        maybeSyncLibraryIfAuthorized();
         updateMiniPlayerUi();
         if (isAdded()) {
             boolean offlineMode = requireContext()
@@ -895,6 +896,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         startMiniProgressTicker();
         maybeRestoreHiddenMiniPlayerFromPausedSnapshot();
         maybeAutoLaunchWebSessionIfNeeded();
+        maybeSyncLibraryIfAuthorized();
         updateMiniPlayerUi();
     }
     private void maybeAutoLaunchWebSessionIfNeeded() {
@@ -1146,7 +1148,8 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             }
         }
 
-        // Invalidate all per-playlist track caches so playlist detail loads fresh data
+        // Mark all per-playlist track caches as stale so playlist detail re-fetches when online,
+        // but preserve the actual track data for offline fallback (allowStale=true reads it).
         synchronized (cachedPlaylistTracksLock) {
             cachedPlaylistTracksById.clear();
             cachedPlaylistTracksUpdatedAtById.clear();
@@ -1158,7 +1161,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 continue;
             }
             if (key.startsWith(PREF_TRACKS_UPDATED_AT_PREFIX)
-                    || key.startsWith(PREF_TRACKS_DATA_PREFIX)
                     || key.startsWith(PREF_TRACKS_FULL_CACHE_PREFIX)) {
                 editor.remove(key);
             }
@@ -3301,11 +3303,17 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 if (videoId.isEmpty() || title.isEmpty()) {
                     continue;
                 }
+                // Normaliza la duración para evitar valores corruptos que rompan la validación offline
+                String normalizedDuration = track.duration == null ? "" : track.duration.trim();
+                if (normalizedDuration.isEmpty() || normalizedDuration.contains("--")) {
+                    normalizedDuration = "";
+                }
+
                 JSONObject obj = new JSONObject();
                 obj.put("videoId", videoId);
                 obj.put("title", title);
                 obj.put("artist", track.artist == null ? "" : track.artist);
-                obj.put("duration", track.duration == null ? "" : track.duration);
+                obj.put("duration", normalizedDuration);
                 obj.put("imageUrl", track.thumbnailUrl == null ? "" : track.thumbnailUrl);
                 array.put(obj);
             }
@@ -3626,14 +3634,13 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         }
         target.setTag(R.id.tag_artwork_signature, signature);
         boolean offlineOnly = !isNetworkAvailable();
-        target.setImageDrawable(null); // Clear previous image
         Glide.with(target)
             .load(safeUrl)
             .transform(SHARED_YT_CROP)
             .format(com.bumptech.glide.load.DecodeFormat.PREFER_RGB_565)
             .diskCacheStrategy(DiskCacheStrategy.ALL)
             .onlyRetrieveFromCache(offlineOnly)
-            .override(Math.min(targetWidth, 160), Math.min(targetHeight, 160)) // Res lower bound
+            .override(Math.max(targetWidth, 320), Math.max(targetHeight, 320))
             .transition(com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions.withCrossFade())
             .into(target);
     }
@@ -6734,9 +6741,10 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             }
             ArrayList<CachedPlaylistTrack> cachedTracks = loadCachedPlaylistTracksForOffline(appContext, playlistId);
             if (cachedTracks.isEmpty()) {
-                // No cached track list - check if we have any offline files for this playlist
-                // by looking at the persisted state as last resort
-                return false;
+                // Track list was wiped (e.g. by pull-to-refresh) and prefetch hasn't finished yet.
+                // Do NOT write false to SharedPreferences — that would corrupt a correct persisted
+                // true value. Return the persisted state as-is and wait for the prefetch to repopulate.
+                return isPersistedPlaylistOfflineComplete(appContext, playlistId);
             }
             HashSet<String> seen = new HashSet<>();
             Set<String> restrictedIds = OfflineRestrictionStore.getRestrictedVideoIds(appContext);

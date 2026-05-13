@@ -259,6 +259,11 @@ public class SongPlayerFragment extends Fragment {
     private long lastHandledEndedAtMs = 0L;
     @NonNull
     private String lastHandledEndedVideoId = "";
+    private boolean playCountRecordedForCurrentTrack = false;
+    @NonNull
+    private String currentPlaylistContextId = "";
+    @NonNull
+    private String currentPlaylistContextName = "";
     /**
      * Tracks the videoId for which we already consumed a one-shot InnerTube re-resolution
      * retry after an ExoPlayer failure. If another error occurs for the same videoId,
@@ -274,6 +279,10 @@ public class SongPlayerFragment extends Fragment {
     @NonNull
     public String getLoadedVideoId() {
         return loadedVideoId;
+    }
+    public void externalSetPlaylistContext(@NonNull String playlistId, @NonNull String playlistName) {
+        currentPlaylistContextId = playlistId;
+        currentPlaylistContextName = playlistName;
     }
     @NonNull
     private String returnTargetTag = TAG_PLAYLIST_DETAIL;
@@ -398,6 +407,19 @@ public class SongPlayerFragment extends Fragment {
                     sbPlaybackProgress.setProgress(Math.max(0, Math.min(1000, progress)));
                 }
 
+                if (!playCountRecordedForCurrentTrack && totalSeconds > 0
+                        && currentSeconds >= Math.min(30, Math.max(1, totalSeconds / 2))) {
+                    playCountRecordedForCurrentTrack = true;
+                    if (isAdded() && currentIndex >= 0 && currentIndex < tracks.size()) {
+                        PlayerTrack _t = tracks.get(currentIndex);
+                        PlayCountStore.incrementPlayCount(
+                                requireContext(),
+                                _t.videoId, _t.title, _t.artist, _t.imageUrl,
+                                currentPlaylistContextId.isEmpty() ? null : currentPlaylistContextId,
+                                currentPlaylistContextName.isEmpty() ? null : currentPlaylistContextName
+                        );
+                    }
+                }
                 if (currentSeconds % 2 == 0) {
                     persistPlaybackSnapshot(false);
                     updateMediaSessionState();
@@ -1077,6 +1099,19 @@ public class SongPlayerFragment extends Fragment {
 
         lastHandledEndedVideoId = loadedVideoId;
         lastHandledEndedAtMs = now;
+
+        if (isAdded() && currentIndex >= 0 && currentIndex < tracks.size()) {
+            PlayerTrack finished = tracks.get(currentIndex);
+            PlayCountStore.incrementPlayCount(
+                    requireContext(),
+                    finished.videoId,
+                    finished.title,
+                    finished.artist,
+                    finished.imageUrl,
+                    null, null
+            );
+        }
+
         moveTrack(1, true);
     }
 
@@ -1383,6 +1418,7 @@ public class SongPlayerFragment extends Fragment {
 
         final PlayerTrack track = tracks.get(currentIndex);
         loadedVideoId = track.videoId;
+        playCountRecordedForCurrentTrack = false;
         currentSeconds = 0;
         lastSeekTargetSeconds = -1;
         isRestoringPosition = false;
@@ -3982,7 +4018,9 @@ public class SongPlayerFragment extends Fragment {
 
         if (!sameAsLoaded || startFromBeginning) {
             bindCurrentTrack(!startFromBeginning);
-            playCurrentTrack();
+            if (isPlaying) {
+                playCurrentTrack();
+            }
         } else {
             // Queue changed but current song is the same: lightweight sync only.
             // Do NOT call bindCurrentTrack or playCurrentTrack to avoid any lag/pause.

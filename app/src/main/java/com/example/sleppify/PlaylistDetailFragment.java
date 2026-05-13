@@ -408,7 +408,7 @@ public class PlaylistDetailFragment extends Fragment
         rvPlaylistContent.setLayoutManager(layoutManager);
         rvPlaylistContent.setHasFixedSize(true);
         rvPlaylistContent.setItemAnimator(null);
-        rvPlaylistContent.setItemViewCacheSize(4);
+        rvPlaylistContent.setItemViewCacheSize(0);
         RecyclerView.RecycledViewPool pool = new RecyclerView.RecycledViewPool();
         pool.setMaxRecycledViews(0, 8);
         rvPlaylistContent.setRecycledViewPool(pool);
@@ -419,19 +419,42 @@ public class PlaylistDetailFragment extends Fragment
             public void onScrollStateChanged(@NonNull RecyclerView recyclerView, int newState) {
                 if (!isAdded()) return;
                 isScrolling = newState != RecyclerView.SCROLL_STATE_IDLE;
-                // Load offline/restricted state only when scroll stops
-                if (newState == RecyclerView.SCROLL_STATE_IDLE && trackAdapter != null) {
-                    // Flush any deferred adapter notifications accumulated during scroll
-                    trackAdapter.flushDeferredNotifications();
-                    if (recyclerView.getLayoutManager() instanceof LinearLayoutManager) {
-                        LinearLayoutManager lm = (LinearLayoutManager) recyclerView.getLayoutManager();
-                        // ConcatAdapter: header es posición 0, tracks empiezan en 1
-                        int firstVisible = lm.findFirstVisibleItemPosition() - 1;
-                        int lastVisible = lm.findLastVisibleItemPosition() - 1;
-                        if (firstVisible >= 0) {
-                            trackAdapter.loadStateForVisibleRange(firstVisible, lastVisible);
+
+                if (newState == RecyclerView.SCROLL_STATE_SETTLING) {
+                    // ── FLING ──
+                    // Finger lifted, list coasting at speed. Pause Glide so the request
+                    // queue never fills with off-screen items. Containers show grey bg.
+                    if (trackAdapter != null) trackAdapter.setFastScrolling(true);
+                    Glide.with(PlaylistDetailFragment.this).pauseRequests();
+
+                } else if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
+                    // ── DRAG ──
+                    // Finger still on screen. If we were fling-paused, resume so that
+                    // slow-drag items load normally. Do NOT flush/notify here — too early.
+                    if (trackAdapter != null) trackAdapter.setFastScrolling(false);
+                    Glide.with(PlaylistDetailFragment.this).resumeRequests();
+
+                } else {
+                    // ── IDLE ──
+                    // Everything stopped. Mark non-fast, resume Glide, then immediately
+                    // reload images and state only for the currently visible rows.
+                    if (trackAdapter != null) trackAdapter.setFastScrolling(false);
+                    Glide.with(PlaylistDetailFragment.this).resumeRequests();
+
+                    if (trackAdapter != null) {
+                        trackAdapter.flushDeferredNotifications();
+                        if (recyclerView.getLayoutManager() instanceof LinearLayoutManager) {
+                            LinearLayoutManager lm = (LinearLayoutManager) recyclerView.getLayoutManager();
+                            // ConcatAdapter: header at position 0, tracks start at 1
+                            int firstVisible = lm.findFirstVisibleItemPosition() - 1;
+                            int lastVisible  = lm.findLastVisibleItemPosition()  - 1;
+                            if (firstVisible >= 0) {
+                                trackAdapter.loadStateForVisibleRange(firstVisible, lastVisible);
+                                trackAdapter.reloadImagesForRange(firstVisible, lastVisible);
+                            }
                         }
                     }
+                    if (!isScrolling) refreshActiveEqualizerState();
                 }
             }
 
@@ -491,6 +514,10 @@ public class PlaylistDetailFragment extends Fragment
         super.onResume();
         if (getActivity() instanceof MainActivity) {
             ((MainActivity) getActivity()).hideTopAppBarForPlaylistDetail();
+        }
+        // Ensure Glide is not paused if the fragment resumes after a fling was interrupted
+        if (isAdded()) {
+            try { Glide.with(this).resumeRequests(); } catch (Exception ignored) {}
         }
         invalidateMiniSnapshotCache();
         lastTickerTrackIndex = -1;
@@ -1131,7 +1158,8 @@ public class PlaylistDetailFragment extends Fragment
                 .transform(SHARED_YT_CROP)
                 .format(DecodeFormat.PREFER_RGB_565)
                 .diskCacheStrategy(DiskCacheStrategy.ALL)
-                .transition(DrawableTransitionOptions.withCrossFade(200))
+                .priority(com.bumptech.glide.Priority.LOW)
+                .transition(DrawableTransitionOptions.withCrossFade(120))
                 .override(px, px)
                 .into(target);
     }
@@ -3231,10 +3259,10 @@ public class PlaylistDetailFragment extends Fragment
         }
 
         long updatedAt = getCachePrefs().getLong(PREF_TRACKS_UPDATED_AT_PREFIX + playlistId, 0L);
-        if (updatedAt <= 0L) {
+        if (updatedAt <= 0L && !allowStale) {
             return result;
         }
-        if (!allowStale && (System.currentTimeMillis() - updatedAt) > TRACKS_CACHE_TTL_MS) {
+        if (!allowStale && updatedAt > 0L && (System.currentTimeMillis() - updatedAt) > TRACKS_CACHE_TTL_MS) {
             return result;
         }
 
@@ -3410,6 +3438,7 @@ public class PlaylistDetailFragment extends Fragment
         if (existingPlayer != null) {
             if (existingPlayer.isAdded()) {
                 existingPlayer.externalSetReturnTargetTag(TAG_PLAYLIST_DETAIL);
+                existingPlayer.externalSetPlaylistContext(currentPlaylistId, currentPlaylistTitle);
                 
                 // If the selected track is already playing, just open the player
                 if (TextUtils.equals(selectedVideoId, existingPlayer.getLoadedVideoId())) {
@@ -4176,6 +4205,7 @@ public class PlaylistDetailFragment extends Fragment
         if (existingPlayer != null) {
             if (existingPlayer.isAdded()) {
                 existingPlayer.externalSetReturnTargetTag(TAG_PLAYLIST_DETAIL);
+                existingPlayer.externalSetPlaylistContext(currentPlaylistId, currentPlaylistTitle);
                 if (existingPlayer.externalMatchesQueue(ids)) {
                     if (startFromBeginning) {
                         existingPlayer.externalPlayTrackFromStart(queueIndex);
@@ -4216,6 +4246,7 @@ public class PlaylistDetailFragment extends Fragment
                 true
         );
         playerFragment.externalSetReturnTargetTag(TAG_PLAYLIST_DETAIL);
+        playerFragment.externalSetPlaylistContext(currentPlaylistId, currentPlaylistTitle);
         addSongPlayerWithEnterAnimation(playerFragment);
         // Don't update mini-player UI - keep it hidden while full player is visible
     }
@@ -4255,6 +4286,7 @@ public class PlaylistDetailFragment extends Fragment
         if (existingPlayer != null) {
             if (existingPlayer.isAdded()) {
                 existingPlayer.externalSetReturnTargetTag(TAG_PLAYLIST_DETAIL);
+                existingPlayer.externalSetPlaylistContext(currentPlaylistId, currentPlaylistTitle);
                 existingPlayer.externalReplaceQueue(ids, titles, artists, durations, images, snapshotIndex, startPlaying);
                 showSongPlayerWithEnterAnimation(existingPlayer);
             }
@@ -4269,6 +4301,7 @@ public class PlaylistDetailFragment extends Fragment
                     startPlaying
             );
             playerFragment.externalSetReturnTargetTag(TAG_PLAYLIST_DETAIL);
+            playerFragment.externalSetPlaylistContext(currentPlaylistId, currentPlaylistTitle);
                 addSongPlayerWithEnterAnimation(playerFragment);
         }
 
@@ -5428,6 +5461,7 @@ public class PlaylistDetailFragment extends Fragment
         private final Map<String, Float> downloadingTrackProgressById = new HashMap<>();
         private final Set<Integer> pendingNotifyPositions = new HashSet<>();
         private boolean notifyCoalesceScheduled = false;
+        private boolean isFastScrolling = false;
         // Track which items have pending state lookups to avoid duplicate requests
         private final Set<String> pendingOfflineLookups = new HashSet<>();
         private final Set<String> pendingRestrictedLookups = new HashSet<>();
@@ -5540,7 +5574,10 @@ public class PlaylistDetailFragment extends Fragment
                                     LinearLayoutManager llm = (LinearLayoutManager) lm;
                                     int first = llm.findFirstVisibleItemPosition() - 1;
                                     int last = llm.findLastVisibleItemPosition() - 1;
-                                    if (first >= 0) trackAdapter.loadStateForVisibleRange(first, last);
+                                    if (first >= 0) {
+                                        trackAdapter.loadStateForVisibleRange(first, last);
+                                        trackAdapter.reloadImagesForRange(first, last);
+                                    }
                                 }
                             }
                         });
@@ -5549,15 +5586,23 @@ public class PlaylistDetailFragment extends Fragment
             });
         }
 
+        void setFastScrolling(boolean fast) {
+            isFastScrolling = fast;
+        }
+
         void setActiveIndex(int activeIndex) {
             int previous = this.activeIndex;
             this.activeIndex = activeIndex;
 
+            // Use PAYLOAD_STATE_ONLY so neither the previously-active nor the newly-active
+            // row triggers a full rebind (which would reload the image via Glide).
+            // The partial-bind path in onBindViewHolder(holder, position, payloads) handles
+            // the overlay / equalizer / subtitle update without touching ivTrackArt.
             if (previous >= 0 && previous < getItemCount() && previous != activeIndex) {
-                dispatchWhenIdle(() -> { if (previous < getItemCount()) notifyItemChanged(previous); }, 0);
+                dispatchWhenIdle(() -> { if (previous < getItemCount()) notifyItemChanged(previous, PAYLOAD_STATE_ONLY); }, 0);
             }
             if (activeIndex >= 0 && activeIndex < getItemCount()) {
-                dispatchWhenIdle(() -> { if (activeIndex < getItemCount()) notifyItemChanged(activeIndex); }, 0);
+                dispatchWhenIdle(() -> { if (activeIndex < getItemCount()) notifyItemChanged(activeIndex, PAYLOAD_STATE_ONLY); }, 0);
             }
         }
 
@@ -5831,6 +5876,28 @@ public class PlaylistDetailFragment extends Fragment
             }
         }
 
+        /**
+         * Reloads track artwork only for the visible range.
+         * Called after a fling ends (SCROLL_STATE_IDLE) to fill in images
+         * that were intentionally skipped during the fast scroll.
+         */
+        void reloadImagesForRange(int firstVisible, int lastVisible) {
+            if (rvPlaylistContent == null) return;
+            int safeStart = Math.max(0, firstVisible);
+            int safeEnd = Math.min(items.size() - 1, lastVisible);
+            for (int i = safeStart; i <= safeEnd; i++) {
+                // ConcatAdapter offset: track position i maps to global position i+1
+                RecyclerView.ViewHolder vh = rvPlaylistContent.findViewHolderForAdapterPosition(i + 1);
+                if (vh instanceof TrackViewHolder) {
+                    TrackViewHolder tvh = (TrackViewHolder) vh;
+                    PlaylistTrack track = items.get(i);
+                    if (track != null) {
+                        loadTrackArt(tvh.ivTrackArt, track.imageUrl);
+                    }
+                }
+            }
+        }
+
         @Override
         public long getItemId(int position) {
             if (position < 0 || position >= items.size()) {
@@ -5847,10 +5914,21 @@ public class PlaylistDetailFragment extends Fragment
         }
 
         @Override
+        public void onViewDetachedFromWindow(@NonNull TrackViewHolder holder) {
+            super.onViewDetachedFromWindow(holder);
+            // Cancel any in-flight Glide request immediately when view detaches during a fling.
+            // This prevents off-screen loads from filling the Glide queue ahead of visible items.
+            Glide.with(holder.itemView.getContext()).clear(holder.ivTrackArt);
+            holder.ivTrackArt.setTag(R.id.tag_artwork_signature, null);
+            holder.ivTrackArt.setImageDrawable(null);
+        }
+
+        @Override
         public void onViewRecycled(@NonNull TrackViewHolder holder) {
             super.onViewRecycled(holder);
             // Clear image immediately — fires reliably when item leaves screen (itemViewCacheSize=0)
             Glide.with(holder.itemView.getContext()).clear(holder.ivTrackArt);
+            holder.ivTrackArt.setTag(R.id.tag_artwork_signature, null);
             holder.ivTrackArt.setImageDrawable(null);
 
             int pos = holder.getAdapterPosition();
@@ -5879,9 +5957,8 @@ public class PlaylistDetailFragment extends Fragment
         @Override
         public void onViewAttachedToWindow(@NonNull TrackViewHolder holder) {
             super.onViewAttachedToWindow(holder);
-            int pos = holder.getAdapterPosition();
-            if (pos < 0 || pos >= items.size()) return;
-            loadTrackArt(holder.ivTrackArt, items.get(pos).imageUrl);
+            // Do NOT load image here — onBindViewHolder already handles it with fling awareness.
+            // Loading here too causes duplicate Glide requests and re-queues during fast scroll.
         }
 
         @Override
@@ -5935,8 +6012,10 @@ public class PlaylistDetailFragment extends Fragment
                     holder.flOfflineProgress.setVisibility(View.GONE);
                 }
 
-                // Refresh active/playing state
+                // Refresh active/playing state (including row background highlight)
                 boolean isActive = position == activeIndex;
+                holder.rootTrackRow.setBackgroundResource(
+                        isActive ? R.drawable.bg_playlist_track_active : R.drawable.bg_playlist_track_default);
                 SongPlayerFragment sp = cachedSongPlayer;
                 boolean isActuallyPlaying = sp != null && sp.isPlaying();
                 String currentVideoId = sp != null ? sp.getLoadedVideoId() : "";
@@ -5955,6 +6034,17 @@ public class PlaylistDetailFragment extends Fragment
             PlaylistTrack track = items.get(position);
             holder.tvTrackTitle.setText(track.title);
             Context context = holder.itemView.getContext();
+
+            // Image loading: during a fast fling show a grey placeholder only.
+            // Glide requests are paused by the scroll listener during flings and resumed
+            // at idle — Glide will then automatically complete pending loads for visible items.
+            if (isFastScrolling) {
+                Glide.with(context).clear(holder.ivTrackArt);
+                holder.ivTrackArt.setTag(R.id.tag_artwork_signature, null);
+                holder.ivTrackArt.setImageDrawable(null);
+            } else {
+                loadTrackArt(holder.ivTrackArt, track.imageUrl);
+            }
 
             // Eagerly trigger state lookup on full bind so first-visible items
             // don't have to wait for the scroll listener / layout listener.
