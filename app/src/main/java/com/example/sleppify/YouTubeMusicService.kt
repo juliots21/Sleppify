@@ -150,9 +150,9 @@ class YouTubeMusicService @JvmOverloads constructor(
     )
 
     class HomeBrowseResult(
-        @JvmField val genericMixes: List<MixResult>,
-        @JvmField val personalMixes: List<MixResult>,
-        @JvmField val allSections: List<HomeSection>
+        @JvmField val genericMixes: MutableList<MixResult>,
+        @JvmField val personalMixes: MutableList<MixResult>,
+        @JvmField val allSections: MutableList<HomeSection>
     )
 
     class HomeSection(
@@ -449,7 +449,7 @@ class YouTubeMusicService @JvmOverloads constructor(
                 val allResults = mutableListOf<TrackResult>()
                 val seenIds = mutableSetOf<String>()
                 for (title in trackTitles.take(5)) {
-                    val queries = listOf("$title cover", "$title remix")
+                    val queries = listOf("$title remix", "$title cover")
                     for (q in queries) {
                         try {
                             val results = performInnertubeSearch(cookieHeader, q, 5)
@@ -1573,20 +1573,54 @@ class YouTubeMusicService @JvmOverloads constructor(
 
     // ----- Full home browse (split generic + personal mixes) -----
 
+    private val MAX_HOME_CONTINUATIONS = 4
+
     @Throws(Exception::class)
     private fun performHomeBrowseFullRequest(cookieHeader: String): HomeBrowseResult {
         val endpoint = "https://music.youtube.com/youtubei/v1/browse?prettyPrint=false"
+        val clientContext = JSONObject().apply {
+            put("clientName", "WEB_REMIX")
+            put("clientVersion", "1.20240101.01.00")
+            put("hl", "es")
+        }
         val body = JSONObject().apply {
-            put("context", JSONObject().apply {
-                put("client", JSONObject().apply {
-                    put("clientName", "WEB_REMIX")
-                    put("clientVersion", "1.20240101.01.00")
-                    put("hl", "es")
-                })
-            })
+            put("context", JSONObject().put("client", clientContext))
             put("browseId", "FEmusic_home")
         }.toString().toByteArray(StandardCharsets.UTF_8)
 
+        val responseBody = postInnerTubeBrowse(endpoint, body, cookieHeader)
+        val rootJson = JSONObject(responseBody)
+        val result = parseHomeBrowseFull(rootJson)
+
+        // Extract continuation token from initial response
+        var continuationToken = extractContinuationToken(rootJson)
+        var continuationCount = 0
+
+        while (continuationToken != null && continuationCount < MAX_HOME_CONTINUATIONS) {
+            continuationCount++
+            Log.d("YouTubeMusicService", "Home browse continuation #$continuationCount")
+            try {
+                val contBody = JSONObject().apply {
+                    put("context", JSONObject().put("client", clientContext))
+                    put("continuation", continuationToken)
+                }.toString().toByteArray(StandardCharsets.UTF_8)
+
+                val contResponse = postInnerTubeBrowse(endpoint, contBody, cookieHeader)
+                val contJson = JSONObject(contResponse)
+                parseContinuationSections(contJson, result)
+                continuationToken = extractContinuationTokenFromContinuation(contJson)
+            } catch (e: Exception) {
+                Log.w("YouTubeMusicService", "Home browse continuation #$continuationCount failed: ${e.message}")
+                break
+            }
+        }
+
+        Log.d("YouTubeMusicService", "Home browse total: ${result.allSections.size} sections, " +
+                "${result.personalMixes.size} personal, ${result.genericMixes.size} generic")
+        return result
+    }
+
+    private fun postInnerTubeBrowse(endpoint: String, body: ByteArray, cookieHeader: String): String {
         val url = URL(endpoint)
         val connection = url.openConnection() as HttpURLConnection
         connection.requestMethod = "POST"
@@ -1606,116 +1640,169 @@ class YouTubeMusicService @JvmOverloads constructor(
             if (statusCode != HttpURLConnection.HTTP_OK) {
                 throw IllegalStateException("Browse home error $statusCode")
             }
-            return parseHomeBrowseFull(JSONObject(responseBody))
+            return responseBody
         } finally {
             connection.disconnect()
         }
     }
 
+    private fun extractContinuationToken(root: JSONObject): String? {
+        return root.optJSONObject("contents")
+            ?.optJSONObject("singleColumnBrowseResultsRenderer")
+            ?.optJSONArray("tabs")
+            ?.optJSONObject(0)
+            ?.optJSONObject("tabRenderer")
+            ?.optJSONObject("content")
+            ?.optJSONObject("sectionListRenderer")
+            ?.optJSONArray("continuations")
+            ?.optJSONObject(0)
+            ?.optJSONObject("nextContinuationData")
+            ?.optString("continuation", null)
+    }
+
+    private fun extractContinuationTokenFromContinuation(contJson: JSONObject): String? {
+        return contJson.optJSONObject("continuationContents")
+            ?.optJSONObject("sectionListContinuation")
+            ?.optJSONArray("continuations")
+            ?.optJSONObject(0)
+            ?.optJSONObject("nextContinuationData")
+            ?.optString("continuation", null)
+    }
+
+    private fun parseContinuationSections(contJson: JSONObject, result: HomeBrowseResult) {
+        val sections = contJson.optJSONObject("continuationContents")
+            ?.optJSONObject("sectionListContinuation")
+            ?.optJSONArray("contents")
+            ?: return
+
+        for (s in 0 until sections.length()) {
+            val section = sections.optJSONObject(s) ?: continue
+            val carousel = section.optJSONObject("musicCarouselShelfRenderer") ?: continue
+            parseCarouselIntoResult(carousel, result)
+        }
+    }
+
     private fun parseHomeBrowseFull(root: JSONObject): HomeBrowseResult {
-        val genericMixes = mutableListOf<MixResult>()
-        val personalMixes = mutableListOf<MixResult>()
-        val allSections = mutableListOf<HomeSection>()
+        val result = HomeBrowseResult(
+            mutableListOf<MixResult>(),
+            mutableListOf<MixResult>(),
+            mutableListOf<HomeSection>()
+        )
         try {
             val tabs = root.optJSONObject("contents")
                 ?.optJSONObject("singleColumnBrowseResultsRenderer")
                 ?.optJSONArray("tabs")
-                ?: return HomeBrowseResult(genericMixes, personalMixes, allSections)
+                ?: return result
 
             val tabContent = tabs.optJSONObject(0)
                 ?.optJSONObject("tabRenderer")
                 ?.optJSONObject("content")
                 ?.optJSONObject("sectionListRenderer")
                 ?.optJSONArray("contents")
-                ?: return HomeBrowseResult(genericMixes, personalMixes, allSections)
+                ?: return result
 
             for (s in 0 until tabContent.length()) {
                 val section = tabContent.optJSONObject(s) ?: continue
                 val carousel = section.optJSONObject("musicCarouselShelfRenderer") ?: continue
-                val headerTitle = carousel.optJSONObject("header")
-                    ?.optJSONObject("musicCarouselShelfBasicHeaderRenderer")
-                    ?.optJSONObject("title")
-                    ?.optJSONArray("runs")
-                    ?.optJSONObject(0)
-                    ?.optString("text", "") ?: ""
-
-                val sectionItems = mutableListOf<MixResult>()
-                val items = carousel.optJSONArray("contents") ?: continue
-
-                for (i in 0 until items.length()) {
-                    val item = items.optJSONObject(i) ?: continue
-                    val renderer = item.optJSONObject("musicTwoRowItemRenderer") ?: continue
-
-                    val browseEndpoint = renderer.optJSONObject("navigationEndpoint")
-                        ?.optJSONObject("watchPlaylistEndpoint")
-                    val watchEndpoint = renderer.optJSONObject("navigationEndpoint")
-                        ?.optJSONObject("watchEndpoint")
-                    val browseEp = renderer.optJSONObject("navigationEndpoint")
-                        ?.optJSONObject("browseEndpoint")
-
-                    var playlistId = browseEndpoint?.optString("playlistId", "") ?: ""
-                    if (playlistId.isEmpty()) playlistId = watchEndpoint?.optString("playlistId", "") ?: ""
-                    if (playlistId.isEmpty()) playlistId = browseEp?.optString("browseId", "") ?: ""
-
-                    val title = renderer.optJSONObject("title")
-                        ?.optJSONArray("runs")
-                        ?.optJSONObject(0)
-                        ?.optString("text", "") ?: ""
-
-                    val subtitleRuns = renderer.optJSONObject("subtitle")?.optJSONArray("runs")
-                    val subtitle = buildString {
-                        if (subtitleRuns != null) {
-                            for (r in 0 until subtitleRuns.length()) {
-                                append(subtitleRuns.optJSONObject(r)?.optString("text", "") ?: "")
-                            }
-                        }
-                    }
-
-                    val thumbnails = renderer.optJSONObject("thumbnailRenderer")
-                        ?.optJSONObject("musicThumbnailRenderer")
-                        ?.optJSONObject("thumbnail")
-                        ?.optJSONArray("thumbnails")
-                    val thumbUrl = thumbnails?.let {
-                        it.optJSONObject(it.length() - 1)?.optString("url", "") ?: ""
-                    } ?: ""
-
-                    if (playlistId.isEmpty() && title.isEmpty()) continue
-                    sectionItems.add(MixResult(playlistId, title, subtitle, thumbUrl))
-                }
-
-                if (sectionItems.isNotEmpty()) {
-                    allSections.add(HomeSection(headerTitle, sectionItems))
-                }
-
-                val lower = headerTitle.lowercase()
-                val titleLowerPersonal = lower.contains("my mix") || lower.contains("mi mix")
-                        || lower.contains("discover mix") || lower.contains("descubre")
-                        || lower.contains("your") || lower.contains("tu ")
-                        || lower.contains("para ti") || lower.contains("listen again")
-                        || lower.contains("escucha de nuevo")
-
-                for (mixItem in sectionItems) {
-                    val tLow = mixItem.title.lowercase()
-                    val isPersonal = titleLowerPersonal
-                            || tLow.contains("my mix") || tLow.contains("mi mix")
-                            || tLow.contains("discover mix") || tLow.contains("new release mix")
-                            || tLow.contains("supermix")
-                            || mixItem.playlistId.startsWith("RDEM")
-                            || mixItem.playlistId.startsWith("RDTMAK")
-
-                    val isGenericMix = !isPersonal && (
-                            tLow.contains("mix") || tLow.contains("radio")
-                                    || mixItem.playlistId.startsWith("RDAMVM")
-                            )
-
-                    if (isPersonal) personalMixes.add(mixItem)
-                    else if (isGenericMix) genericMixes.add(mixItem)
-                }
+                parseCarouselIntoResult(carousel, result)
             }
         } catch (e: Exception) {
             Log.w("YouTubeMusicService", "parseHomeBrowseFull error: ${e.message}")
         }
-        return HomeBrowseResult(genericMixes, personalMixes, allSections)
+        return result
+    }
+
+    private fun parseCarouselIntoResult(carousel: JSONObject, result: HomeBrowseResult) {
+        val headerTitle = carousel.optJSONObject("header")
+            ?.optJSONObject("musicCarouselShelfBasicHeaderRenderer")
+            ?.optJSONObject("title")
+            ?.optJSONArray("runs")
+            ?.optJSONObject(0)
+            ?.optString("text", "") ?: ""
+
+        val sectionItems = mutableListOf<MixResult>()
+        val items = carousel.optJSONArray("contents") ?: return
+
+        for (i in 0 until items.length()) {
+            val item = items.optJSONObject(i) ?: continue
+            val renderer = item.optJSONObject("musicTwoRowItemRenderer") ?: continue
+
+            val browseEndpoint = renderer.optJSONObject("navigationEndpoint")
+                ?.optJSONObject("watchPlaylistEndpoint")
+            val watchEndpoint = renderer.optJSONObject("navigationEndpoint")
+                ?.optJSONObject("watchEndpoint")
+            val browseEp = renderer.optJSONObject("navigationEndpoint")
+                ?.optJSONObject("browseEndpoint")
+
+            var playlistId = browseEndpoint?.optString("playlistId", "") ?: ""
+            if (playlistId.isEmpty()) playlistId = watchEndpoint?.optString("playlistId", "") ?: ""
+            if (playlistId.isEmpty()) playlistId = browseEp?.optString("browseId", "") ?: ""
+
+            val title = renderer.optJSONObject("title")
+                ?.optJSONArray("runs")
+                ?.optJSONObject(0)
+                ?.optString("text", "") ?: ""
+
+            val subtitleRuns = renderer.optJSONObject("subtitle")?.optJSONArray("runs")
+            val subtitle = buildString {
+                if (subtitleRuns != null) {
+                    for (r in 0 until subtitleRuns.length()) {
+                        append(subtitleRuns.optJSONObject(r)?.optString("text", "") ?: "")
+                    }
+                }
+            }
+
+            val thumbnails = renderer.optJSONObject("thumbnailRenderer")
+                ?.optJSONObject("musicThumbnailRenderer")
+                ?.optJSONObject("thumbnail")
+                ?.optJSONArray("thumbnails")
+            val thumbUrl = thumbnails?.let {
+                it.optJSONObject(it.length() - 1)?.optString("url", "") ?: ""
+            } ?: ""
+
+            if (playlistId.isEmpty() && title.isEmpty()) continue
+            sectionItems.add(MixResult(playlistId, title, subtitle, thumbUrl))
+        }
+
+        if (sectionItems.isNotEmpty()) {
+            result.allSections.add(HomeSection(headerTitle, sectionItems))
+        }
+
+        val lower = headerTitle.lowercase()
+        val sectionIsPersonal = lower.contains("my mix") || lower.contains("mi mix")
+                || lower.contains("discover mix") || lower.contains("descubre")
+                || lower.contains("your") || lower.contains("tu ")
+                || lower.contains("para ti") || lower.contains("listen again")
+                || lower.contains("escucha de nuevo")
+                || lower.contains("mixed for you") || lower.contains("mezclado para ti")
+                || lower.contains("your music tuner") || lower.contains("tu sintonizador")
+                || lower.contains("similar to") || lower.contains("basado en")
+
+        for (mixItem in sectionItems) {
+            val tLow = mixItem.title.lowercase()
+
+            // Genre mixes like "Salsa Mix", "Bachata Mix" are always generic
+            val looksLikeGenreMix = tLow.matches(Regex("^[a-záéíóúñü\\s]+mix$"))
+                    || tLow.matches(Regex("^[a-záéíóúñü\\s]+radio$"))
+
+            val isPersonal = !looksLikeGenreMix && (
+                    sectionIsPersonal
+                    || tLow.contains("my mix") || tLow.contains("mi mix")
+                    || tLow.contains("discover mix") || tLow.contains("new release mix")
+                    || tLow.contains("supermix")
+                    || Regex("mix\\s*#?\\s*\\d").containsMatchIn(tLow)
+                    || mixItem.playlistId.startsWith("RDEM")
+                    || mixItem.playlistId.startsWith("RDTMAK")
+                    )
+
+            val isGenericMix = !isPersonal && (
+                    tLow.contains("mix") || tLow.contains("radio")
+                            || mixItem.playlistId.startsWith("RDAMVM")
+                    )
+
+            if (isPersonal) result.personalMixes.add(mixItem)
+            else if (isGenericMix) result.genericMixes.add(mixItem)
+        }
     }
 
     // ----- Innertube search (for covers/remixes) -----

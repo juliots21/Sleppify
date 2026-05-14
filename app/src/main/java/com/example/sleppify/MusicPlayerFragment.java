@@ -832,11 +832,12 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
     @Override
     public void onResume() {
         super.onResume();
-        startObservingOfflineQueue();
         offlineQueueHadActiveWork = false;
         offlineManualQueueHadActiveWork = false;
-        resetMiniPlayerRenderCache();
         updateClearSearchBackPressedEnabled();
+        if (isHidden()) return;
+        startObservingOfflineQueue();
+        resetMiniPlayerRenderCache();
         refreshCurrentPlayingPlaylistState();
         if (adapter != null) {
             adapter.invalidatePlaylistOfflineState(null);
@@ -854,10 +855,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             if (offlineMode && activeScreen == ScreenMode.LIBRARY) {
                 renderLibraryResults();
             }
-        }
-        if (getActivity() instanceof MainActivity) {
-            MainActivity mainActivity = (MainActivity) getActivity();
-            mainActivity.revealModuleContent();
         }
     }
     @Override
@@ -1176,9 +1173,9 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             ((PlaylistDetailFragment) detailFragment).externalForceRefresh();
         }
         
-        // Limpiamos cualquier restriccion que haya en OfflineRestrictionStore
-        OfflineRestrictionStore.clearAllRestrictions(requireContext());
-        Log.i(TAG_STREAMING, "Todas las restricciones de tracks se han borrado manualmente.");
+        // Removed OfflineRestrictionStore.clearAllRestrictions(requireContext());
+        // Clearing restrictions automatically here caused fully downloaded playlists to drop
+        // their offline state, because un-downloadable tracks became eligible again immediately.
         
         if (!isNetworkAvailable()) {
             setLibraryPullRefreshState(false);
@@ -1396,6 +1393,8 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         // Activar inmediatamente la cookie en InnertubeResolver para que las
         // siguientes peticiones de resolución y playback estén autenticadas.
         InnertubeResolver.setAuthCookies(cookieHeader);
+        // Reload WebView resolver to pick up the new authenticated session
+        WebViewStreamResolver.reload();
         streamingOauthCompleted = true;
         updateYoutubeButtonLabel();
         // Keep user-agent available for future web-session API extensions.
@@ -4280,6 +4279,9 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 playlistThumbnail == null ? "" : playlistThumbnail,
             accessTokenForDetail
         );
+        if (getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).showModuleLoadingOverlay();
+        }
         androidx.fragment.app.Fragment existingDetail = getParentFragmentManager().findFragmentByTag("playlist_detail");
         androidx.fragment.app.FragmentTransaction transaction = getParentFragmentManager()
             .beginTransaction()
@@ -5898,6 +5900,9 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 track.thumbnailUrl,
             accessTokenForDetail
         );
+        if (getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).showModuleLoadingOverlay();
+        }
         androidx.fragment.app.Fragment existingDetail = getParentFragmentManager().findFragmentByTag("playlist_detail");
         androidx.fragment.app.FragmentTransaction transaction = getParentFragmentManager()
             .beginTransaction()
@@ -6504,10 +6509,12 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                     int sizePx = Math.round(60 * density);
                     PlaylistGridArtLoader.load(holder.ivTrackThumb, gridUrls, sizePx);
                 } else {
-                    // Grey placeholder until 2x2 grid data arrives from prefetch
-                    holder.ivTrackThumb.setTag(R.id.tag_artwork_signature, null);
-                    holder.ivTrackThumb.setImageDrawable(new android.graphics.drawable.ColorDrawable(
-                            ContextCompat.getColor(holder.itemView.getContext(), R.color.surface_high)));
+                    // Grey placeholder only if no previous grid image is loaded
+                    Object prevSignature = holder.ivTrackThumb.getTag(R.id.tag_artwork_signature);
+                    if (prevSignature == null) {
+                        holder.ivTrackThumb.setImageDrawable(new android.graphics.drawable.ColorDrawable(
+                                ContextCompat.getColor(holder.itemView.getContext(), R.color.surface_high)));
+                    }
                 }
             }
             boolean isPlaylistItem = "playlist".equals(item.resultType);
@@ -6840,12 +6847,4 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         adapter.forceRecalculatePlaylistState(playlistId);
     }
 
-    private boolean isAmoledModeEnabled() {
-        if (!isAdded()) {
-            return false;
-        }
-        SharedPreferences settingsPrefs = requireContext()
-                .getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Activity.MODE_PRIVATE);
-        return settingsPrefs.getBoolean(CloudSyncManager.KEY_AMOLED_MODE_ENABLED, false);
-    }
 }

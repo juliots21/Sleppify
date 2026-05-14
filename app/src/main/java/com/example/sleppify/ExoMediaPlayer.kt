@@ -253,7 +253,13 @@ class ExoMediaPlayer {
         val player = exoPlayer ?: throw IllegalStateException("ExoMediaPlayer released")
         val uri = pendingUri ?: pendingPath?.let { Uri.parse(it) } ?: throw IllegalStateException("No data source set")
 
-        val factory: DataSource.Factory = if (pendingIsHttpSource) {
+        val isInnertube = StreamResolvingDataSource.SCHEME.equals(uri.scheme, ignoreCase = true)
+
+        val factory: DataSource.Factory = if (isInnertube) {
+            // Innertube URI: use StreamResolvingDataSource which resolves the URL
+            // lazily inside ExoPlayer's buffering pipeline for near-instant playback.
+            StreamResolvingDataSource.createFactory(appContext, getSharedCache(appContext), pendingHeaders)
+        } else if (pendingIsHttpSource) {
             // Usar DefaultHttpDataSource (HttpURLConnection nativo de Android)
             // en vez de OkHttpDataSource — el TLS fingerprint de OkHttp es detectado
             // por el CDN de YouTube causando 403, mientras que HttpURLConnection
@@ -278,7 +284,18 @@ class ExoMediaPlayer {
             DefaultDataSource.Factory(appContext)
         }
 
-        val mediaItem = MediaItem.fromUri(uri)
+        // For innertube URIs, set mediaId as the videoId for proper cache keying
+        val mediaItem = if (isInnertube) {
+            val videoId = uri.host ?: (uri.schemeSpecificPart?.substringBefore('?') ?: "")
+            MediaItem.Builder()
+                .setMediaId(videoId)
+                .setUri(uri)
+                .setCustomCacheKey(videoId)
+                .build()
+        } else {
+            MediaItem.fromUri(uri)
+        }
+
         val source = ProgressiveMediaSource.Factory(factory)
             .createMediaSource(mediaItem)
 

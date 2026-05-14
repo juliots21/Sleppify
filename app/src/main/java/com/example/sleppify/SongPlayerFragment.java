@@ -271,6 +271,12 @@ public class SongPlayerFragment extends Fragment {
      */
     @Nullable
     private String lastReresolveVideoId;
+    /**
+     * Tracks whether we already attempted an ExoPlayer AudioTrack reinit for the
+     * current playback request token. Prevents infinite reinit loops on low-memory
+     * devices where AudioFlinger cannot reclaim resources quickly enough.
+     */
+    private long audioTrackReinitToken = -1;
     @NonNull
     private final Random random = new Random();
     @NonNull
@@ -296,7 +302,6 @@ public class SongPlayerFragment extends Fragment {
 
     // Direct streaming & pre-fetching
     private volatile String prefetchedNextVideoId = null;
-    private volatile String prefetchedNextUrl = null;
 
     @Nullable
     private Future<?> pendingStreamResolverFuture;
@@ -1508,19 +1513,13 @@ public class SongPlayerFragment extends Fragment {
                     skipRestrictedTrackInQueue();
                     return;
                 }
-                if (TextUtils.equals(track.videoId, prefetchedNextVideoId) && !TextUtils.isEmpty(prefetchedNextUrl)) {
+                if (TextUtils.equals(track.videoId, prefetchedNextVideoId)) {
                     Log.d(TAG, "playCurrentTrack: using prefetched stream for videoId=" + track.videoId);
-                    String url = prefetchedNextUrl;
                     prefetchedNextVideoId = null;
-                    prefetchedNextUrl = null;
-                    startMediaPlaybackFromSource(track, url, requestToken, () -> {
-                        resolveAndPlayOnlineTrack(track, requestToken);
-                    });
-                } else {
-                    // No prefetch — resolve fresh (already on background, but executor
-                    // is single-thread so we submit to keep it non-blocking from main)
-                    resolveAndPlayOnlineTrack(track, requestToken);
                 }
+                // resolveAndPlayOnlineTrack uses innertube:// URI which resolves
+                // instantly from StreamResolvingDataSource's URL cache if prefetched.
+                resolveAndPlayOnlineTrack(track, requestToken);
             });
         });
     }
@@ -1554,28 +1553,17 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
-        // Artwork is already being loaded by bindCurrentTrackInternal,
-        // no need to wipe it here — keep old cover visible while resolving.
-
-        pendingStreamResolverFuture = streamResolverExecutor.submit(() -> {
-            String resolvedUrl = forceAlternativeClient
-                    ? InnertubeResolver.resolveStreamUrl(requireContext(), track.videoId, true)
-                    : InnertubeResolver.resolveStreamUrl(requireContext(), track.videoId);
-            
-            localProgressHandler.post(() -> {
-                if (requestToken != activePlaybackRequestToken || !isAdded()) return;
-                pendingStreamResolverFuture = null;
-
-                if (!TextUtils.isEmpty(resolvedUrl)) {
-                    startMediaPlaybackFromSource(track, resolvedUrl, requestToken, () -> {
-                        // If direct playback fails, fallback to WebView
-                        tryReresolveOrSkipCurrentTrack("Fallo de reproducción directa: re-resolviendo.", false);
-                    });
-                } else {
-                    // Resolution failed, fallback to WebView
-                    tryReresolveOrSkipCurrentTrack("No se pudo resolver el stream directo. Reintentando.", false);
-                }
-            });
+        // Use innertube:// URI — ExoPlayer resolves the stream URL lazily inside its
+        // buffering pipeline via StreamResolvingDataSource, eliminating the separate
+        // resolve step and reducing time-to-first-audio by 2-5 seconds.
+        // Encode forceAlternativeClient as query param so StreamResolvingDataSource
+        // can pass it through to InnertubeResolver on retry.
+        String innertubeUri = StreamResolvingDataSource.SCHEME + "://" + track.videoId
+                + (forceAlternativeClient ? "?alt=1" : "");
+        startMediaPlaybackFromSource(track, innertubeUri, requestToken, () -> {
+            // On failure: invalidate cache and re-resolve
+            StreamResolvingDataSource.invalidateUrl(track.videoId);
+            tryReresolveOrSkipCurrentTrack("Fallo de reproducción directa: re-resolviendo.", false);
         });
     }
 
@@ -1596,12 +1584,10 @@ public class SongPlayerFragment extends Fragment {
 
         Log.d(TAG, "prefetchNextTrackStream: starting pre-fetch for videoId=" + nextTrack.videoId);
         streamResolverExecutor.submit(() -> {
-            String url = InnertubeResolver.resolveStreamUrl(requireContext(), nextTrack.videoId);
-            if (!TextUtils.isEmpty(url)) {
-                prefetchedNextVideoId = nextTrack.videoId;
-                prefetchedNextUrl = url;
-                Log.d(TAG, "prefetchNextTrackStream: successfully prefetched videoId=" + nextTrack.videoId);
-            }
+            // Pre-warm the StreamResolvingDataSource URL cache so next track plays instantly
+            StreamResolvingDataSource.prefetchUrl(requireContext(), nextTrack.videoId);
+            prefetchedNextVideoId = nextTrack.videoId;
+            Log.d(TAG, "prefetchNextTrackStream: successfully prefetched videoId=" + nextTrack.videoId);
         });
     }
 
@@ -1683,13 +1669,13 @@ public class SongPlayerFragment extends Fragment {
             long requestToken,
             @NonNull Runnable onFailure
     ) {
-        final boolean networkSource = isHttpStreamSource(source);
+        final boolean networkSource = isHttpStreamSource(source) || isInnertubeSource(source);
         Log.d(TAG, "startMediaPlaybackFromSource: source=" + maskUrlForLog(source)
             + " videoId=" + track.videoId
             + " token=" + requestToken);
         stopLocalProgressTicker();
         releaseLocalExoMediaPlayer();
-        usingOfflineSource = true;
+        usingOfflineSource = !networkSource;
         localSourcePreparing = true;
         updatePlayerSurfaceForSource();
 
@@ -1762,6 +1748,7 @@ public class SongPlayerFragment extends Fragment {
                     mp.setVolume(1f, 1f);
                     mp.start();
                     consecutiveStreamFailures = 0; // Reset counter on successful playback
+                    audioTrackReinitToken = -1;
                     Log.d(TAG, "onPrepared: playback started videoId=" + track.videoId
                             + " durationSec=" + totalSeconds);
                     startLocalProgressTicker();
@@ -1819,15 +1806,46 @@ public class SongPlayerFragment extends Fragment {
 
             // AudioTrack init failure (status -12 / ENOMEM): reinitialize shared player
             // to force release stale AudioTrack resources held by the OS.
+            // Only attempt reinit ONCE per playback token to prevent infinite loops on
+            // low-memory devices where AudioFlinger cannot reclaim resources quickly.
             if (what == 5001 && isAdded()) {
-                Log.w(TAG, "AudioTrack init failed — reinitializing shared ExoPlayer");
+                if (audioTrackReinitToken == requestToken) {
+                    Log.w(TAG, "AudioTrack init failed again after reinit — falling through to next source/track");
+                    // Fall through to normal onFailure handling below
+                } else {
+                    audioTrackReinitToken = requestToken;
+                    Log.w(TAG, "AudioTrack init failed — reinitializing shared ExoPlayer");
+                    ExoPlayerManager.INSTANCE.reinitialize(requireContext().getApplicationContext());
+                    // Give the OS time to reclaim AudioTrack resources before retrying
+                    // (3s is needed on low-end devices like SM-A032M with 2GB RAM)
+                    if (requestToken == activePlaybackRequestToken) {
+                        localProgressHandler.postDelayed(() -> {
+                            if (!isAdded() || requestToken != activePlaybackRequestToken) return;
+                            onFailure.run();
+                        }, 3000L);
+                    }
+                    return true;
+                }
+            }
+
+            // Codec crash (DEAD_OBJECT from mediaserver): error code 4003.
+            // The system codec process died — this is external to the app. Reinitialize
+            // the shared ExoPlayer and resume from the saved position instead of restarting
+            // from 0 via onFailure (which would invalidate the URL and lose the position).
+            if (what == 4003 && isAdded()) {
+                final int savedPositionMs = currentSeconds * 1000;
+                Log.w(TAG, "Codec DEAD_OBJECT (4003) — reinitializing ExoPlayer and resuming from "
+                        + savedPositionMs + "ms for videoId=" + track.videoId);
                 ExoPlayerManager.INSTANCE.reinitialize(requireContext().getApplicationContext());
-                // Give the OS time to reclaim AudioTrack resources before retrying
                 if (requestToken == activePlaybackRequestToken) {
                     localProgressHandler.postDelayed(() -> {
                         if (!isAdded() || requestToken != activePlaybackRequestToken) return;
+                        // Resume from saved position: temporarily override currentSeconds so
+                        // the seek is applied after prepare in attemptPlaybackFromSources.
+                        int resumeSec = savedPositionMs / 1000;
+                        currentSeconds = resumeSec;
                         onFailure.run();
-                    }, 1500L);
+                    }, 800L);
                 }
                 return true;
             }
@@ -1841,7 +1859,7 @@ public class SongPlayerFragment extends Fragment {
         });
 
         try {
-            if (isHttpStreamSource(source) && isAdded()) {
+            if ((isHttpStreamSource(source) || isInnertubeSource(source)) && isAdded()) {
                 Map<String, String> headers = new HashMap<>();
                 headers.put("User-Agent", STREAM_HTTP_USER_AGENT);
                 headers.put("Accept", "*/*");
@@ -1954,7 +1972,7 @@ public class SongPlayerFragment extends Fragment {
         }
         
         consecutiveStreamFailures++;
-        if (consecutiveStreamFailures >= 3 && !forceAttempt) {
+        if (consecutiveStreamFailures >= 6 && !forceAttempt) {
             Log.e(TAG, "Too many consecutive failures (" + consecutiveStreamFailures + "). Pausing playback to avoid API bans.");
             markPlaybackUnavailable("Múltiples fallos consecutivos. Reproducción pausada para evitar bloqueos del servidor.");
             return true;
@@ -1983,7 +2001,7 @@ public class SongPlayerFragment extends Fragment {
         lastReresolveVideoId = track.videoId;
 
         // Drop cached URL so the next resolveStreamUrl fetches a fresh one.
-        InnertubeResolver.invalidate(track.videoId);
+        StreamResolvingDataSource.invalidateUrl(track.videoId);
 
         cancelSourcePrepareTimeout();
         cancelPendingStreamResolver();
@@ -1994,7 +2012,6 @@ public class SongPlayerFragment extends Fragment {
         // Clear any prefetched URL for this track (it may also be stale).
         if (TextUtils.equals(track.videoId, prefetchedNextVideoId)) {
             prefetchedNextVideoId = null;
-            prefetchedNextUrl = null;
         }
 
         // Retry forcing the alternative client chain (TVHTML5_SIMPLYEMBEDDED first) to
@@ -2202,6 +2219,10 @@ public class SongPlayerFragment extends Fragment {
 
     private boolean isHttpStreamSource(@NonNull String source) {
         return source.startsWith("https://") || source.startsWith("http://");
+    }
+
+    private boolean isInnertubeSource(@NonNull String source) {
+        return source.startsWith(StreamResolvingDataSource.SCHEME + "://");
     }
 
     private void scheduleSourcePrepareTimeout(
@@ -2466,32 +2487,15 @@ public class SongPlayerFragment extends Fragment {
             }
         }
 
-        // Try prefetched online
-        if (nextUrl == null && TextUtils.equals(nextTrack.videoId, prefetchedNextVideoId) && !TextUtils.isEmpty(prefetchedNextUrl)) {
-            nextUrl = prefetchedNextUrl;
+        // Try innertube:// URI for online playback (resolves lazily via StreamResolvingDataSource)
+        if (nextUrl == null && isNetworkAvailable()) {
+            nextUrl = StreamResolvingDataSource.SCHEME + "://" + nextTrack.videoId;
             nextIsNetwork = true;
         }
 
         if (nextUrl == null) {
-            // No direct source ready. If online, resolve the URL dynamically!
-            if (isNetworkAvailable()) {
-                final ExoMediaPlayer outgoingPlayer = outgoing;
-                final int finalNextIndex = nextIndex;
-                streamResolverExecutor.submit(() -> {
-                    String resolved = InnertubeResolver.resolveStreamUrl(requireContext(), nextTrack.videoId);
-                    localProgressHandler.post(() -> {
-                        if (!isAdded() || TextUtils.isEmpty(resolved)) {
-                            playCurrentTrack();
-                            return;
-                        }
-                        executeManualCrossfade(outgoingPlayer, finalNextIndex, resolved, true, crossfadeDurationMs);
-                    });
-                });
-                return;
-            } else {
-                playCurrentTrack();
-                return;
-            }
+            playCurrentTrack();
+            return;
         }
 
         executeManualCrossfade(outgoing, nextIndex, nextUrl, nextIsNetwork, crossfadeDurationMs);
@@ -2530,32 +2534,15 @@ public class SongPlayerFragment extends Fragment {
             }
         }
 
-        // Try prefetched online
-        if (nextUrl == null && TextUtils.equals(nextTrack.videoId, prefetchedNextVideoId) && !TextUtils.isEmpty(prefetchedNextUrl)) {
-            nextUrl = prefetchedNextUrl;
+        // Try innertube:// URI for online playback (resolves lazily via StreamResolvingDataSource)
+        if (nextUrl == null && isNetworkAvailable()) {
+            nextUrl = StreamResolvingDataSource.SCHEME + "://" + nextTrack.videoId;
             nextIsNetwork = true;
         }
 
         if (nextUrl == null) {
-            // No direct source ready for crossfade. Resolve dynamically!
-            if (isNetworkAvailable()) {
-                final ExoMediaPlayer outgoingPlayer = outgoing;
-                final int finalNextIndex = nextIndex;
-                streamResolverExecutor.submit(() -> {
-                    String resolved = InnertubeResolver.resolveStreamUrl(requireContext(), nextTrack.videoId);
-                    localProgressHandler.post(() -> {
-                        if (!isAdded() || TextUtils.isEmpty(resolved)) {
-                            startOfflineFadeOutOnly(outgoingPlayer, crossfadeDurationMs);
-                            return;
-                        }
-                        executeAutomaticCrossfade(outgoingPlayer, finalNextIndex, resolved, true, crossfadeDurationMs);
-                    });
-                });
-                return;
-            } else {
-                startOfflineFadeOutOnly(outgoing, crossfadeDurationMs);
-                return;
-            }
+            startOfflineFadeOutOnly(outgoing, crossfadeDurationMs);
+            return;
         }
 
         executeAutomaticCrossfade(outgoing, nextIndex, nextUrl, nextIsNetwork, crossfadeDurationMs);
@@ -2730,7 +2717,6 @@ public class SongPlayerFragment extends Fragment {
         updateMediaSessionState();
         
         prefetchedNextVideoId = null;
-        prefetchedNextUrl = null;
         prefetchNextTrackStream();
     }
 
@@ -2767,6 +2753,65 @@ public class SongPlayerFragment extends Fragment {
 
     private void clearPlayerBackdropRequest() {
         // Backdrop now uses solid background color - no Glide request to clear
+    }
+
+    private void loadNotificationArtworkOnly(@NonNull PlayerTrack track) {
+        if (!isAdded() && getContext() == null) return;
+        String videoId = track.videoId == null ? "" : track.videoId.trim();
+        String imageUrl = track.imageUrl == null ? "" : track.imageUrl.trim();
+        if (TextUtils.isEmpty(videoId) && TextUtils.isEmpty(imageUrl)) return;
+
+        // Skip if already cached for this exact track — disk cache will serve it instantly anyway.
+        if (TextUtils.equals(videoId, mediaSessionArtworkVideoId)
+                && mediaSessionArtwork != null
+                && !mediaSessionArtwork.isRecycled()) {
+            Log.d(TAG, "loadNotificationArtworkOnly: already cached for videoId=" + videoId);
+            return;
+        }
+
+        // Primary URL: track's own imageUrl. Fallback: YouTube hqdefault thumbnail.
+        final String primaryUrl = !TextUtils.isEmpty(imageUrl) ? imageUrl
+                : "https://i.ytimg.com/vi/" + Uri.encode(videoId) + "/hqdefault.jpg";
+        final String fallbackUrl = "https://i.ytimg.com/vi/" + Uri.encode(videoId) + "/hqdefault.jpg";
+        final String notifVideoId = videoId;
+
+        // Use applicationContext so this request outlives fragment hide/show.
+        Context appCtx = getContext() != null ? getContext().getApplicationContext() : null;
+        if (appCtx == null) return;
+
+        Log.d(TAG, "loadNotificationArtworkOnly: loading for videoId=" + notifVideoId);
+
+        com.bumptech.glide.RequestManager rm = Glide.with(appCtx);
+        rm.asBitmap()
+            .load(primaryUrl)
+            .transform(SHARED_YT_CROP)
+            .format(DecodeFormat.PREFER_RGB_565)
+            .diskCacheStrategy(DiskCacheStrategy.ALL)
+            .override(256, 256)
+            .error(
+                rm.asBitmap()
+                    .load(fallbackUrl)
+                    .transform(SHARED_YT_CROP)
+                    .format(DecodeFormat.PREFER_RGB_565)
+                    .diskCacheStrategy(DiskCacheStrategy.ALL)
+                    .override(256, 256)
+            )
+            .into(new com.bumptech.glide.request.target.CustomTarget<Bitmap>() {
+                @Override
+                public void onResourceReady(@NonNull Bitmap resource,
+                        @Nullable Transition<? super Bitmap> transition) {
+                    if (!isAdded()) return;
+                    cacheMediaNotificationArtwork(notifVideoId, resource);
+                    updateMediaSessionMetadata();
+                    updateMediaNotification();
+                }
+                @Override
+                public void onLoadCleared(@Nullable android.graphics.drawable.Drawable placeholder) {}
+                @Override
+                public void onLoadFailed(@Nullable android.graphics.drawable.Drawable errorDrawable) {
+                    Log.w(TAG, "loadNotificationArtworkOnly: failed for videoId=" + notifVideoId);
+                }
+            });
     }
 
     private void loadPlayerCover(@NonNull PlayerTrack track, boolean bootstrapArtwork, int animationDirection) {
@@ -3108,6 +3153,10 @@ public class SongPlayerFragment extends Fragment {
             }
         }
 
+        // Always load artwork for notification/MediaSession regardless of player visibility.
+        // Uses applicationContext so it survives fragment hide/show cycles.
+        loadNotificationArtworkOnly(track);
+
         // ✅ Only load artwork if player is actually visible (not hidden/miniplayer mode)
         if (!isHidden()) {
             // ✅ PRIORITY 1: Load cover art (visible immediately)
@@ -3129,9 +3178,6 @@ public class SongPlayerFragment extends Fragment {
         } else {
             // Player is hidden: clear activeCoverVideoId so onHiddenChanged forces a re-bind
             activeCoverVideoId = "";
-            // Clear stale artwork so notification doesn't keep showing the previous track's image
-            clearMediaNotificationArtwork();
-            updateMediaNotification();
         }
 
         updateMediaSessionMetadata();
@@ -4284,11 +4330,17 @@ public class SongPlayerFragment extends Fragment {
                 && TextUtils.equals(track.videoId, mediaSessionArtworkVideoId)
                 && mediaSessionArtwork != null
                 && !mediaSessionArtwork.isRecycled()) {
+            Log.d(TAG, "updateMediaSessionMetadata: artwork OK videoId=" + track.videoId
+                    + " size=" + mediaSessionArtwork.getWidth() + "x" + mediaSessionArtwork.getHeight());
             metadataBuilder
                     .putBitmap(MediaMetadataCompat.METADATA_KEY_ART, mediaSessionArtwork)
                     .putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, mediaSessionArtwork)
                     .putBitmap(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON, mediaSessionArtwork);
         } else {
+            Log.w(TAG, "updateMediaSessionMetadata: artwork MISSING for videoId=" + track.videoId
+                    + " cachedVideoId=" + mediaSessionArtworkVideoId
+                    + " artworkNull=" + (mediaSessionArtwork == null)
+                    + " recycled=" + (mediaSessionArtwork != null && mediaSessionArtwork.isRecycled()));
             // Fallback to app icon if no artwork is available
             try {
                 Drawable iconDrawable = ContextCompat.getDrawable(requireContext(), R.mipmap.ic_launcher);
@@ -4373,7 +4425,11 @@ public class SongPlayerFragment extends Fragment {
                         .setShowActionsInCompactView(0, 1, 2));
 
         if (mediaSessionArtwork != null && !mediaSessionArtwork.isRecycled()) {
+            Log.d(TAG, "updateMediaNotification: setLargeIcon videoId=" + track.videoId);
             builder.setLargeIcon(mediaSessionArtwork);
+        } else {
+            Log.w(TAG, "updateMediaNotification: NO artwork for videoId=" + track.videoId
+                    + " cachedId=" + mediaSessionArtworkVideoId);
         }
 
         android.app.Notification notification = builder.build();
@@ -4534,7 +4590,6 @@ public class SongPlayerFragment extends Fragment {
         
         // CRITICAL: Clear prefetch cache because the "next" song has changed
         prefetchedNextVideoId = null;
-        prefetchedNextUrl = null;
         
         syncMiniStateWithPlaylist();
     }
@@ -5711,16 +5766,20 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void clearMediaNotificationArtwork() {
+        Log.d(TAG, "clearMediaNotificationArtwork: was=" + mediaSessionArtworkVideoId);
         mediaSessionArtwork = null;
         mediaSessionArtworkVideoId = "";
     }
 
     private void cacheMediaNotificationArtwork(@NonNull String videoId, @NonNull Bitmap source) {
         if (source.isRecycled()) {
+            Log.w(TAG, "cacheMediaNotificationArtwork: bitmap already recycled videoId=" + videoId);
             return;
         }
         mediaSessionArtwork = scaleArtworkBitmap(source, MEDIA_SESSION_ARTWORK_MAX_SIZE_PX);
         mediaSessionArtworkVideoId = videoId;
+        Log.d(TAG, "cacheMediaNotificationArtwork: cached videoId=" + videoId
+                + " size=" + source.getWidth() + "x" + source.getHeight());
     }
 
     @NonNull

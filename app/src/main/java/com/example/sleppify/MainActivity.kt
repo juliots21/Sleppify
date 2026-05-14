@@ -75,7 +75,7 @@ class MainActivity : AppCompatActivity() {
         private const val RESUME_WORK_DELAY_MS = 180L
         private const val PREFETCH_DEBOUNCE_MS = 800L
         private const val PREFETCH_MIN_INTERVAL_MS = 3 * 60 * 60 * 1000L // 3 hours
-        private const val MODULE_LOAD_OVERLAY_MIN_MS = 120L
+        private const val MODULE_LOAD_OVERLAY_MIN_MS = 200L
         private const val MODULE_CONTENT_FADE_IN_MS = 280L
         
         const val ACTION_PLAY_FROM_SEARCH = "com.example.sleppify.ACTION_PLAY_FROM_SEARCH"
@@ -88,7 +88,6 @@ class MainActivity : AppCompatActivity() {
         const val ACTION_MEDIA_NEXT = "com.example.sleppify.action.NEXT"
         const val ACTION_MEDIA_PREV = "com.example.sleppify.action.PREV"
         private const val REQUEST_CODE_RECORD_AUDIO = 4107
-        private const val AMOLED_APPLY_DEBOUNCE_MS = 1500L
 
         @Volatile
         private var activeInstance: WeakReference<MainActivity>? = null
@@ -164,11 +163,6 @@ class MainActivity : AppCompatActivity() {
     private var headerSettingsTypeface: Typeface? = null
     private var audioManager: AudioManager? = null
 
-    // AMOLED theme change optimization - debouncing state
-    private var lastAmoledApplyTimeMs = 0L
-    private var lastAmoledEnabledState = false
-    private var amoledApplyPending = false
-
     private val outputDeviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>?) {
             syncAudioProfile(true)
@@ -214,10 +208,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         activeInstance = WeakReference(this)
-        applyThemeModeFromSettings()
-        WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(R.layout.activity_main)
-        applySystemBarsStyle()
 
         initViews()
         audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
@@ -239,32 +230,16 @@ class MainActivity : AppCompatActivity() {
         val shouldShowLoginGate = shouldShowLoginGateAtStartup()
 
         if (!shouldShowLoginGate) {
-            val prefs = getSharedPreferences(PREFS_BOOTSTRAP, Context.MODE_PRIVATE)
-            val lastModuleId = prefs.getInt(PREF_LAST_MAIN_MODULE, R.id.nav_music)
-
-            if (savedInstanceState == null) {
-                // Siempre iniciar con music como módulo por defecto
-                val targetModuleId = R.id.nav_music
-                suppressNavListener = true
-                bottomNav.selectedItemId = targetModuleId
-                suppressNavListener = false
-                currentMainNavItemId = targetModuleId
-                switchToMainModule(targetModuleId)
-            } else {
-                val selectedId = bottomNav.selectedItemId
-                currentMainNavItemId = if (selectedId == R.id.nav_principal || selectedId == R.id.nav_music) selectedId else R.id.nav_music
-                suppressNavListener = true
-                bottomNav.selectedItemId = currentMainNavItemId
-                suppressNavListener = false
-                if (!switchToMainModule(currentMainNavItemId)) {
-                    // Fallback a music si hay error
-                    suppressNavListener = true
-                    bottomNav.selectedItemId = R.id.nav_music
-                    suppressNavListener = false
-                    currentMainNavItemId = R.id.nav_music
-                    switchToMainModule(R.id.nav_music)
-                }
-            }
+            // Always start on the music/library module regardless of what was last open.
+            // This covers both cold-start (savedInstanceState == null) and activity
+            // recreation triggered by AMOLED theme changes (savedInstanceState != null),
+            // where Android restores bottomNav to the previously-selected item (e.g.
+            // nav_principal) which would cause the wrong module to appear after the overlay.
+            suppressNavListener = true
+            bottomNav.selectedItemId = R.id.nav_music
+            suppressNavListener = false
+            currentMainNavItemId = R.id.nav_music
+            switchToMainModule(R.id.nav_music)
             showMainShell()
         } else {
             showLoginGate()
@@ -316,10 +291,7 @@ class MainActivity : AppCompatActivity() {
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            val density = resources.displayMetrics.density
-            val extraPadding = (8 * density).toInt()
-
-            topAppBar.setPadding(topAppBar.paddingLeft, systemBars.top + extraPadding, topAppBar.paddingRight, topAppBar.paddingBottom)
+            topAppBar.setPadding(topAppBar.paddingLeft, systemBars.top, topAppBar.paddingRight, topAppBar.paddingBottom)
             
             if (bottomNav.paddingBottom != systemBars.bottom) {
                 bottomNav.setPadding(systemBars.left, 0, systemBars.right, systemBars.bottom)
@@ -348,6 +320,11 @@ class MainActivity : AppCompatActivity() {
                 return@setOnItemSelectedListener true
             }
             if (inSettings) exitSettings()
+            if (isSearchFragmentVisible()) {
+                currentMainNavItemId = item.itemId
+                closeSearchFragment()
+                return@setOnItemSelectedListener true
+            }
             switchToMainModule(item.itemId)
         }
         cloudSyncManager.setSyncStateListener(this::setSyncOverlayVisible)
@@ -392,10 +369,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onRestoreInstanceState(savedInstanceState: Bundle) {
         super.onRestoreInstanceState(savedInstanceState)
-        val savedNavId = savedInstanceState.getInt("current_main_nav_item_id", View.NO_ID)
-        if (savedNavId != View.NO_ID) {
-            currentMainNavItemId = savedNavId
-        }
+        // Always land on music — do not restore whichever module was last open.
+        // (See matching policy in onCreate.)
+        currentMainNavItemId = R.id.nav_music
         inSettings = savedInstanceState.getBoolean("in_settings", false)
     }
 
@@ -455,7 +431,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        applyThemeModeFromSettings()
         applySystemBarsStyle()
         lifecycleScope.launch {
             delay(RESUME_WORK_DELAY_MS)
@@ -513,72 +488,6 @@ class MainActivity : AppCompatActivity() {
         showMainShell()
         // AI prefetch deliberately disabled here: the only allowed triggers are
         // pull-to-refresh in the agenda and task creation (see WeeklySchedulerFragment).
-    }
-
-    private fun applyThemeModeFromSettings() {
-        val settingsPrefs = getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, MODE_PRIVATE)
-        val amoledEnabled = settingsPrefs.getBoolean(CloudSyncManager.KEY_AMOLED_MODE_ENABLED, false)
-        
-        // Debouncing: avoid redundant theme changes
-        val now = System.currentTimeMillis()
-        
-        // No change needed if the state is identical and we applied recently
-        if (amoledEnabled == lastAmoledEnabledState && (now - lastAmoledApplyTimeMs) < AMOLED_APPLY_DEBOUNCE_MS) {
-            Log.d("MainActivity", "AMOLED: Skipping redundant change (state unchanged, within debounce window)")
-            return
-        }
-        
-        // If we're already pending, don't queue another change
-        if (amoledApplyPending && amoledEnabled == lastAmoledEnabledState) {
-            Log.d("MainActivity", "AMOLED: Skipping - apply already pending")
-            return
-        }
-        
-        // Check if we actually need to change the theme
-        val targetMode = if (amoledEnabled) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO
-        if (AppCompatDelegate.getDefaultNightMode() == targetMode) {
-            Log.d("MainActivity", "AMOLED: No change needed (mode already $targetMode)")
-            lastAmoledEnabledState = amoledEnabled
-            lastAmoledApplyTimeMs = now
-            amoledApplyPending = false
-            return
-        }
-        
-        // Mark as pending to avoid multiple rapid changes
-        amoledApplyPending = true
-        lastAmoledEnabledState = amoledEnabled
-        lastAmoledApplyTimeMs = now
-        
-        val applyStartTime = System.currentTimeMillis()
-        Log.d("MainActivity", "AMOLED: Starting theme change to ${if (amoledEnabled) "DARK" else "LIGHT"}")
-        
-        // Move theme change to background thread to avoid blocking UI
-        lifecycleScope.launch(Dispatchers.Main) {
-            // Small delay to allow UI to render first
-            delay(50)
-            
-            // Execute on IO thread to prevent UI blocking
-            withContext(Dispatchers.IO) {
-                Thread.sleep(10) // Minimal IO marker
-            }
-            
-            // Apply the theme change back on Main thread (required by AppCompat)
-            val applyMid = System.currentTimeMillis()
-            AppCompatDelegate.setDefaultNightMode(targetMode)
-            val applyEnd = System.currentTimeMillis()
-            
-            amoledApplyPending = false
-            
-            // Log performance metrics
-            val totalTime = applyEnd - applyStartTime
-            val applyTime = applyEnd - applyMid
-            Log.d("MainActivity", "AMOLED: Theme applied in ${totalTime}ms (actual apply: ${applyTime}ms) - enabled=$amoledEnabled")
-            
-            // Warn if took too long
-            if (totalTime > 200) {
-                Log.w("MainActivity", "AMOLED: Theme change took longer than expected: ${totalTime}ms")
-            }
-        }
     }
 
     @Suppress("DEPRECATION")
@@ -801,46 +710,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun applyHydratedUserState(onSuccess: Runnable?) {
         tvLoginStatus?.text = "Sincronizando ajustes..."
-        val previousNightMode = AppCompatDelegate.getDefaultNightMode()
-        
-        // Take a snapshot of current fragment states before theme change
-        val playingFragmentTag = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER)?.takeIf { it.isAdded && !it.isHidden }?.let { TAG_SONG_PLAYER }
-        val activeModuleId = currentMainNavItemId
-        
-        applyThemeModeFromSettings()
-        val amoledChanged = previousNightMode != AppCompatDelegate.getDefaultNightMode()
-
-        if (amoledChanged) tvLoginStatus?.text = "Aplicando modo AMOLED..."
 
         val finalize = {
             if (!isFinishing && !isDestroyed) {
                 notifyHydrationCompleted()
                 syncAudioEffectsServiceFromPreferences(true)
-                
-                // Restore fragment visibility if needed
-                if (!playingFragmentTag.isNullOrEmpty()) {
-                    supportFragmentManager.findFragmentByTag(playingFragmentTag)?.let {
-                        if (!it.isAdded) {
-                            Log.d("MainActivity", "Re-attaching $playingFragmentTag after theme change")
-                            supportFragmentManager.beginTransaction()
-                                .setReorderingAllowed(true)
-                                .show(it)
-                                .commit()
-                        }
-                    }
-                }
-                
-                // AI prefetch intentionally removed here to avoid burning quota on sync.
                 onSuccess?.run()
             }
         }
 
-        if (amoledChanged) {
-            // Longer delay for theme change to complete smoothly
-            lifecycleScope.launch { delay(250L); finalize() }
-        } else {
-            finalize()
-        }
+        finalize()
     }
 
     private fun notifyHydrationCompleted() {
@@ -937,62 +816,59 @@ class MainActivity : AppCompatActivity() {
         if (bottomNav.selectedItemId == R.id.nav_music) markStreamingEntryAsLibrary()
 
         inSettings = true
-        showModuleLoadingOverlay()
-        // fragmentContainer.alpha = 0f (Removed to keep content visible)
-
         val target = settingsFragment ?: SettingsFragment().also { settingsFragment = it }
         val isNew = !target.isAdded
-        
-        supportFragmentManager.beginTransaction().apply {
-            setReorderingAllowed(true)
-            playlistDetailFragment = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL)
-            songPlayerFragment = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER)
-            val current = getMainModuleFragment(currentMainNavItemId)
-            
-            hideIfVisible(this, current, target)
-            hideIfVisible(this, playlistDetailFragment, target)
-            hideIfVisible(this, songPlayerFragment, target)
-            
-            if (target.isAdded) show(target) else add(R.id.fragmentContainer, target, TAG_MODULE_SETTINGS)
-            setMaxLifecycle(target, Lifecycle.State.RESUMED)
-            commit()
-        }
-
-        configureHeaderActionForSettings()
-        setSolidNavigationBar(true)
-        bottomNav.visibility = View.GONE
-        lifecycleScope.launch {
-            delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
-            revealModuleContent()
+        showModuleLoadingOverlay()
+        fragmentContainer.post {
+            if (isFinishing || isDestroyed) return@post
+            supportFragmentManager.beginTransaction().apply {
+                setReorderingAllowed(true)
+                playlistDetailFragment = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL)
+                songPlayerFragment = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER)
+                val current = getMainModuleFragment(currentMainNavItemId)
+                hideIfVisible(this, current, target)
+                hideIfVisible(this, playlistDetailFragment, target)
+                hideIfVisible(this, songPlayerFragment, target)
+                if (target.isAdded) show(target) else add(R.id.fragmentContainer, target, TAG_MODULE_SETTINGS)
+                setMaxLifecycle(target, Lifecycle.State.RESUMED)
+                commit()
+            }
+            configureHeaderActionForSettings()
+            setSolidNavigationBar(true)
+            bottomNav.visibility = View.GONE
+            lifecycleScope.launch {
+                delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
+                revealModuleContent()
+            }
         }
     }
 
     private fun exitSettings() {
         if (!inSettings) return
         inSettings = false
-        showModuleLoadingOverlay()
-
         val selectedId = bottomNav.selectedItemId
         val target = getMainModuleFragment(selectedId) ?: getOrCreateMainModuleFragment(selectedId)
         val isNew = target?.isAdded == false
-
-        supportFragmentManager.beginTransaction().apply {
-            setReorderingAllowed(true)
-            settingsFragment?.let { if (it.isAdded) { hide(it); setMaxLifecycle(it, Lifecycle.State.STARTED) } }
-            target?.let { 
-                if (it.isAdded) show(it) else moduleTagForItem(selectedId)?.let { tag -> add(R.id.fragmentContainer, it, tag) }
-                setMaxLifecycle(it, Lifecycle.State.RESUMED)
+        showModuleLoadingOverlay()
+        fragmentContainer.post {
+            if (isFinishing || isDestroyed) return@post
+            supportFragmentManager.beginTransaction().apply {
+                setReorderingAllowed(true)
+                settingsFragment?.let { if (it.isAdded) { hide(it); setMaxLifecycle(it, Lifecycle.State.STARTED) } }
+                target?.let {
+                    if (it.isAdded) show(it) else moduleTagForItem(selectedId)?.let { tag -> add(R.id.fragmentContainer, it, tag) }
+                    setMaxLifecycle(it, Lifecycle.State.RESUMED)
+                }
+                commit()
             }
-            commit()
-        }
-
-        configureHeaderActionForMainModules()
-        setSolidNavigationBar(false)
-        bottomNav.visibility = View.VISIBLE
-        updateHeaderTitleForModule(selectedId)
-        lifecycleScope.launch {
-            delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
-            revealModuleContent()
+            configureHeaderActionForMainModules()
+            setSolidNavigationBar(false)
+            bottomNav.visibility = View.VISIBLE
+            updateHeaderTitleForModule(selectedId)
+            lifecycleScope.launch {
+                delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
+                revealModuleContent()
+            }
         }
     }
 
@@ -1000,135 +876,127 @@ class MainActivity : AppCompatActivity() {
         if (isNavigating) return
         inEqualizerFromPlayer = true
         inEqualizerFromSettings = false
-        showModuleLoadingOverlay()
-
         val target = equalizerFragment ?: EqualizerFragment().also { equalizerFragment = it }
         val isNew = !target.isAdded
-
-        supportFragmentManager.beginTransaction().apply {
-            setReorderingAllowed(true)
-            val current = getMainModuleFragment(currentMainNavItemId)
-            hideIfVisible(this, current, target)
-            hideIfVisible(this, supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL), target)
-            hideIfVisible(this, supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER), target)
-            hideIfVisible(this, settingsFragment, target)
-            hideIfVisible(this, searchFragment, target)
-            if (target.isAdded) show(target) else add(R.id.fragmentContainer, target, TAG_MODULE_EQUALIZER)
-            setMaxLifecycle(target, Lifecycle.State.RESUMED)
-            commit()
-        }
-
-        // Header: back arrow that returns to current music module (not settings)
-        topAppBar.visibility = View.VISIBLE
-        btnProfilePhoto.visibility = View.GONE
-        btnCamera.visibility = View.GONE
-        btnHeaderSearch.visibility = View.GONE
-        tvModuleTitle.apply {
-            text = "Ecualizador"
-            isAllCaps = false
-            letterSpacing = 0f
-            typeface = resolveHeaderSettingsTypeface()
-            setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_arrow_back, 0, 0, 0)
-            compoundDrawablePadding = (10 * resources.displayMetrics.density).toInt()
-            setOnClickListener { exitEqualizerToMusic() }
-        }
-
-        setSolidNavigationBar(true)
-        bottomNav.visibility = View.GONE
-
-        lifecycleScope.launch {
-            delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
-            revealModuleContent()
+        showModuleLoadingOverlay()
+        fragmentContainer.post {
+            if (isFinishing || isDestroyed) return@post
+            supportFragmentManager.beginTransaction().apply {
+                setReorderingAllowed(true)
+                val current = getMainModuleFragment(currentMainNavItemId)
+                hideIfVisible(this, current, target)
+                hideIfVisible(this, supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL), target)
+                hideIfVisible(this, supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER), target)
+                hideIfVisible(this, settingsFragment, target)
+                hideIfVisible(this, searchFragment, target)
+                if (target.isAdded) show(target) else add(R.id.fragmentContainer, target, TAG_MODULE_EQUALIZER)
+                setMaxLifecycle(target, Lifecycle.State.RESUMED)
+                commit()
+            }
+            topAppBar.visibility = View.VISIBLE
+            btnProfilePhoto.visibility = View.GONE
+            btnCamera.visibility = View.GONE
+            btnHeaderSearch.visibility = View.GONE
+            tvModuleTitle.apply {
+                text = "Ecualizador"
+                isAllCaps = false
+                letterSpacing = 0f
+                typeface = resolveHeaderSettingsTypeface()
+                setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_arrow_back, 0, 0, 0)
+                compoundDrawablePadding = (10 * resources.displayMetrics.density).toInt()
+                setOnClickListener { exitEqualizerToMusic() }
+            }
+            setSolidNavigationBar(true)
+            bottomNav.visibility = View.GONE
+            lifecycleScope.launch {
+                delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
+                revealModuleContent()
+            }
         }
     }
 
     private fun exitEqualizerToMusic() {
         if (!inEqualizerFromPlayer) return
         inEqualizerFromPlayer = false
-        showModuleLoadingOverlay()
         val current = getMainModuleFragment(currentMainNavItemId)
-
-        supportFragmentManager.beginTransaction().apply {
-            setReorderingAllowed(true)
-            equalizerFragment?.let { if (it.isAdded) { hide(it); setMaxLifecycle(it, Lifecycle.State.STARTED) } }
-            if (current != null && current.isAdded) show(current)
-            setMaxLifecycle(current ?: return@apply, Lifecycle.State.RESUMED)
-            commit()
-        }
-
-        if (!isSearchFragmentVisible() && !isPlaylistDetailVisible()) {
-            topAppBar.visibility = View.VISIBLE
-        }
-        configureHeaderActionForMainModules()
-        setSolidNavigationBar(false)
-        bottomNav.visibility = View.VISIBLE
-
-        lifecycleScope.launch {
-            delay(MODULE_LOAD_OVERLAY_MIN_MS)
-            revealModuleContent()
+        showModuleLoadingOverlay()
+        fragmentContainer.post {
+            if (isFinishing || isDestroyed) return@post
+            supportFragmentManager.beginTransaction().apply {
+                setReorderingAllowed(true)
+                equalizerFragment?.let { if (it.isAdded) { hide(it); setMaxLifecycle(it, Lifecycle.State.STARTED) } }
+                if (current != null && current.isAdded) show(current)
+                setMaxLifecycle(current ?: return@apply, Lifecycle.State.RESUMED)
+                commit()
+            }
+            if (!isSearchFragmentVisible() && !isPlaylistDetailVisible()) {
+                topAppBar.visibility = View.VISIBLE
+            }
+            configureHeaderActionForMainModules()
+            setSolidNavigationBar(false)
+            bottomNav.visibility = View.VISIBLE
+            lifecycleScope.launch {
+                delay(MODULE_LOAD_OVERLAY_MIN_MS)
+                revealModuleContent()
+            }
         }
     }
 
     fun openEqualizerFromSettings() {
         if (isNavigating) return
         inEqualizerFromSettings = true
-        showModuleLoadingOverlay()
-
         val target = equalizerFragment ?: EqualizerFragment().also { equalizerFragment = it }
         val isNew = !target.isAdded
-
-        supportFragmentManager.beginTransaction().apply {
-            setReorderingAllowed(true)
-            playlistDetailFragment = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL)
-            songPlayerFragment = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER)
-            val current = getMainModuleFragment(currentMainNavItemId)
-
-            hideIfVisible(this, current, target)
-            hideIfVisible(this, playlistDetailFragment, target)
-            hideIfVisible(this, songPlayerFragment, target)
-            hideIfVisible(this, settingsFragment, target)
-
-            if (target.isAdded) show(target) else add(R.id.fragmentContainer, target, TAG_MODULE_EQUALIZER)
-            setMaxLifecycle(target, Lifecycle.State.RESUMED)
-            commit()
-        }
-
-        topAppBar.visibility = View.VISIBLE
-        configureHeaderActionForEqualizer()
-        setSolidNavigationBar(true)
-        bottomNav.visibility = View.GONE
-
-        lifecycleScope.launch {
-            delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
-            revealModuleContent()
+        showModuleLoadingOverlay()
+        fragmentContainer.post {
+            if (isFinishing || isDestroyed) return@post
+            supportFragmentManager.beginTransaction().apply {
+                setReorderingAllowed(true)
+                playlistDetailFragment = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL)
+                songPlayerFragment = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER)
+                val current = getMainModuleFragment(currentMainNavItemId)
+                hideIfVisible(this, current, target)
+                hideIfVisible(this, playlistDetailFragment, target)
+                hideIfVisible(this, songPlayerFragment, target)
+                hideIfVisible(this, settingsFragment, target)
+                if (target.isAdded) show(target) else add(R.id.fragmentContainer, target, TAG_MODULE_EQUALIZER)
+                setMaxLifecycle(target, Lifecycle.State.RESUMED)
+                commit()
+            }
+            topAppBar.visibility = View.VISIBLE
+            configureHeaderActionForEqualizer()
+            setSolidNavigationBar(true)
+            bottomNav.visibility = View.GONE
+            lifecycleScope.launch {
+                delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
+                revealModuleContent()
+            }
         }
     }
 
     private fun exitEqualizerToSettings() {
         if (!inEqualizerFromSettings) return
         inEqualizerFromSettings = false
-        showModuleLoadingOverlay()
-
         val target = settingsFragment ?: SettingsFragment().also { settingsFragment = it }
         val isNew = !target.isAdded
-
-        supportFragmentManager.beginTransaction().apply {
-            setReorderingAllowed(true)
-            equalizerFragment?.let { if (it.isAdded) { hide(it); setMaxLifecycle(it, Lifecycle.State.STARTED) } }
-
-            if (target.isAdded) show(target) else add(R.id.fragmentContainer, target, TAG_MODULE_SETTINGS)
-            setMaxLifecycle(target, Lifecycle.State.RESUMED)
-            commit()
-        }
-
-        topAppBar.visibility = View.VISIBLE
-        configureHeaderActionForSettings()
-        setSolidNavigationBar(true)
-        bottomNav.visibility = View.GONE
-
-        lifecycleScope.launch {
-            delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
-            revealModuleContent()
+        showModuleLoadingOverlay()
+        fragmentContainer.post {
+            if (isFinishing || isDestroyed) return@post
+            supportFragmentManager.beginTransaction().apply {
+                setReorderingAllowed(true)
+                equalizerFragment?.let { if (it.isAdded) { hide(it); setMaxLifecycle(it, Lifecycle.State.STARTED) } }
+                if (target.isAdded) show(target) else add(R.id.fragmentContainer, target, TAG_MODULE_SETTINGS)
+                setMaxLifecycle(target, Lifecycle.State.RESUMED)
+                commit()
+            }
+            topAppBar.visibility = View.VISIBLE
+            configureHeaderActionForSettings()
+            setSolidNavigationBar(true)
+            bottomNav.visibility = View.GONE
+            lifecycleScope.launch {
+                delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
+                revealModuleContent()
+            }
         }
     }
 
@@ -1151,41 +1019,38 @@ class MainActivity : AppCompatActivity() {
     fun openScannerFromSettings() {
         if (isNavigating) return
         inScannerFromSettings = true
-
-        scannerLoadingOverlay.alpha = 1f
-        scannerLoadingOverlay.visibility = View.VISIBLE
-        configureHeaderActionForScanner()
-        setSolidNavigationBar(true)
-        bottomNav.visibility = View.GONE
-
         val target = scannerFragment ?: ScannerFragment().also { scannerFragment = it }
         val isNew = !target.isAdded
-
-        supportFragmentManager.beginTransaction().apply {
-            setReorderingAllowed(true)
-            playlistDetailFragment = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL)
-            songPlayerFragment = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER)
-            val current = getMainModuleFragment(currentMainNavItemId)
-
-            hideIfVisible(this, current, target)
-            hideIfVisible(this, playlistDetailFragment, target)
-            hideIfVisible(this, songPlayerFragment, target)
-            hideIfVisible(this, settingsFragment, target)
-            hideIfVisible(this, equalizerFragment, target)
-
-            if (target.isAdded) show(target) else add(R.id.fragmentContainer, target, TAG_MODULE_SCANNER)
-            setMaxLifecycle(target, Lifecycle.State.RESUMED)
-            commit()
-        }
-
-        lifecycleScope.launch {
-            delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 300 else MODULE_LOAD_OVERLAY_MIN_MS + 100)
-            if (isFinishing || isDestroyed) return@launch
-            scannerLoadingOverlay.animate()
-                .alpha(0f)
-                .setDuration(150L)
-                .withEndAction { scannerLoadingOverlay.visibility = View.GONE }
-                .start()
+        scannerLoadingOverlay.alpha = 1f
+        scannerLoadingOverlay.visibility = View.VISIBLE
+        fragmentContainer.post {
+            if (isFinishing || isDestroyed) return@post
+            configureHeaderActionForScanner()
+            setSolidNavigationBar(true)
+            bottomNav.visibility = View.GONE
+            supportFragmentManager.beginTransaction().apply {
+                setReorderingAllowed(true)
+                playlistDetailFragment = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL)
+                songPlayerFragment = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER)
+                val current = getMainModuleFragment(currentMainNavItemId)
+                hideIfVisible(this, current, target)
+                hideIfVisible(this, playlistDetailFragment, target)
+                hideIfVisible(this, songPlayerFragment, target)
+                hideIfVisible(this, settingsFragment, target)
+                hideIfVisible(this, equalizerFragment, target)
+                if (target.isAdded) show(target) else add(R.id.fragmentContainer, target, TAG_MODULE_SCANNER)
+                setMaxLifecycle(target, Lifecycle.State.RESUMED)
+                commit()
+            }
+            lifecycleScope.launch {
+                delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 300 else MODULE_LOAD_OVERLAY_MIN_MS + 100)
+                if (isFinishing || isDestroyed) return@launch
+                scannerLoadingOverlay.animate()
+                    .alpha(0f)
+                    .setDuration(150L)
+                    .withEndAction { scannerLoadingOverlay.visibility = View.GONE }
+                    .start()
+            }
         }
     }
 
@@ -1205,22 +1070,22 @@ class MainActivity : AppCompatActivity() {
         val tag = if (returnToEqualizer) TAG_MODULE_EQUALIZER else TAG_MODULE_SETTINGS
         val isNew = !target.isAdded
 
-        supportFragmentManager.beginTransaction().apply {
-            setReorderingAllowed(true)
-            scannerFragment?.let { if (it.isAdded) { hide(it); setMaxLifecycle(it, Lifecycle.State.STARTED) } }
-
-            if (target.isAdded) show(target) else add(R.id.fragmentContainer, target, tag)
-            setMaxLifecycle(target, Lifecycle.State.RESUMED)
-            commit()
-        }
-
-        if (returnToEqualizer) configureHeaderActionForEqualizer() else configureHeaderActionForSettings()
-        bottomNav.visibility = View.GONE
-        setSolidNavigationBar(true)
-
-        lifecycleScope.launch {
-            delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
-            revealModuleContent()
+        fragmentContainer.post {
+            if (isFinishing || isDestroyed) return@post
+            supportFragmentManager.beginTransaction().apply {
+                setReorderingAllowed(true)
+                scannerFragment?.let { if (it.isAdded) { hide(it); setMaxLifecycle(it, Lifecycle.State.STARTED) } }
+                if (target.isAdded) show(target) else add(R.id.fragmentContainer, target, tag)
+                setMaxLifecycle(target, Lifecycle.State.RESUMED)
+                commit()
+            }
+            if (returnToEqualizer) configureHeaderActionForEqualizer() else configureHeaderActionForSettings()
+            bottomNav.visibility = View.GONE
+            setSolidNavigationBar(true)
+            lifecycleScope.launch {
+                delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
+                revealModuleContent()
+            }
         }
     }
 
@@ -1257,10 +1122,8 @@ class MainActivity : AppCompatActivity() {
 
     fun openSearchFragment() {
         if (isFinishing || isDestroyed) return
-        // Do NOT use the activity-level overlay here — it is constrained to the same bounds as
-        // fragmentContainer and would cover the SearchFragment's mini player.
-        // The SearchFragment shows its own scoped moduleLoadingOverlay that respects llMiniPlayer.
-        revealModuleContent()
+        // Show activity overlay briefly; SearchFragment has its own scoped overlay too.
+        showModuleLoadingOverlay()
         suppressNavListener = true
         bottomNav.selectedItemId = R.id.nav_search
         suppressNavListener = false
@@ -1287,6 +1150,12 @@ class MainActivity : AppCompatActivity() {
         }
 
         topAppBar.visibility = View.GONE
+        
+        val isNew = !target.isAdded || target.isHidden
+        lifecycleScope.launch {
+            delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
+            revealModuleContent()
+        }
     }
 
     fun closeSearchFragment() {
@@ -1299,6 +1168,14 @@ class MainActivity : AppCompatActivity() {
         val target = getMainModuleFragment(selectedId) ?: getOrCreateMainModuleFragment(selectedId)
         val isNew = target?.isAdded == false
 
+        // Hide SearchFragment FIRST so isHidden=true before popBackStack triggers onResume,
+        // preventing SearchFragment.onResume from hiding the topAppBar on the returning module.
+        supportFragmentManager.beginTransaction().apply {
+            setReorderingAllowed(true)
+            searchFragment?.let { if (it.isAdded) { hide(it); setMaxLifecycle(it, Lifecycle.State.STARTED) } }
+            commitNow()
+        }
+
         supportFragmentManager.popBackStackImmediate(TAG_MODULE_SEARCH, androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE)
 
         val playlistDetail = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL)
@@ -1306,7 +1183,6 @@ class MainActivity : AppCompatActivity() {
 
         supportFragmentManager.beginTransaction().apply {
             setReorderingAllowed(true)
-            searchFragment?.let { if (it.isAdded) { hide(it); setMaxLifecycle(it, Lifecycle.State.STARTED) } }
             
             if (wasPlaylistDetailActive) {
                 show(playlistDetail!!)
@@ -1323,9 +1199,14 @@ class MainActivity : AppCompatActivity() {
         if (wasPlaylistDetailActive) {
             topAppBar.visibility = View.GONE
         } else {
+            // Always ensure header is visible when returning to main modules from search
             topAppBar.visibility = View.VISIBLE
             configureHeaderActionForMainModules()
             updateHeaderTitleForModule(selectedId)
+        }
+        // Defensive: ensure header is visible if we're in a valid main module state
+        if (!wasPlaylistDetailActive && selectedId != View.NO_ID) {
+            topAppBar.visibility = View.VISIBLE
         }
         
         lifecycleScope.launch {
@@ -1392,42 +1273,45 @@ class MainActivity : AppCompatActivity() {
     private fun switchToMainModule(itemId: Int): Boolean {
         if (isNavigating) return true
         isNavigating = true
-        try {
-            // Reset stale sub-navigation flags
-            inEqualizerFromPlayer = false
-            inEqualizerFromSettings = false
-            inScannerFromSettings = false
 
-            supportFragmentManager.executePendingTransactions()
-            setContainerOverlayMode(false)
-            val tag = moduleTagForItem(itemId) ?: return false
-            val target = supportFragmentManager.findFragmentByTag(tag) ?: getOrCreateMainModuleFragment(itemId) ?: return false
+        // Reset stale sub-navigation flags
+        inEqualizerFromPlayer = false
+        inEqualizerFromSettings = false
+        inScannerFromSettings = false
 
-            if (currentMainNavItemId == R.id.nav_music && itemId != R.id.nav_music) markStreamingEntryAsLibrary()
+        supportFragmentManager.executePendingTransactions()
+        setContainerOverlayMode(false)
+        val tag = moduleTagForItem(itemId) ?: run { isNavigating = false; return false }
+        val target = supportFragmentManager.findFragmentByTag(tag)
+            ?: getOrCreateMainModuleFragment(itemId)
+            ?: run { isNavigating = false; return false }
 
-            if (bottomNav.selectedItemId != itemId) {
-                suppressNavListener = true
-                bottomNav.selectedItemId = itemId
-                suppressNavListener = false
-            }
+        if (currentMainNavItemId == R.id.nav_music && itemId != R.id.nav_music) markStreamingEntryAsLibrary()
 
-            val isTrulySwitching = currentMainNavItemId != itemId || !target.isAdded
-            if (!isTrulySwitching && !inSettings) {
-                updateHeaderTitleForModule(itemId)
-                return true
-            }
+        if (bottomNav.selectedItemId != itemId) {
+            suppressNavListener = true
+            bottomNav.selectedItemId = itemId
+            suppressNavListener = false
+        }
 
-            val isNew = !target.isAdded
-            showModuleLoadingOverlay()
-            // fragmentContainer.alpha = 0f (Removed to keep content visible)
+        val isTrulySwitching = currentMainNavItemId != itemId || !target.isAdded || target.isHidden
+        if (!isTrulySwitching && !inSettings) {
+            updateHeaderTitleForModule(itemId)
+            isNavigating = false
+            return true
+        }
 
+        val isNew = !target.isAdded
+        // Show overlay immediately — post the heavy fragment work so this frame
+        // is rendered before the FragmentManager blocks the UI thread.
+        showModuleLoadingOverlay()
+        fragmentContainer.post {
+            if (isFinishing || isDestroyed) { isNavigating = false; return@post }
             supportFragmentManager.beginTransaction().apply {
                 setReorderingAllowed(true)
                 playlistDetailFragment = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL)
                 songPlayerFragment = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER)
 
-                // Hide ALL main modules (not just current) to handle activity restoration
-                // where the FragmentManager may have restored multiple fragments as visible
                 hideIfVisible(this, principalFragment, target)
                 hideIfVisible(this, musicFragment, target)
                 hideIfVisible(this, playlistDetailFragment, target)
@@ -1436,17 +1320,18 @@ class MainActivity : AppCompatActivity() {
                 hideIfVisible(this, equalizerFragment, target)
                 hideIfVisible(this, scannerFragment, target)
                 hideIfVisible(this, searchFragment, target)
-                
+
                 if (songPlayerFragment != null && songPlayerFragment!!.isAdded && !songPlayerFragment!!.isHidden) {
                     hide(songPlayerFragment!!)
                 }
-                
+
                 if (target.isAdded) show(target) else add(R.id.fragmentContainer, target, tag)
                 setMaxLifecycle(target, Lifecycle.State.RESUMED)
-                commit()
+                commitAllowingStateLoss()
             }
 
             currentMainNavItemId = itemId
+            isNavigating = false
 
             getSharedPreferences(PREFS_BOOTSTRAP, Context.MODE_PRIVATE)
                 .edit()
@@ -1464,10 +1349,8 @@ class MainActivity : AppCompatActivity() {
                 delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
                 revealModuleContent()
             }
-            return true
-        } finally {
-            isNavigating = false
         }
+        return true
     }
 
     fun showModuleLoadingOverlay() {
@@ -1477,10 +1360,12 @@ class MainActivity : AppCompatActivity() {
 
     fun revealModuleContent() {
         if (isFinishing || isDestroyed) return
-        fragmentContainer.animate().cancel()
         moduleLoadingOverlay.animate().cancel()
-        moduleLoadingOverlay.visibility = View.GONE
-        fragmentContainer.animate().alpha(1f).setDuration(280L).start()
+        moduleLoadingOverlay.animate()
+            .alpha(0f)
+            .setDuration(200L)
+            .withEndAction { moduleLoadingOverlay.visibility = View.GONE }
+            .start()
     }
 
     private fun markStreamingEntryAsLibrary() {
@@ -1601,6 +1486,10 @@ class MainActivity : AppCompatActivity() {
             addToBackStack(TAG_PLAYLIST_DETAIL)
             commit()
         }
+    }
+
+    fun hideTopAppBarForSearch() {
+        topAppBar.visibility = View.GONE
     }
 
     fun hideTopAppBarForPlaylistDetail() {

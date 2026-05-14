@@ -3,6 +3,7 @@ package com.example.sleppify
 import android.app.Application
 import android.content.Intent
 import android.util.Log
+import androidx.appcompat.app.AppCompatDelegate
 import java.util.concurrent.Executors
 
 class SleppifyApp : Application() {
@@ -11,6 +12,7 @@ class SleppifyApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
         // Pre-warm Glide
         try {
             com.bumptech.glide.Glide.get(this)
@@ -22,6 +24,9 @@ class SleppifyApp : Application() {
 
         // Pre-initialize ExoPlayer to reduce playback startup latency
         ExoPlayerManager.initialize(this)
+
+        // Initialize WebView-based stream resolver (loads music.youtube.com in background)
+        WebViewStreamResolver.initialize(this)
 
         // Pre-initialize NewPipeExtractor on a background thread so the first
         // stream resolution doesn't pay the cold-start penalty (~500-800ms).

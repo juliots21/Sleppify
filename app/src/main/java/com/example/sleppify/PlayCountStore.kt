@@ -117,6 +117,23 @@ object PlayCountStore {
     }
 
     @JvmStatic
+    fun getPlaylistTrackImages(context: Context, playlistId: String, limit: Int): List<String> {
+        if (playlistId.isEmpty()) return emptyList()
+        val entries = loadEntriesMutable(context.applicationContext)
+        val seen = mutableSetOf<String>()
+        val urls = mutableListOf<String>()
+        entries.filter { it.playlistId == playlistId && it.imageUrl.isNotEmpty() }
+            .sortedByDescending { it.count }
+            .forEach { e ->
+                if (seen.add(e.imageUrl)) {
+                    urls.add(e.imageUrl)
+                }
+                if (urls.size >= limit) return@forEach
+            }
+        return urls
+    }
+
+    @JvmStatic
     fun exportToJson(context: Context): JSONArray {
         val entries = loadEntriesMutable(context.applicationContext)
         val arr = JSONArray()

@@ -29,7 +29,7 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.LinearSnapHelper
+
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.engine.DiskCacheStrategy
@@ -324,14 +324,11 @@ class SearchFragment : Fragment() {
                 etSearchQuery.setSelection(recentSearch.query.length)
             }
         }
-        
-        // Snap helper para centrar items
-        LinearSnapHelper().attachToRecyclerView(rvRecentSearchImages)
     }
 
     private fun updateRecentSearchImages() {
         val adapter = rvRecentSearchImages.adapter as? RecentSearchImageAdapter
-        val itemsWithImages = recentSearchData.filter { it.thumbnail.isNotEmpty() }.take(2)
+        val itemsWithImages = recentSearchData.filter { it.thumbnail.isNotEmpty() }.take(5)
         adapter?.updateItems(itemsWithImages)
         llRecentSearchesSection.visibility = if (itemsWithImages.isEmpty()) View.GONE else View.VISIBLE
     }
@@ -501,9 +498,11 @@ class SearchFragment : Fragment() {
         nextSearchPageToken = ""
 
         refreshSearchSuggestions(query)
+        hideAutoComplete()
         rvSearchSuggestions.visibility = View.GONE
         llSearchSuggestionsContainer.visibility = View.GONE
         nsvSearchContent.visibility = View.VISIBLE
+        rememberRecentSearchQuery(query)
 
         requestPagedSearchResults(query, "", false)
     }
@@ -1029,11 +1028,11 @@ class SearchFragment : Fragment() {
         btnFavorite.visibility = View.VISIBLE
         val ivFav = btnFavorite.findViewById<ImageView>(R.id.ivBsFavorite)
         val tvFav = btnFavorite.findViewById<TextView>(R.id.tvBsFavorite)
-        ivFav.setImageResource(R.drawable.ic_favorite_star)
-        tvFav.text = "Agregar a Favoritos"
+        ivFav.setImageResource(R.drawable.ic_stream_queue_add)
+        tvFav.text = "Añadir a playlist"
         btnFavorite.setOnClickListener {
-            addTrackToFavorites(track)
             dialog.dismiss()
+            showSaveToPlaylistSheet(track)
         }
 
         val parent = view.parent as? View
@@ -1042,16 +1041,68 @@ class SearchFragment : Fragment() {
         dialog.show()
     }
 
-    private fun addTrackToFavorites(track: YouTubeMusicService.TrackResult) {
+    private fun showSaveToPlaylistSheet(track: YouTubeMusicService.TrackResult) {
+        if (!isAdded()) return
+        val ctx = requireContext()
+        val saveDialog = com.google.android.material.bottomsheet.BottomSheetDialog(ctx)
+        val sheet = layoutInflater.inflate(R.layout.bottom_sheet_save_to_playlist, null)
+        saveDialog.setContentView(sheet)
+
+        val parent = sheet.parent as? View
+        parent?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+
+        sheet.findViewById<ImageView>(R.id.ivSaveClose).setOnClickListener { saveDialog.dismiss() }
+
+        val llList = sheet.findViewById<android.widget.LinearLayout>(R.id.llSavePlaylistList)
+        llList.removeAllViews()
+
+        val entries = mutableListOf<Triple<String, String, String>>()
+        val favs = FavoritesPlaylistStore.loadFavorites(ctx)
+        val favThumb = favs.firstOrNull { !it.imageUrl.isNullOrEmpty() }?.imageUrl ?: ""
+        entries.add(Triple(FavoritesPlaylistStore.PLAYLIST_ID, FavoritesPlaylistStore.PLAYLIST_TITLE, favThumb))
+
+        val customNames = CustomPlaylistsStore.getAllPlaylistNames(ctx)
+        for (name in customNames) {
+            val customTracks = CustomPlaylistsStore.getTracksFromPlaylist(ctx, name)
+            val thumb = customTracks.firstOrNull { !it.imageUrl.isNullOrEmpty() }?.imageUrl ?: ""
+            entries.add(Triple(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX + name, name, thumb))
+        }
+
+        for ((playlistKey, playlistName, thumbUrl) in entries) {
+            val row = layoutInflater.inflate(R.layout.item_save_playlist_row, llList, false)
+            val ivThumb = row.findViewById<ImageView>(R.id.ivSavePlaylistThumb)
+            val tvName = row.findViewById<TextView>(R.id.tvSavePlaylistName)
+            val tvCount = row.findViewById<TextView>(R.id.tvSavePlaylistCount)
+            tvName.text = playlistName
+            val count = if (playlistKey == FavoritesPlaylistStore.PLAYLIST_ID)
+                favs.size else CustomPlaylistsStore.getTracksFromPlaylist(ctx, playlistName).size
+            tvCount.text = "$count pistas"
+            if (thumbUrl.isNotEmpty()) {
+                loadArtworkInto(ivThumb, thumbUrl)
+            }
+            row.setOnClickListener {
+                saveDialog.dismiss()
+                addTrackToPlaylistByKey(playlistKey, track)
+                android.widget.Toast.makeText(ctx, "Guardado en $playlistName", android.widget.Toast.LENGTH_SHORT).show()
+            }
+            llList.addView(row)
+        }
+
+        saveDialog.show()
+    }
+
+    private fun addTrackToPlaylistByKey(playlistKey: String, track: YouTubeMusicService.TrackResult) {
         if (track.videoId.isNullOrEmpty()) return
-        FavoritesPlaylistStore.upsertFavorite(
-            requireContext(),
-            track.videoId,
-            track.title ?: "Tema",
-            track.subtitle ?: "Artista",
-            "--:--",
-            track.thumbnailUrl ?: ""
-        )
+        val ctx = requireContext()
+        val title = track.title?.takeIf { it.isNotEmpty() } ?: "Tema"
+        val artist = track.subtitle ?: ""
+        val imageUrl = track.thumbnailUrl ?: ""
+        if (playlistKey == FavoritesPlaylistStore.PLAYLIST_ID) {
+            FavoritesPlaylistStore.upsertFavorite(ctx, track.videoId, title, artist, "--:--", imageUrl)
+        } else if (playlistKey.startsWith(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX)) {
+            val name = playlistKey.removePrefix(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX)
+            CustomPlaylistsStore.addTrackToPlaylist(ctx, name, track.videoId, title, artist, "--:--", imageUrl)
+        }
     }
 
     private fun addToQueue(track: YouTubeMusicService.TrackResult, playNext: Boolean) {
@@ -1278,33 +1329,31 @@ class SearchFragment : Fragment() {
     private fun buildSmartSuggestions(normDraft: String, recentQueries: List<String>): List<String> {
         val ctx = context ?: return emptyList()
         val pool = LinkedHashSet<String>()
+        val recentNorm = recentQueries.map { normalizeForFilter(it) }.toSet()
 
         val snapshot = PlaybackHistoryStore.load(ctx)
+
+        // Add artists and titles from playback queue (current track first, then others)
         val current = snapshot.currentTrack()
         if (current != null) {
             val artist = current.artist.trim()
             val title = current.title.trim()
-            if (artist.isNotEmpty()) {
-                pool.add(artist)
-            }
-            val titleWords = title.split(Regex("\\s+")).filter { it.length > 3 }
-            titleWords.take(2).forEach { pool.add(it) }
+            if (artist.isNotEmpty()) pool.add(artist)
+            if (title.isNotEmpty()) pool.add(title)
         }
-
-        recentQueries.flatMap { q -> q.split(Regex("\\s+")) }
-            .filter { it.length > 3 }
-            .groupingBy { it.lowercase() }
-            .eachCount()
-            .entries
-            .sortedByDescending { it.value }
-            .take(12)
-            .forEach { pool.add(it.key.replaceFirstChar { c -> c.uppercaseChar() }) }
+        for (track in snapshot.queue) {
+            val artist = track.artist.trim()
+            val title = track.title.trim()
+            if (artist.isNotEmpty()) pool.add(artist)
+            if (title.isNotEmpty() && pool.size < 20) pool.add(title)
+        }
 
         return pool
             .filter { candidate ->
-                !recentQueries.contains(candidate) && (
+                val norm = normalizeForFilter(candidate)
+                !recentNorm.contains(norm) && (
                     if (normDraft.isEmpty()) true
-                    else normalizeForFilter(candidate).let { it.contains(normDraft) || normDraft.contains(it) }
+                    else norm.contains(normDraft) || normDraft.contains(norm)
                 )
             }
             .take(12)
@@ -1420,6 +1469,7 @@ class SearchFragment : Fragment() {
     }
 
     private var overlayShownAtMs = 0L
+    private var hasBeenVisible = false
 
     private fun showModuleLoadingOverlay() {
         moduleLoadingOverlay.alpha = 1f
@@ -1442,7 +1492,7 @@ class SearchFragment : Fragment() {
             override fun onPreDraw(): Boolean {
                 v.viewTreeObserver.removeOnPreDrawListener(this)
                 val elapsed = System.currentTimeMillis() - overlayShownAtMs
-                val minVisibleMs = 350L
+                val minVisibleMs = 180L
                 val delay = (minVisibleMs - elapsed).coerceAtLeast(0L)
                 v.postDelayed({
                     if (isAdded && !isHidden) revealModuleContent()
@@ -1518,8 +1568,12 @@ class SearchFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        // Always ensure global header is hidden when this fragment is active
-        (activity as? MainActivity)?.findViewById<View>(R.id.topAppBar)?.visibility = View.GONE
+        // Only hide the global header when this fragment is actually visible (not hidden).
+        // Hidden fragments still receive onResume() — without this guard, SearchFragment
+        // would unconditionally kill the header every time the activity resumes, even when
+        // the user is on Biblioteca or Principal.
+        if (isHidden) return
+        (activity as? MainActivity)?.hideTopAppBarForSearch()
         // Clear input on every entry
         etSearchQuery.setText("")
         hideAutoComplete()
@@ -1528,9 +1582,14 @@ class SearchFragment : Fragment() {
         lastMiniArtUrl = "" // Resetear para forzar recarga de imagen
         startMiniProgressTicker()
         updateMiniPlayerUi()
-        // Reveal content only after the layout pass triggered above has fully drawn.
-        showModuleLoadingOverlay()
-        scheduleOverlayRevealAfterDraw()
+        // Show overlay only on first creation; skip on re-entry to avoid delay
+        if (!hasBeenVisible) {
+            showModuleLoadingOverlay()
+            scheduleOverlayRevealAfterDraw()
+            hasBeenVisible = true
+        } else {
+            moduleLoadingOverlay.visibility = View.GONE
+        }
     }
 
     override fun onPause() {
@@ -1557,8 +1616,13 @@ class SearchFragment : Fragment() {
                 hideAutoComplete()
             }
             loadLocalTrackIndex()
-            showModuleLoadingOverlay()
-            scheduleOverlayRevealAfterDraw()
+            if (!hasBeenVisible) {
+                showModuleLoadingOverlay()
+                scheduleOverlayRevealAfterDraw()
+                hasBeenVisible = true
+            } else {
+                moduleLoadingOverlay.visibility = View.GONE
+            }
             lastMiniArtUrl = "" // Resetear para forzar recarga de imagen
             // Animate mini player slide-up if not already visible and in place
             // (mirrors MusicPlayerFragment / PlaylistDetailFragment onHiddenChanged logic)

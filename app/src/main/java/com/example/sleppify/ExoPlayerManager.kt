@@ -111,7 +111,14 @@ object ExoPlayerManager {
     fun reinitialize(@NonNull context: Context) {
         synchronized(initLock) {
             try {
-                sharedExoPlayer?.release()
+                sharedExoPlayer?.let { player ->
+                    // Stop + clear before release to ensure AudioTrack resources are freed
+                    // immediately. On low-memory devices, release() alone may leave AudioFlinger
+                    // resources in a stale state causing -12 (ENOMEM) on the next AudioTrack init.
+                    player.stop()
+                    player.clearMediaItems()
+                    player.release()
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "Error liberando ExoPlayer durante reinitialización", e)
             }

@@ -60,7 +60,6 @@ class SettingsFragment : Fragment() {
     private lateinit var tvProfileName: TextView
     private lateinit var tvProfileBadge: TextView
     private lateinit var ivYoutubeMusicStatus: ImageView
-    private lateinit var swAmoledMode: MaterialSwitch
     private lateinit var swDownloadOnMobileData: MaterialSwitch
     private lateinit var swOfflineMode: MaterialSwitch
     private lateinit var swMonoAudio: MaterialSwitch
@@ -117,7 +116,6 @@ class SettingsFragment : Fragment() {
     private var hasProfileSnapshot = false
 
     // State Snapshots
-    private var lastAmoledModeEnabled = false
     private var lastOfflineCrossfadeSeconds = -1
     private var lastAllowMobileDataDownloads = false
     private var lastOfflineModeEnabled = false
@@ -184,7 +182,6 @@ class SettingsFragment : Fragment() {
         tvProfileName = v.findViewById(R.id.tvProfileName)
         tvProfileBadge = v.findViewById(R.id.tvProfileBadge)
         ivYoutubeMusicStatus = v.findViewById(R.id.ivYoutubeMusicStatus)
-        swAmoledMode = v.findViewById(R.id.swAmoledMode)
         swDownloadOnMobileData = v.findViewById(R.id.swDownloadOnMobileData)
         swOfflineMode = v.findViewById(R.id.swOfflineMode)
         swMonoAudio = v.findViewById(R.id.swMonoAudio)
@@ -437,7 +434,6 @@ class SettingsFragment : Fragment() {
     }
 
     private fun renderSettingsState() {
-        val amoled = settingsPrefs.getBoolean(CloudSyncManager.KEY_AMOLED_MODE_ENABLED, false)
         val crossfade = settingsPrefs.getInt(CloudSyncManager.KEY_OFFLINE_CROSSFADE_SECONDS, 0).coerceIn(0, 12)
         val mobileDownloads = settingsPrefs.getBoolean(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false)
         val offlineMode = settingsPrefs.getBoolean(CloudSyncManager.KEY_OFFLINE_MODE_ENABLED, false)
@@ -445,7 +441,7 @@ class SettingsFragment : Fragment() {
         val streamingQuality = normalizeStreamingQuality(settingsPrefs.getString(CloudSyncManager.KEY_STREAMING_QUALITY, CloudSyncManager.STREAMING_QUALITY_MEDIUM))
         val monoAudio = settingsPrefs.getBoolean(CloudSyncManager.KEY_MONO_AUDIO, false)
 
-        if (hasSettingsSnapshot && lastAmoledModeEnabled == amoled &&
+        if (hasSettingsSnapshot &&
             lastOfflineCrossfadeSeconds == crossfade &&
             lastAllowMobileDataDownloads == mobileDownloads && lastOfflineModeEnabled == offlineMode &&
             lastDownloadQuality == quality &&
@@ -453,21 +449,10 @@ class SettingsFragment : Fragment() {
             lastMonoAudioEnabled == monoAudio) return
 
         hasSettingsSnapshot = true
-        lastAmoledModeEnabled = amoled
         lastOfflineCrossfadeSeconds = crossfade
         lastAllowMobileDataDownloads = mobileDownloads; lastOfflineModeEnabled = offlineMode; lastDownloadQuality = quality
         lastStreamingQuality = streamingQuality
         lastMonoAudioEnabled = monoAudio
-
-        swAmoledMode.apply {
-            setOnCheckedChangeListener(null)
-            isChecked = amoled
-            setOnCheckedChangeListener { _, c ->
-                settingsPrefs.edit().putBoolean(CloudSyncManager.KEY_AMOLED_MODE_ENABLED, c).apply()
-                CloudSyncManager.getInstance(requireContext()).syncSettingsNowIfSignedIn()
-                AppCompatDelegate.setDefaultNightMode(if (c) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO)
-            }
-        }
 
         swDownloadOnMobileData.apply {
             setOnCheckedChangeListener(null)

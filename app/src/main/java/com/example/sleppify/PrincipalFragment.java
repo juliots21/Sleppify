@@ -7,6 +7,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -85,6 +86,10 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
 
     private static final YouTubeCropTransformation SHARED_YT_CROP = new YouTubeCropTransformation();
 
+    // Currently playing shortcut videoId (for EQ icon)
+    private String currentlyPlayingShortcutVideoId = "";
+    private String lastEqRefreshVideoId = "";
+
     // Data
     private final List<PlayCountStore.PlayCountEntry> shortcutEntries = new ArrayList<>();
     private final List<YouTubeMusicService.MixResult> mixResults = new ArrayList<>();
@@ -142,6 +147,7 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
     public void onResume() {
         super.onResume();
         PlaybackEventBus.addListener(this);
+        if (isHidden()) return;
         refreshShortcuts();
         refreshMixes();
         refreshChannelName();
@@ -207,7 +213,15 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
     @Override
     public void onPlaybackSnapshotUpdated() {
         if (isAdded() && getActivity() != null) {
-            getActivity().runOnUiThread(this::updateMiniPlayerUi);
+            getActivity().runOnUiThread(() -> {
+                updateMiniPlayerUi();
+                // Only refresh EQ icons when the playing videoId actually changes
+                String nowId = getCurrentPlayingVideoId();
+                if (!TextUtils.equals(nowId, lastEqRefreshVideoId)) {
+                    lastEqRefreshVideoId = nowId;
+                    refreshShortcutEqIcons();
+                }
+            });
         }
     }
 
@@ -313,6 +327,21 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
             @Override
             public void onSuccess(YouTubeMusicService.HomeBrowseResult result) {
                 if (!isAdded()) return;
+                Log.d(TAG_PRINCIPAL, "HomeBrowse: genericMixes=" + result.genericMixes.size()
+                        + " personalMixes=" + result.personalMixes.size()
+                        + " allSections=" + result.allSections.size());
+                for (YouTubeMusicService.HomeSection sec : result.allSections) {
+                    Log.d(TAG_PRINCIPAL, "  Section: \"" + sec.title + "\" items=" + sec.items.size());
+                    for (YouTubeMusicService.MixResult item : sec.items) {
+                        Log.d(TAG_PRINCIPAL, "    Item: \"" + item.title + "\" playlistId=" + item.playlistId);
+                    }
+                }
+                for (YouTubeMusicService.MixResult gm : result.genericMixes) {
+                    Log.d(TAG_PRINCIPAL, "  GenericMix: \"" + gm.title + "\" id=" + gm.playlistId);
+                }
+                for (YouTubeMusicService.MixResult pm : result.personalMixes) {
+                    Log.d(TAG_PRINCIPAL, "  PersonalMix: \"" + pm.title + "\" id=" + pm.playlistId);
+                }
                 mixResults.clear();
                 mixResults.addAll(result.genericMixes);
                 cacheMixes(result.genericMixes);
@@ -394,12 +423,20 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
         String cookie = getCookieHeader();
         if (cookie.isEmpty()) return;
 
-        // Collect track titles from ALL cached YouTube playlists
-        List<String> allTitles = new ArrayList<>();
+        // Prioritize top 10 most played songs for covers/remixes search
+        List<String> topTitles = new ArrayList<>();
+        List<PlayCountStore.PlayCountEntry> top10 = PlayCountStore.getTopEntries(requireContext(), 10);
+        for (PlayCountStore.PlayCountEntry e : top10) {
+            if (!TextUtils.isEmpty(e.title)) topTitles.add(e.title);
+        }
+
+        // Collect additional titles from cached playlists for variety
+        List<String> extraTitles = new ArrayList<>();
         try {
             android.content.SharedPreferences cachePrefs = requireContext()
                     .getSharedPreferences(PREFS_STREAMING_CACHE, Context.MODE_PRIVATE);
             String dataPrefix = "playlist_tracks_data_";
+            java.util.Set<String> topSet = new java.util.HashSet<>(topTitles);
             for (String key : cachePrefs.getAll().keySet()) {
                 if (!key.startsWith(dataPrefix)) continue;
                 String raw = cachePrefs.getString(key, "");
@@ -410,24 +447,33 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
                         org.json.JSONObject obj = arr.optJSONObject(i);
                         if (obj == null) continue;
                         String title = obj.optString("title", "").trim();
-                        if (!title.isEmpty()) allTitles.add(title);
+                        if (!title.isEmpty() && !topSet.contains(title)) extraTitles.add(title);
                     }
                 } catch (Exception ignored) {}
             }
         } catch (Exception ignored) {}
 
-        if (allTitles.isEmpty()) {
-            // Fallback to top play count entries
-            List<PlayCountStore.PlayCountEntry> top = PlayCountStore.getTopEntries(requireContext(), 10);
-            for (PlayCountStore.PlayCountEntry e : top) {
-                if (!TextUtils.isEmpty(e.title)) allTitles.add(e.title);
+        // Build final selection: ~5-6 from top 10, ~2-3 random from extras
+        List<String> selected = new ArrayList<>();
+        java.util.Collections.shuffle(topTitles);
+        int fromTop = Math.min(6, topTitles.size());
+        selected.addAll(topTitles.subList(0, fromTop));
+
+        if (!extraTitles.isEmpty()) {
+            java.util.Collections.shuffle(extraTitles);
+            int fromExtra = Math.min(8 - selected.size(), extraTitles.size());
+            selected.addAll(extraTitles.subList(0, fromExtra));
+        }
+
+        // If still not enough, pad with remaining top titles
+        if (selected.size() < 8) {
+            for (String t : topTitles) {
+                if (selected.size() >= 8) break;
+                if (!selected.contains(t)) selected.add(t);
             }
         }
-        if (allTitles.isEmpty()) return;
 
-        // Shuffle and pick up to 8 random titles for variety
-        java.util.Collections.shuffle(allTitles);
-        List<String> selected = allTitles.subList(0, Math.min(8, allTitles.size()));
+        if (selected.isEmpty()) return;
 
         youTubeMusicService.fetchCoversAndRemixes(cookie, selected, new YouTubeMusicService.CoversRemixesCallback() {
             @Override
@@ -531,12 +577,177 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
             return;
         }
 
-        YouTubeMusicService.TrackResult track = new YouTubeMusicService.TrackResult(
+        // Track which shortcut is playing (for EQ icon)
+        currentlyPlayingShortcutVideoId = entry.videoId;
+        refreshShortcutEqIcons();
+
+        // Create the clicked track as a TrackResult
+        YouTubeMusicService.TrackResult clickedTrack = new YouTubeMusicService.TrackResult(
                 "video", entry.videoId, entry.title, entry.artist, entry.imageUrl
         );
+
+        // Play the clicked track immediately in mini-player (instant feedback)
         List<YouTubeMusicService.TrackResult> singleList = new ArrayList<>();
-        singleList.add(track);
-        playTrackList(singleList, 0);
+        singleList.add(clickedTrack);
+        playTrackListInMiniPlayer(singleList, 0);
+
+        // Then fetch radio in background and enrich the queue
+        String cookie = getCookieHeader();
+        if (!cookie.isEmpty()) {
+            String radioPlaylistId = "RDAMVM" + entry.videoId;
+            youTubeMusicService.fetchMixTracks(cookie, radioPlaylistId, new YouTubeMusicService.MixTracksCallback() {
+                @Override
+                public void onSuccess(List<YouTubeMusicService.TrackResult> tracks) {
+                    if (!isAdded() || tracks.isEmpty()) return;
+                    // Build full radio list: clicked track first, then radio tracks
+                    List<YouTubeMusicService.TrackResult> radioList = new ArrayList<>();
+                    radioList.add(clickedTrack);
+                    for (YouTubeMusicService.TrackResult t : tracks) {
+                        if (!TextUtils.equals(t.videoId, entry.videoId)) {
+                            radioList.add(t);
+                        }
+                    }
+                    // Replace queue keeping current position at 0 (same song continues)
+                    SongPlayerFragment sp = findSongPlayerFragment();
+                    if (sp != null && sp.isAdded()) {
+                        ArrayList<String> ids = new ArrayList<>();
+                        ArrayList<String> titles = new ArrayList<>();
+                        ArrayList<String> artists = new ArrayList<>();
+                        ArrayList<String> durations = new ArrayList<>();
+                        ArrayList<String> images = new ArrayList<>();
+                        for (YouTubeMusicService.TrackResult t : radioList) {
+                            if (TextUtils.isEmpty(t.videoId)) continue;
+                            ids.add(t.videoId);
+                            titles.add(t.title);
+                            artists.add(t.subtitle);
+                            durations.add("--:--");
+                            images.add(t.thumbnailUrl);
+                        }
+                        if (!ids.isEmpty()) {
+                            sp.externalReplaceQueue(ids, titles, artists, durations, images, 0, true);
+                        }
+                    }
+                }
+
+                @Override
+                public void onError(String error) {
+                    // Radio fetch failed — single track already playing, nothing to do
+                }
+            });
+        }
+    }
+
+    // ========== Play in Mini-Player (no full player) ==========
+
+    private void playTrackListInMiniPlayer(List<YouTubeMusicService.TrackResult> tracks, int startIndex) {
+        if (!isAdded() || tracks.isEmpty()) return;
+
+        ArrayList<String> ids = new ArrayList<>();
+        ArrayList<String> titles = new ArrayList<>();
+        ArrayList<String> artists = new ArrayList<>();
+        ArrayList<String> durations = new ArrayList<>();
+        ArrayList<String> images = new ArrayList<>();
+
+        for (YouTubeMusicService.TrackResult t : tracks) {
+            if (TextUtils.isEmpty(t.videoId)) continue;
+            ids.add(t.videoId);
+            titles.add(t.title);
+            artists.add(t.subtitle);
+            durations.add("--:--");
+            images.add(t.thumbnailUrl);
+        }
+        if (ids.isEmpty()) return;
+
+        int safeIndex = Math.max(0, Math.min(startIndex, ids.size() - 1));
+
+        // Invalidate cache to get the actual current state
+        cachedSongPlayer = null;
+        lastCachedSongPlayerTime = 0;
+
+        SongPlayerFragment existingPlayer = findSongPlayerFragment();
+        if (existingPlayer != null && existingPlayer.isAdded()) {
+            existingPlayer.externalSetReturnTargetTag("module_principal");
+            existingPlayer.externalReplaceQueue(ids, titles, artists, durations, images, safeIndex, true);
+            miniPlaying = true;
+            updateMiniPlayerUi();
+            startMiniProgressTicker();
+            return;
+        }
+
+        if (getParentFragmentManager().isStateSaved()) return;
+
+        SongPlayerFragment playerFragment = SongPlayerFragment.newInstance(
+                ids, titles, artists, durations, images, safeIndex, true
+        );
+        playerFragment.externalSetReturnTargetTag("module_principal");
+
+        getParentFragmentManager()
+                .beginTransaction()
+                .setReorderingAllowed(true)
+                .add(R.id.playerContainer, playerFragment, TAG_SONG_PLAYER)
+                .hide(playerFragment)
+                .runOnCommit(() -> {
+                    cachedSongPlayer = null;
+                    lastCachedSongPlayerTime = 0;
+                    updateMiniPlayerUi();
+                    startMiniProgressTicker();
+                })
+                .commit();
+
+        miniPlaying = true;
+        // Show mini-player immediately with the track info we already have
+        if (llMiniPlayer != null) {
+            tvMiniPlayerTitle.setText(titles.get(safeIndex));
+            tvMiniPlayerSubtitle.setText(artists.get(safeIndex));
+            btnMiniPlayPause.setImageResource(R.drawable.ic_mini_pause);
+            if (!TextUtils.isEmpty(images.get(safeIndex)) && isAdded()) {
+                try {
+                    Glide.with(this)
+                            .load(images.get(safeIndex))
+                            .placeholder(R.color.surface_high)
+                            .transform(new CenterCrop())
+                            .into(ivMiniPlayerArt);
+                } catch (Exception ignored) {}
+            }
+            if (llMiniPlayer.getVisibility() != View.VISIBLE) {
+                float distance = llMiniPlayer.getHeight() > 0 ? llMiniPlayer.getHeight() : 300f;
+                llMiniPlayer.setTranslationY(distance);
+                llMiniPlayer.setVisibility(View.VISIBLE);
+                llMiniPlayer.animate().cancel();
+                llMiniPlayer.animate()
+                        .translationY(0f)
+                        .setDuration(250)
+                        .setInterpolator(MATERIAL_EASE)
+                        .withEndAction(null)
+                        .start();
+            }
+        }
+    }
+
+    private void refreshShortcutEqIcons() {
+        if (vpShortcuts == null) return;
+        // ViewPager2 has an internal RecyclerView at child(0)
+        View internalRv = vpShortcuts.getChildAt(0);
+        if (!(internalRv instanceof RecyclerView)) return;
+        RecyclerView pagerRv = (RecyclerView) internalRv;
+        // Iterate laid-out page ViewHolders and notify their inner grid adapters
+        for (int i = 0; i < pagerRv.getChildCount(); i++) {
+            View pageView = pagerRv.getChildAt(i);
+            if (pageView instanceof RecyclerView) {
+                RecyclerView innerGrid = (RecyclerView) pageView;
+                if (innerGrid.getAdapter() != null) {
+                    innerGrid.getAdapter().notifyDataSetChanged();
+                }
+            }
+        }
+    }
+
+    private String getCurrentPlayingVideoId() {
+        SongPlayerFragment sp = findSongPlayerFragment();
+        if (sp != null && sp.isAdded()) {
+            return sp.externalGetCurrentVideoId();
+        }
+        return "";
     }
 
     // ========== Mini-Player ==========
@@ -610,6 +821,16 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
                 title = prefs.getString("stream_last_track_title", "");
                 subtitle = prefs.getString("stream_last_track_artist", "");
                 imageUrl = prefs.getString("stream_last_track_image", "");
+            }
+            // Fallback: get directly from player queue (prefs may not be written yet)
+            if (TextUtils.isEmpty(title)) {
+                title = songPlayer.externalGetCurrentTitle();
+            }
+            if (TextUtils.isEmpty(subtitle)) {
+                subtitle = songPlayer.externalGetCurrentArtist();
+            }
+            if (TextUtils.isEmpty(imageUrl)) {
+                imageUrl = songPlayer.externalGetCurrentImageUrl();
             }
             if (TextUtils.isEmpty(title)) {
                 int idx = songPlayer.externalGetCurrentIndex();
@@ -1016,15 +1237,64 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
         public void onBindViewHolder(@NonNull CellVH holder, int position) {
             PlayCountStore.PlayCountEntry entry = items.get(position);
             holder.tvTitle.setText(entry.title);
-            if (!TextUtils.isEmpty(entry.imageUrl) && isAdded()) {
-                try {
-                    Glide.with(PrincipalFragment.this)
-                            .load(entry.imageUrl)
-                            .placeholder(R.color.surface_high)
-                            .transform(SHARED_YT_CROP, new CenterCrop())
-                            .into(holder.ivThumb);
-                } catch (Exception ignored) {}
+
+            boolean isPlaylist = !TextUtils.isEmpty(entry.playlistId)
+                    && TextUtils.equals(entry.videoId, entry.playlistId);
+
+            // Skip image reload if the same URL is already displayed (prevents flicker on EQ refresh)
+            String currentTag = holder.ivThumb.getTag(R.id.tag_artwork_signature) instanceof String
+                    ? (String) holder.ivThumb.getTag(R.id.tag_artwork_signature) : "";
+
+            if (isPlaylist && isAdded()) {
+                // Show 2x2 grid art for playlists
+                List<String> gridUrls = PlayCountStore.getPlaylistTrackImages(requireContext(), entry.playlistId, 4);
+                if (gridUrls.size() >= 4) {
+                    float density = holder.itemView.getContext().getResources().getDisplayMetrics().density;
+                    int sizePx = Math.round(120 * density);
+                    PlaylistGridArtLoader.load(holder.ivThumb, gridUrls, sizePx);
+                } else if (!TextUtils.isEmpty(entry.imageUrl) && !entry.imageUrl.equals(currentTag)) {
+                    holder.ivThumb.setTag(R.id.tag_artwork_signature, entry.imageUrl);
+                    try {
+                        Glide.with(PrincipalFragment.this)
+                                .load(entry.imageUrl)
+                                .placeholder(R.color.surface_high)
+                                .transform(SHARED_YT_CROP, new CenterCrop())
+                                .into(holder.ivThumb);
+                    } catch (Exception ignored) {}
+                }
+            } else if (!TextUtils.isEmpty(entry.imageUrl) && isAdded()) {
+                if (!entry.imageUrl.equals(currentTag)) {
+                    holder.ivThumb.setTag(R.id.tag_artwork_signature, entry.imageUrl);
+                    try {
+                        Glide.with(PrincipalFragment.this)
+                                .load(entry.imageUrl)
+                                .placeholder(R.color.surface_high)
+                                .transform(SHARED_YT_CROP, new CenterCrop())
+                                .into(holder.ivThumb);
+                    } catch (Exception ignored) {}
+                }
             }
+
+            // EQ animated icon: show if this shortcut's song is currently playing
+            String nowPlaying = getCurrentPlayingVideoId();
+            boolean isThisPlaying = !isPlaylist
+                    && !TextUtils.isEmpty(nowPlaying)
+                    && (TextUtils.equals(entry.videoId, nowPlaying)
+                        || TextUtils.equals(entry.videoId, currentlyPlayingShortcutVideoId));
+
+            SongPlayerFragment sp = findSongPlayerFragment();
+            boolean actuallyPlaying = sp != null && sp.isAdded() && sp.externalIsPlaying();
+
+            if (isThisPlaying && actuallyPlaying) {
+                holder.ivPlay.setVisibility(View.GONE);
+                holder.eqView.setVisibility(View.VISIBLE);
+                holder.eqView.setAnimating(true);
+            } else {
+                holder.eqView.setAnimating(false);
+                holder.eqView.setVisibility(View.GONE);
+                holder.ivPlay.setVisibility(View.VISIBLE);
+            }
+
             holder.itemView.setOnClickListener(v -> onShortcutClicked(entry));
         }
 
@@ -1036,11 +1306,15 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
         class CellVH extends RecyclerView.ViewHolder {
             final ImageView ivThumb;
             final TextView tvTitle;
+            final ImageView ivPlay;
+            final AnimatedEqualizerView eqView;
 
             CellVH(@NonNull View itemView) {
                 super(itemView);
                 ivThumb = itemView.findViewById(R.id.ivShortcutThumb);
                 tvTitle = itemView.findViewById(R.id.tvShortcutTitle);
+                ivPlay = itemView.findViewById(R.id.ivShortcutPlay);
+                eqView = itemView.findViewById(R.id.eqShortcut);
             }
         }
     }

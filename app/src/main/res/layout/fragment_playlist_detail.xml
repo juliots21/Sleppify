@@ -50,7 +50,7 @@
                 android:orientation="horizontal"
                 android:paddingStart="4dp"
                 android:paddingEnd="4dp"
-                android:paddingTop="28dp"
+                android:paddingTop="0dp"
                 android:paddingBottom="6dp"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"

@@ -242,8 +242,7 @@ class ScannerFragment : Fragment() {
     }
 
     private fun applyScannerBackdropMode() {
-        val amoled = isAmoledModeEnabled()
-        scannerRoot?.setBackgroundColor(if (amoled) 0xFF000000.toInt() else 0xFF05060A.toInt())
+        scannerRoot?.setBackgroundColor(0xFF000000.toInt())
         applyScanResultCardTheme()
     }
 
@@ -253,8 +252,7 @@ class ScannerFragment : Fragment() {
     }
 
     /** Same fill as [cardScanResult] (scanner result card + options sheet). */
-    private fun scanResultPanelBackgroundColor(): Int =
-        if (isAmoledModeEnabled()) 0xFF1C1C1E.toInt() else 0xFF2A2D36.toInt()
+    private fun scanResultPanelBackgroundColor(): Int = 0xFF1C1C1E.toInt()
 
     private fun applyPinchZoom(scaleFactor: Float): Boolean {
         val cam = camera ?: return false
@@ -381,9 +379,8 @@ class ScannerFragment : Fragment() {
 
     private fun updateTorchButtonVisualState() {
         val btn = btnFlashlight ?: return
-        val amoled = isAmoledModeEnabled()
-        val bgInactive = if (amoled) 0xFF000000.toInt() else 0xFF565B64.toInt()
-        val strokeInactive = if (amoled) 0xFF2A2F39.toInt() else 0x00000000
+        val bgInactive = 0xFF000000.toInt()
+        val strokeInactive = 0xFF2A2F39.toInt()
 
         if (!btn.isEnabled) {
             btn.text = "Linterna no disponible"
@@ -391,7 +388,7 @@ class ScannerFragment : Fragment() {
             btn.setIconResource(R.drawable.ic_flashlight_off)
             btn.setIconTint(ColorStateList.valueOf(0xFF8A909D.toInt()))
             btn.backgroundTintList = ColorStateList.valueOf(bgInactive)
-            btn.strokeWidth = if (amoled) dpToPx(1) else 0
+            btn.strokeWidth = dpToPx(1)
             btn.strokeColor = ColorStateList.valueOf(strokeInactive)
             return
         }
@@ -399,7 +396,7 @@ class ScannerFragment : Fragment() {
         if (torchEnabled) {
             btn.setValues("Apagar linterna", 0xFFF4F8FF.toInt(), R.drawable.ic_flashlight_on, 0xFF20A99B.toInt(), 0)
         } else {
-            btn.setValues("Encender la linterna", 0xFF8A909D.toInt(), R.drawable.ic_flashlight_off, bgInactive, if (amoled) dpToPx(1) else 0, strokeInactive)
+            btn.setValues("Encender la linterna", 0xFF8A909D.toInt(), R.drawable.ic_flashlight_off, bgInactive, dpToPx(1), strokeInactive)
         }
     }
 
@@ -412,8 +409,6 @@ class ScannerFragment : Fragment() {
         strokeWidth = stroke
         strokeColor = ColorStateList.valueOf(strokeColorRes)
     }
-
-    private fun isAmoledModeEnabled() = settingsPrefs?.getBoolean(CloudSyncManager.KEY_AMOLED_MODE_ENABLED, false) ?: false
 
     @SuppressLint("UnsafeOptInUsageError")
     private fun analyzeImage(proxy: ImageProxy) {

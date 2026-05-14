@@ -121,7 +121,7 @@ class EqualizerFragment : Fragment() {
         refreshOutputDeviceAndProfile(false, true)
         refreshEqModuleState()
         ensureEqServiceActive()
-        applyAmoledStyles(view)
+        applyCardStyles(view)
     }
 
     override fun onResume() {
@@ -290,7 +290,7 @@ class EqualizerFragment : Fragment() {
         }
         sliderBassGain.isEnabled = eqEnabled
         sliderBassFrequency.isEnabled = eqEnabled
-        applyAmoledStyles(view)
+        applyCardStyles(view)
     }
 
     private fun applyEnabledStyle(target: View?, enabled: Boolean) {
@@ -1220,19 +1220,10 @@ class EqualizerFragment : Fragment() {
 
     private fun dp(value: Int): Int = Math.round(value * resources.displayMetrics.density)
 
-    private fun isAmoledModeEnabled(): Boolean =
-        preferences.getBoolean(CloudSyncManager.KEY_AMOLED_MODE_ENABLED, false)
-
-    private fun applyAmoledStyles(rootView: View?) {
-        if (rootView == null || !isAmoledModeEnabled()) return
-
-        val amoledBlack = 0xFF000000.toInt()
-        val premiumDarkGray = 0xFF0D0D0D.toInt()
-        val cardStrokeColor = 0xFF1A1A1A.toInt()
-
-        rootView.setBackgroundColor(amoledBlack)
-
-        // Styling cards for AMOLED
+    private fun applyCardStyles(rootView: View?) {
+        if (rootView == null) return
+        val cardBg = 0xFF0D0D0D.toInt()
+        val cardStroke = 0xFF1A1A1A.toInt()
         val cardIds = intArrayOf(
             R.id.cardPresetSelector,
             R.id.cardGraphicEq,
@@ -1242,21 +1233,19 @@ class EqualizerFragment : Fragment() {
         for (id in cardIds) {
             val v = rootView.findViewById<View>(id)
             if (v is MaterialCardView) {
-                v.setCardBackgroundColor(ColorStateList.valueOf(premiumDarkGray))
-                v.strokeColor = cardStrokeColor
+                v.setCardBackgroundColor(ColorStateList.valueOf(cardBg))
+                v.strokeColor = cardStroke
                 v.strokeWidth = dp(1)
             }
         }
-
-        // Output info card (the first one doesn't have an ID in XML, let's find it by position)
         val scrollContent = rootView.findViewById<View>(R.id.scrollEqContent)
         if (scrollContent is ViewGroup && scrollContent.childCount > 0) {
             val mainLinear = scrollContent.getChildAt(0)
             if (mainLinear is ViewGroup && mainLinear.childCount > 0) {
                 val firstCard = mainLinear.getChildAt(0)
                 if (firstCard is MaterialCardView) {
-                    firstCard.setCardBackgroundColor(ColorStateList.valueOf(premiumDarkGray))
-                    firstCard.strokeColor = cardStrokeColor
+                    firstCard.setCardBackgroundColor(ColorStateList.valueOf(cardBg))
+                    firstCard.strokeColor = cardStroke
                     firstCard.strokeWidth = dp(1)
                 }
             }

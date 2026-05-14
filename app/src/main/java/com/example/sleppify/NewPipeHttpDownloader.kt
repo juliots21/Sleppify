@@ -56,10 +56,15 @@ class NewPipeHttpDownloader private constructor() : Downloader() {
             
             val isYoutube = url.host.contains("youtube.com") || url.host.contains("youtu.be") || url.host.contains("youtubei.googleapis.com") || url.host.contains("youtube")
             if (isYoutube) {
-                val cookie = InnertubeResolver.getAuthCookieHeader()
-                if (cookie.isNotEmpty()) {
-                    setRequestProperty("Cookie", cookie)
+                val cookieParts = mutableListOf<String>()
+                // SOCS consent cookie — prevents consent page redirect that breaks ytInitialData parsing
+                cookieParts.add("SOCS=CAISNQgDEitib3FfaWRlbnRpdHlmcm9udGVuZHVpc2VydmVyXzIwMjMwODI5LjA3X3AxGgJlbiACGgYIgJnOlwY")
+                cookieParts.add("CONSENT=PENDING+987")
+                val authCookie = InnertubeResolver.getAuthCookieHeader()
+                if (authCookie.isNotEmpty()) {
+                    cookieParts.add(authCookie)
                 }
+                setRequestProperty("Cookie", cookieParts.joinToString("; "))
             }
         }
 
