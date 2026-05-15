@@ -50,6 +50,12 @@ import android.view.animation.PathInterpolator
 import androidx.core.content.res.ResourcesCompat
 import java.text.Normalizer
 import java.util.Locale
+import androidx.work.Constraints
+import androidx.work.Data
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequest
+import androidx.work.WorkManager
+import android.text.TextUtils
 
 class SearchFragment : Fragment() {
 
@@ -807,6 +813,10 @@ class SearchFragment : Fragment() {
         
         loadArtworkInto(ivFeaturedThumb, track.thumbnailUrl, track.videoId)
         llFeaturedResult.setOnClickListener { onTrackClicked(track) }
+        llFeaturedResult.setOnLongClickListener {
+            showTrackOptionsBottomSheet(track, it)
+            true
+        }
     }
 
     private fun onTrackClicked(track: YouTubeMusicService.TrackResult) {
@@ -1036,55 +1046,93 @@ class SearchFragment : Fragment() {
 
     private fun showTrackOptionsBottomSheet(track: YouTubeMusicService.TrackResult, anchor: View) {
         anchor.performHapticFeedback(android.view.HapticFeedbackConstants.CONTEXT_CLICK)
-        
-        val dialog = com.google.android.material.bottomsheet.BottomSheetDialog(requireContext())
+
+        val ctx = requireContext()
+        val videoId = track.videoId ?: ""
+        val hasOfflineAudio = videoId.isNotEmpty()
+            && OfflineAudioStore.hasValidatedOfflineAudio(ctx, videoId, null)
+
+        val dialog = com.google.android.material.bottomsheet.BottomSheetDialog(ctx)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_track_options, null)
         dialog.setContentView(view)
 
+        // Header
         val tvTitle = view.findViewById<TextView>(R.id.tvBsTrackTitle)
         val tvSubtitle = view.findViewById<TextView>(R.id.tvBsTrackSubtitle)
         val ivArt = view.findViewById<ImageView>(R.id.ivBsTrackArt)
-        
-        tvTitle.text = track.title ?: "Tema"
+        val ivBsOffline = view.findViewById<ImageView>(R.id.ivBsOfflineState)
+
+        tvTitle.text = if (track.title.isNullOrEmpty()) "Tema" else track.title
         val typeLabel = searchTypeLabel(track)
-        if (typeLabel.isEmpty()) {
-            tvSubtitle.text = track.subtitle
+        tvSubtitle.text = if (typeLabel.isEmpty()) track.subtitle
+            else if (track.subtitle.isEmpty()) typeLabel else "$typeLabel • ${track.subtitle}"
+        loadArtworkInto(ivArt, track.thumbnailUrl, videoId)
+        ivBsOffline?.visibility = if (hasOfflineAudio) View.VISIBLE else View.GONE
+
+        // Top row slot 1: Reproducir
+        val btnPlayNext = view.findViewById<View>(R.id.btnBsPlayNext)
+        val ivPlayNext = view.findViewById<ImageView>(R.id.ivBsPlayNextIcon)
+        val tvPlayNext = view.findViewById<TextView>(R.id.tvBsPlayNextLabel)
+        btnPlayNext.visibility = View.VISIBLE
+        ivPlayNext.setImageResource(R.drawable.ic_player_play)
+        tvPlayNext.text = "Reproducir"
+        btnPlayNext.setOnClickListener {
+            dialog.dismiss()
+            onTrackClicked(track)
+        }
+
+        // Top row slot 2: Descargar / Eliminar descarga
+        val btnAddPrimary = view.findViewById<View>(R.id.btnBsAddPrimary)
+        val ivAddPrimary = view.findViewById<ImageView>(R.id.ivBsAddPrimary)
+        val tvAddPrimary = view.findViewById<TextView>(R.id.tvBsAddPrimary)
+        btnAddPrimary.visibility = View.VISIBLE
+        if (hasOfflineAudio) {
+            ivAddPrimary.setImageResource(R.drawable.ic_delete_modern)
+            tvAddPrimary.text = "Eliminar\ndescarga"
         } else {
-            tvSubtitle.text = if (track.subtitle.isEmpty()) typeLabel else "$typeLabel • ${track.subtitle}"
+            ivAddPrimary.setImageResource(R.drawable.ic_download_bold)
+            tvAddPrimary.text = "Descargar"
         }
-        loadArtworkInto(ivArt, track.thumbnailUrl, track.videoId)
-
-        val isPlaylist = "playlist".equals(track.resultType, ignoreCase = true)
-
-        view.findViewById<View>(R.id.btnBsPlayNext).setOnClickListener {
-            addToQueue(track, true)
+        btnAddPrimary.setOnClickListener {
             dialog.dismiss()
-        }
-        view.findViewById<View>(R.id.btnBsAddPrimary).setOnClickListener {
-            addToQueue(track, false)
-            dialog.dismiss()
-        }
-        view.findViewById<View>(R.id.btnBsShare).setOnClickListener {
-            shareTrack(track)
-            dialog.dismiss()
-        }
-
-        val btnPlayPlaylist = view.findViewById<View>(R.id.btnBsPlayPlaylist)
-        val btnFavorite = view.findViewById<View>(R.id.btnBsFavorite)
-        
-        if (isPlaylist) {
-            btnPlayPlaylist.visibility = View.VISIBLE
-            btnPlayPlaylist.setOnClickListener {
-                onTrackClicked(track)
-                dialog.dismiss()
+            if (hasOfflineAudio) {
+                if (videoId.isNotEmpty()) {
+                    OfflineAudioStore.deleteOfflineAudio(ctx.applicationContext, arrayListOf(videoId))
+                }
+            } else {
+                downloadTrackFromSearch(track)
             }
-        } else {
-            btnPlayPlaylist.visibility = View.GONE
         }
 
-        btnFavorite.visibility = View.VISIBLE
+        // Top row slot 3: Compartir
+        val btnShare = view.findViewById<View>(R.id.btnBsShare)
+        val ivShare = view.findViewById<ImageView>(R.id.ivBsShareIcon)
+        val tvShare = view.findViewById<TextView>(R.id.tvBsShareLabel)
+        btnShare.visibility = View.VISIBLE
+        ivShare.setImageResource(R.drawable.ic_playlist_share)
+        tvShare.text = "Compartir"
+        btnShare.setOnClickListener {
+            dialog.dismiss()
+            shareTrack(track)
+        }
+
+        // Row: Reproducir a continuación
+        val btnPlayPlaylist = view.findViewById<View>(R.id.btnBsPlayPlaylist)
+        val ivPlayNextRow = btnPlayPlaylist.findViewById<ImageView>(R.id.ivBsPlayPlaylist)
+        val tvPlayNextRow = btnPlayPlaylist.findViewById<TextView>(R.id.tvBsPlayPlaylist)
+        btnPlayPlaylist.visibility = View.VISIBLE
+        ivPlayNextRow.setImageResource(R.drawable.ic_bs_play_next_yt)
+        tvPlayNextRow.text = "Reproducir a continuación"
+        btnPlayPlaylist.setOnClickListener {
+            dialog.dismiss()
+            addToQueue(track, true)
+        }
+
+        // Row: Añadir a playlist
+        val btnFavorite = view.findViewById<View>(R.id.btnBsFavorite)
         val ivFav = btnFavorite.findViewById<ImageView>(R.id.ivBsFavorite)
         val tvFav = btnFavorite.findViewById<TextView>(R.id.tvBsFavorite)
+        btnFavorite.visibility = View.VISIBLE
         ivFav.setImageResource(R.drawable.ic_stream_queue_add)
         tvFav.text = "Añadir a playlist"
         btnFavorite.setOnClickListener {
@@ -1092,10 +1140,93 @@ class SearchFragment : Fragment() {
             showSaveToPlaylistSheet(track)
         }
 
+        // Row: Iniciar radio
+        val btnPlay = view.findViewById<View>(R.id.btnBsPlay)
+        val ivRadio = btnPlay.findViewById<ImageView>(R.id.ivBsPlay)
+        val tvRadio = btnPlay.findViewById<TextView>(R.id.tvBsPlayLabel)
+        btnPlay.visibility = View.VISIBLE
+        ivRadio.setImageResource(R.drawable.ic_bs_radio)
+        tvRadio.text = "Iniciar radio"
+        btnPlay.setOnClickListener {
+            dialog.dismiss()
+            Toast.makeText(ctx, "Próximamente", Toast.LENGTH_SHORT).show()
+        }
+
+        // Row: Agregar a la fila
+        val btnAddToQueue = view.findViewById<View>(R.id.btnBsAddToQueue)
+        val ivAddToQueue = btnAddToQueue.findViewById<ImageView>(R.id.ivBsAddToQueue)
+        val tvAddToQueue = btnAddToQueue.findViewById<TextView>(R.id.tvBsAddToQueue)
+        btnAddToQueue.visibility = View.VISIBLE
+        ivAddToQueue.setImageResource(R.drawable.ic_bs_add_queue_yt)
+        tvAddToQueue.text = "Agregar a la fila"
+        btnAddToQueue.setOnClickListener {
+            dialog.dismiss()
+            addToQueue(track, false)
+        }
+
+        // Borrar de la playlist — show if track is in at least one local playlist
+        val allPlaylistKeys = mutableListOf<String>().apply {
+            add(FavoritesPlaylistStore.PLAYLIST_ID)
+            for (name in CustomPlaylistsStore.getAllPlaylistNames(ctx))
+                add(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX + name)
+        }
+        val containingPlaylists = allPlaylistKeys.filter { isTrackInPlaylist(ctx, videoId, it) }
+        val btnBsDownload = view.findViewById<View>(R.id.btnBsDownload)
+        if (containingPlaylists.isNotEmpty()) {
+            btnBsDownload.findViewById<ImageView>(R.id.ivBsDownload).setImageResource(R.drawable.ic_delete_modern)
+            btnBsDownload.findViewById<TextView>(R.id.tvBsDownload).text = "Borrar de la playlist"
+            btnBsDownload.visibility = View.VISIBLE
+            btnBsDownload.setOnClickListener {
+                dialog.dismiss()
+                if (containingPlaylists.size == 1) {
+                    removeTrackFromPlaylistByKey(containingPlaylists[0], videoId)
+                    showStatusBarSearch("Se eliminó correctamente") { showSaveToPlaylistSheet(track) }
+                } else {
+                    showSaveToPlaylistSheet(track)
+                }
+            }
+        } else {
+            btnBsDownload.visibility = View.GONE
+        }
+
+        // Reemplazar — not applicable in search
+        view.findViewById<View>(R.id.btnBsReplace).visibility = View.GONE
+
         val parent = view.parent as? View
         parent?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-        
+
         dialog.show()
+    }
+
+    private fun downloadTrackFromSearch(track: YouTubeMusicService.TrackResult) {
+        val videoId = track.videoId ?: return
+        if (videoId.isEmpty()) return
+        val ctx = requireContext()
+        val title = track.title ?: "Tema"
+        val artist = track.subtitle ?: ""
+        val input = Data.Builder()
+            .putString(OfflinePlaylistDownloadWorker.INPUT_PLAYLIST_ID, "search")
+            .putString(OfflinePlaylistDownloadWorker.INPUT_PLAYLIST_TITLE, "Búsqueda")
+            .putStringArray(OfflinePlaylistDownloadWorker.INPUT_VIDEO_IDS, arrayOf(videoId))
+            .putStringArray(OfflinePlaylistDownloadWorker.INPUT_TITLES, arrayOf(title))
+            .putStringArray(OfflinePlaylistDownloadWorker.INPUT_ARTISTS, arrayOf(artist))
+            .putStringArray(OfflinePlaylistDownloadWorker.INPUT_DURATIONS, arrayOf("--:--"))
+            .putInt(OfflinePlaylistDownloadWorker.INPUT_ALREADY_OFFLINE_COUNT, 0)
+            .putInt(OfflinePlaylistDownloadWorker.INPUT_TOTAL_WITH_VIDEO_ID, 1)
+            .putBoolean(OfflinePlaylistDownloadWorker.INPUT_USER_INITIATED, true)
+            .putBoolean(OfflinePlaylistDownloadWorker.INPUT_MANUAL_QUEUE, true)
+            .build()
+        val prefs = ctx.getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE)
+        val allowMobile = prefs.getBoolean(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false)
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(if (allowMobile) NetworkType.CONNECTED else NetworkType.UNMETERED)
+            .build()
+        val request = OneTimeWorkRequest.Builder(OfflinePlaylistDownloadWorker::class.java)
+            .setInputData(input)
+            .setConstraints(constraints)
+            .addTag("offline_search_dl_$videoId")
+            .build()
+        WorkManager.getInstance(ctx).enqueue(request)
     }
 
     private fun showSaveToPlaylistSheet(track: YouTubeMusicService.TrackResult) {
@@ -1108,44 +1239,225 @@ class SearchFragment : Fragment() {
         val parent = sheet.parent as? View
         parent?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
 
+        var lastAddedName: String? = null
+        var didRemove = false
+
         sheet.findViewById<ImageView>(R.id.ivSaveClose).setOnClickListener { saveDialog.dismiss() }
+        sheet.findViewById<View>(R.id.btnSaveCancel).setOnClickListener { saveDialog.dismiss() }
+        sheet.findViewById<View>(R.id.btnSaveConfirm).setOnClickListener {
+            saveDialog.dismiss()
+            if (lastAddedName != null) {
+                showStatusBarSearch("Se guardó en $lastAddedName") { showSaveToPlaylistSheet(track) }
+            } else if (didRemove) {
+                showStatusBarSearch("Se eliminó correctamente") { showSaveToPlaylistSheet(track) }
+            }
+        }
 
         val llList = sheet.findViewById<android.widget.LinearLayout>(R.id.llSavePlaylistList)
         llList.removeAllViews()
 
-        val entries = mutableListOf<Triple<String, String, String>>()
-        val favs = FavoritesPlaylistStore.loadFavorites(ctx)
-        val favThumb = favs.firstOrNull { !it.imageUrl.isNullOrEmpty() }?.imageUrl ?: ""
-        entries.add(Triple(FavoritesPlaylistStore.PLAYLIST_ID, FavoritesPlaylistStore.PLAYLIST_TITLE, favThumb))
+        val density = ctx.resources.displayMetrics.density
+        val thumbSizePx = (48 * density).toInt()
 
-        val customNames = CustomPlaylistsStore.getAllPlaylistNames(ctx)
-        for (name in customNames) {
-            val customTracks = CustomPlaylistsStore.getTracksFromPlaylist(ctx, name)
-            val thumb = customTracks.firstOrNull { !it.imageUrl.isNullOrEmpty() }?.imageUrl ?: ""
-            entries.add(Triple(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX + name, name, thumb))
+        val favs = FavoritesPlaylistStore.loadFavorites(ctx)
+        val favUrls = mutableListOf<String>()
+        for (f in favs) {
+            if (!f.imageUrl.isNullOrEmpty() && f.imageUrl !in favUrls) {
+                favUrls.add(f.imageUrl)
+                if (favUrls.size >= 4) break
+            }
         }
 
-        for ((playlistKey, playlistName, thumbUrl) in entries) {
+        // Favorites row
+        run {
             val row = layoutInflater.inflate(R.layout.item_save_playlist_row, llList, false)
             val ivThumb = row.findViewById<ImageView>(R.id.ivSavePlaylistThumb)
             val tvName = row.findViewById<TextView>(R.id.tvSavePlaylistName)
             val tvCount = row.findViewById<TextView>(R.id.tvSavePlaylistCount)
-            tvName.text = playlistName
-            val count = if (playlistKey == FavoritesPlaylistStore.PLAYLIST_ID)
-                favs.size else CustomPlaylistsStore.getTracksFromPlaylist(ctx, playlistName).size
-            tvCount.text = "$count pistas"
-            if (thumbUrl.isNotEmpty()) {
-                loadArtworkInto(ivThumb, thumbUrl)
+            val ivCheck = row.findViewById<ImageView>(R.id.ivSaveCheck)
+            tvName.text = FavoritesPlaylistStore.PLAYLIST_TITLE
+            tvCount.text = "${favs.size} pistas"
+            if (favUrls.size >= 4) {
+                PlaylistGridArtLoader.load(ivThumb, favUrls, thumbSizePx)
+            } else if (favUrls.isNotEmpty()) {
+                loadArtworkInto(ivThumb, favUrls[0])
             }
+            val isIn = isTrackInPlaylist(ctx, track.videoId ?: "", FavoritesPlaylistStore.PLAYLIST_ID)
+            ivCheck?.visibility = if (isIn) View.VISIBLE else View.GONE
+            var checked = isIn
             row.setOnClickListener {
-                saveDialog.dismiss()
-                addTrackToPlaylistByKey(playlistKey, track)
-                android.widget.Toast.makeText(ctx, "Guardado en $playlistName", android.widget.Toast.LENGTH_SHORT).show()
+                if (checked) {
+                    removeTrackFromPlaylistByKey(FavoritesPlaylistStore.PLAYLIST_ID, track.videoId ?: "")
+                    checked = false
+                    didRemove = true
+                    ivCheck?.visibility = View.GONE
+                    if (lastAddedName == FavoritesPlaylistStore.PLAYLIST_TITLE) lastAddedName = null
+                } else {
+                    addTrackToPlaylistByKey(FavoritesPlaylistStore.PLAYLIST_ID, track)
+                    checked = true
+                    ivCheck?.visibility = View.VISIBLE
+                    lastAddedName = FavoritesPlaylistStore.PLAYLIST_TITLE
+                }
+                val newCount = getPlaylistTrackCount(ctx, FavoritesPlaylistStore.PLAYLIST_ID)
+                tvCount.text = "$newCount pistas"
+            }
+            llList.addView(row)
+        }
+
+        // Custom playlists
+        val customNames = CustomPlaylistsStore.getAllPlaylistNames(ctx)
+        for (name in customNames) {
+            val playlistKey = CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX + name
+            val customTracks = CustomPlaylistsStore.getTracksFromPlaylist(ctx, name)
+            val urls = mutableListOf<String>()
+            for (t in customTracks) {
+                if (!t.imageUrl.isNullOrEmpty() && t.imageUrl !in urls) {
+                    urls.add(t.imageUrl)
+                    if (urls.size >= 4) break
+                }
+            }
+
+            val row = layoutInflater.inflate(R.layout.item_save_playlist_row, llList, false)
+            val ivThumb = row.findViewById<ImageView>(R.id.ivSavePlaylistThumb)
+            val tvName = row.findViewById<TextView>(R.id.tvSavePlaylistName)
+            val tvCount = row.findViewById<TextView>(R.id.tvSavePlaylistCount)
+            val ivCheck = row.findViewById<ImageView>(R.id.ivSaveCheck)
+            tvName.text = name
+            tvCount.text = "${customTracks.size} pistas"
+            if (urls.size >= 4) {
+                PlaylistGridArtLoader.load(ivThumb, urls, thumbSizePx)
+            } else if (urls.isNotEmpty()) {
+                loadArtworkInto(ivThumb, urls[0])
+            }
+            val isIn = isTrackInPlaylist(ctx, track.videoId ?: "", playlistKey)
+            ivCheck?.visibility = if (isIn) View.VISIBLE else View.GONE
+            var checked = isIn
+            row.setOnClickListener {
+                if (checked) {
+                    removeTrackFromPlaylistByKey(playlistKey, track.videoId ?: "")
+                    checked = false
+                    didRemove = true
+                    ivCheck?.visibility = View.GONE
+                    if (lastAddedName == name) lastAddedName = null
+                } else {
+                    addTrackToPlaylistByKey(playlistKey, track)
+                    checked = true
+                    ivCheck?.visibility = View.VISIBLE
+                    lastAddedName = name
+                }
+                val newCount = getPlaylistTrackCount(ctx, playlistKey)
+                tvCount.text = "$newCount pistas"
             }
             llList.addView(row)
         }
 
         saveDialog.show()
+    }
+
+    private fun showStatusBarSearch(message: String, onChangeClick: (() -> Unit)? = null) {
+        if (!isAdded || view == null) return
+        val rootView = view as? android.view.ViewGroup ?: return
+        val existing = rootView.findViewWithTag<View>("saved_bar")
+        if (existing != null) rootView.removeView(existing)
+
+        val density = resources.displayMetrics.density
+
+        val bar = android.widget.LinearLayout(requireContext()).apply {
+            tag = "saved_bar"
+            id = View.generateViewId()
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setBackgroundColor(android.graphics.Color.parseColor("#FF1E1E1E"))
+            val hPad = (16 * density).toInt()
+            val vPad = (20 * density).toInt()
+            setPadding(hPad, vPad, hPad, vPad)
+            elevation = 8 * density
+        }
+
+        val tvMsg = TextView(requireContext()).apply {
+            text = message
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 14f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            layoutParams = android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        bar.addView(tvMsg)
+
+        if (onChangeClick != null) {
+            val btnChange = TextView(requireContext()).apply {
+                text = "Cambiar"
+                setTextColor(android.graphics.Color.parseColor("#8AB4F8"))
+                textSize = 14f
+                setTypeface(null, android.graphics.Typeface.BOLD)
+                setPadding((12 * density).toInt(), 0, 0, 0)
+                setOnClickListener {
+                    rootView.removeView(bar)
+                    onChangeClick()
+                }
+            }
+            bar.addView(btnChange)
+        }
+
+        val barBottomMargin = (12 * density).toInt()
+        if (rootView is androidx.constraintlayout.widget.ConstraintLayout) {
+            val clp = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
+                androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.MATCH_PARENT,
+                androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+                this.bottomMargin = barBottomMargin
+                startToStart = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+                endToEnd = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+            }
+            rootView.addView(bar, clp)
+        } else {
+            val flp = android.widget.FrameLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = android.view.Gravity.BOTTOM
+                this.bottomMargin = barBottomMargin
+            }
+            rootView.addView(bar, flp)
+        }
+
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            if (bar.parent != null) {
+                (bar.parent as android.view.ViewGroup).removeView(bar)
+            }
+        }, 4000L)
+    }
+
+    private fun isTrackInPlaylist(ctx: android.content.Context, videoId: String, playlistKey: String): Boolean {
+        if (videoId.isEmpty()) return false
+        if (playlistKey == FavoritesPlaylistStore.PLAYLIST_ID) {
+            return FavoritesPlaylistStore.isFavorite(ctx, videoId)
+        } else if (playlistKey.startsWith(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX)) {
+            val name = playlistKey.removePrefix(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX)
+            return CustomPlaylistsStore.getTracksFromPlaylist(ctx, name).any { it.videoId == videoId }
+        }
+        return false
+    }
+
+    private fun getPlaylistTrackCount(ctx: android.content.Context, playlistKey: String): Int {
+        if (playlistKey == FavoritesPlaylistStore.PLAYLIST_ID) {
+            return FavoritesPlaylistStore.loadFavorites(ctx).size
+        } else if (playlistKey.startsWith(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX)) {
+            val name = playlistKey.removePrefix(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX)
+            return CustomPlaylistsStore.getTracksFromPlaylist(ctx, name).size
+        }
+        return 0
+    }
+
+    private fun removeTrackFromPlaylistByKey(playlistKey: String, videoId: String) {
+        if (videoId.isEmpty()) return
+        val ctx = requireContext()
+        if (playlistKey == FavoritesPlaylistStore.PLAYLIST_ID) {
+            FavoritesPlaylistStore.removeFavorite(ctx, videoId)
+        } else if (playlistKey.startsWith(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX)) {
+            val name = playlistKey.removePrefix(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX)
+            CustomPlaylistsStore.removeTrackFromPlaylist(ctx, name, videoId)
+        }
     }
 
     private fun addTrackToPlaylistByKey(playlistKey: String, track: YouTubeMusicService.TrackResult) {
@@ -1381,7 +1693,7 @@ class SearchFragment : Fragment() {
 
         if (smartSuggestions.isNotEmpty()) {
             result.add(SuggestionItem.Header("Temas relacionados"))
-            smartSuggestions.forEach { result.add(SuggestionItem.Suggestion(it)) }
+            smartSuggestions.take(7).forEach { result.add(SuggestionItem.Suggestion(it)) }
         }
 
         if (normDraft.length >= 3 && localTrackIndex.isNotEmpty()) {
@@ -1905,23 +2217,10 @@ class SearchFragment : Fragment() {
                 is SuggestionItem.Recent -> {
                     (h as RowViewHolder).apply {
                         text.text = item.query
-                        if (item.thumbnail.isNotEmpty()) {
-                            icon.clearColorFilter()
-                            icon.scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
-                            icon.setPadding(0, 0, 0, 0)
-                            Glide.with(this@SearchFragment)
-                                .load(item.thumbnail)
-                                .transform(SHARED_YT_CROP)
-                                .diskCacheStrategy(DiskCacheStrategy.ALL)
-                                .placeholder(android.R.color.darker_gray)
-                                .into(icon)
-                        } else {
-                            icon.setImageResource(R.drawable.ic_time_24)
-                            icon.setColorFilter(android.graphics.Color.WHITE)
-                            icon.scaleType = android.widget.ImageView.ScaleType.CENTER
-                            val pad = (11 * resources.displayMetrics.density).toInt()
-                            icon.setPadding(pad, pad, pad, pad)
-                        }
+                        icon.setImageResource(R.drawable.ic_time_24)
+                        icon.setColorFilter(android.graphics.Color.WHITE)
+                        icon.scaleType = android.widget.ImageView.ScaleType.CENTER
+                        icon.setPadding(0, 0, 0, 0)
                         itemView.setOnClickListener { onClick(item.query) }
                         itemView.setOnLongClickListener { showDeleteSearchDialog(item.query); true }
                     }
@@ -1932,8 +2231,7 @@ class SearchFragment : Fragment() {
                         icon.setImageResource(R.drawable.ic_search)
                         icon.setColorFilter(android.graphics.Color.WHITE)
                         icon.scaleType = android.widget.ImageView.ScaleType.CENTER
-                        val pad = (11 * resources.displayMetrics.density).toInt()
-                        icon.setPadding(pad, pad, pad, pad)
+                        icon.setPadding(0, 0, 0, 0)
                         itemView.setOnClickListener { onClick(item.query) }
                         itemView.setOnLongClickListener { true }
                     }
@@ -1953,12 +2251,25 @@ class SearchFragment : Fragment() {
                         } else {
                             thumb.visibility = View.GONE
                         }
-                        itemView.setOnClickListener {
-                            val result = YouTubeMusicService.TrackResult(
-                                "video", item.track.videoId, item.track.title, item.track.artist, item.track.imageUrl
-                            )
-                            playTrackDirectly(result)
+                        val trackResult = YouTubeMusicService.TrackResult(
+                            "video", item.track.videoId, item.track.title, item.track.artist, item.track.imageUrl
+                        )
+                        val isOffline = item.track.videoId.isNotEmpty()
+                            && OfflineAudioStore.hasOfflineAudio(requireContext(), item.track.videoId)
+                        if (isOffline) {
+                            offline.setImageResource(R.drawable.ic_check_small)
+                            offline.setBackgroundResource(R.drawable.bg_offline_state_filled_primary)
+                            offline.setColorFilter(ContextCompat.getColor(requireContext(), R.color.surface_dark))
+                            offline.visibility = View.VISIBLE
+                        } else {
+                            offline.visibility = View.INVISIBLE
                         }
+                        itemView.setOnClickListener { playTrackDirectly(trackResult) }
+                        itemView.setOnLongClickListener {
+                            showTrackOptionsBottomSheet(trackResult, it)
+                            true
+                        }
+                        more.setOnClickListener { showTrackOptionsBottomSheet(trackResult, it) }
                     }
                 }
                 is SuggestionItem.RecentImages -> {
@@ -2008,6 +2319,8 @@ class SearchFragment : Fragment() {
             val title: TextView = v.findViewById(R.id.tvAutoCompleteTitle)
             val artist: TextView = v.findViewById(R.id.tvAutoCompleteArtist)
             val thumb: ImageView = v.findViewById(R.id.ivAutoCompleteThumb)
+            val offline: ImageView = v.findViewById(R.id.ivAutoCompleteOffline)
+            val more: ImageView = v.findViewById(R.id.ivAutoCompleteMore)
         }
 
         inner class RecentImagesViewHolder(v: View) : RecyclerView.ViewHolder(v) {

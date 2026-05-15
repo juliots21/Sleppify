@@ -3266,9 +3266,9 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                         if (!isYtPlaylist || !playlistGridUrlsCache.containsKey(targetPlaylistId)) {
                             playlistGridUrlsCache.remove(targetPlaylistId);
                         }
-                        // If no overlay active, refresh adapter immediately per-playlist
+                        // Refresh adapter immediately per-playlist as soon as data is cached
                         mainHandler.post(() -> {
-                            if (!libraryGridOverlayActive && isAdded() && activeScreen == ScreenMode.LIBRARY && adapter != null) {
+                            if (isAdded() && activeScreen == ScreenMode.LIBRARY && adapter != null) {
                                 List<YouTubeMusicService.TrackResult> display = buildDisplayLibrary();
                                 adapter.submitResults(new ArrayList<>(display));
                             }
@@ -4070,6 +4070,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                     .beginTransaction()
                     .setReorderingAllowed(true)
                     .show(existingPlayer)
+                    .setMaxLifecycle(existingPlayer, androidx.lifecycle.Lifecycle.State.RESUMED)
                     .runOnCommit(existingPlayer::externalAnimateEnterSlide)
                     .commit();
             invalidateMiniSnapshotCache();
@@ -5812,6 +5813,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                         .beginTransaction()
                         .setReorderingAllowed(true)
                         .show(existingPlayer)
+                        .setMaxLifecycle(existingPlayer, androidx.lifecycle.Lifecycle.State.RESUMED)
                         .runOnCommit(existingPlayer::externalAnimateEnterSlide)
                         .commit();
             } else {

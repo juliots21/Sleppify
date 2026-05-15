@@ -39,7 +39,7 @@
                 android:textColor="@color/text_primary"
                 android:textSize="16sp"
                 android:fontFamily="sans-serif-black"
-                android:maxLines="1"
+                android:maxLines="2"
                 android:ellipsize="end"
                 android:textStyle="bold"/>
             <TextView
@@ -54,6 +54,17 @@
                 android:ellipsize="end"
                 android:layout_marginTop="2dp"/>
         </LinearLayout>
+
+        <ImageView
+            android:id="@+id/ivBsOfflineState"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_marginStart="10dp"
+            android:background="@drawable/bg_offline_state_filled_primary"
+            android:padding="4dp"
+            android:src="@drawable/ic_check_small"
+            android:visibility="gone"
+            app:tint="@color/surface_dark"/>
     </LinearLayout>
 
     <!-- Top 3 buttons container -->

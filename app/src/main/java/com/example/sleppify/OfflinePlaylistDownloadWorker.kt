@@ -276,9 +276,15 @@ class OfflinePlaylistDownloadWorker(
             }
 
             val targetBitrate = resolveTargetBitrate(context)
-            downloaded = downloadTrackFromYouTubeNewPipe(context, id, targetBitrate, networkIssueTracker, progressReporter)
-            noNetworkEncountered = noNetworkEncountered || networkIssueTracker.hasIssue()
-            Log.d(TAG, "track:newpipe_result id=$id ok=$downloaded")
+            downloaded = downloadTrackFromInnertube(context, id, networkIssueTracker, progressReporter)
+            Log.d(TAG, "track:innertube_result id=$id ok=$downloaded")
+            if (!downloaded && !networkIssueTracker.hasIssue()) {
+                downloaded = downloadTrackFromYouTubeNewPipe(context, id, targetBitrate, networkIssueTracker, progressReporter)
+                noNetworkEncountered = noNetworkEncountered || networkIssueTracker.hasIssue()
+                Log.d(TAG, "track:newpipe_result id=$id ok=$downloaded")
+            } else {
+                noNetworkEncountered = noNetworkEncountered || networkIssueTracker.hasIssue()
+            }
             if (downloaded) {
                 RestrictionHeuristics.processSuccess(context, id)
             } else if (!networkIssueTracker.hasIssue() && networkIssueTracker.isYouTubeRestricted()) {
@@ -744,6 +750,29 @@ class OfflinePlaylistDownloadWorker(
             if (channels > 0) channels else -1
         } catch (_: Throwable) {
             -1
+        }
+    }
+
+    private fun downloadTrackFromInnertube(
+        context: Context,
+        videoId: String,
+        networkIssueTracker: NetworkIssueTracker,
+        progressReporter: ProgressReporter?
+    ): Boolean {
+        return try {
+            val streamUrl = InnertubeResolver.resolveStreamUrl(context, videoId, false)
+                ?: return false
+            val isWebm = streamUrl.contains("mime=audio/webm") ||
+                streamUrl.contains("mime%3Daudio%2Fwebm") ||
+                streamUrl.contains("audio/webm")
+            val target = OfflineAudioStore.getOfflineAudioFileForFormat(context, videoId, isWebm)
+            target.parentFile?.let { if (!it.exists()) it.mkdirs() }
+            val headers = InnertubeResolver.getHeadersFor(videoId)
+            downloadFromUrl(context, streamUrl, target, headers, networkIssueTracker, progressReporter)
+        } catch (e: Exception) {
+            if (isLikelyNetworkException(e)) networkIssueTracker.markIssue()
+            Log.w(TAG, "innertube:exception id=$videoId message=${e.message}")
+            false
         }
     }
 

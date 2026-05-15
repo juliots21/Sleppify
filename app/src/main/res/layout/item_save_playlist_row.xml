@@ -10,17 +10,35 @@
     android:orientation="horizontal"
     android:paddingVertical="10dp">
 
+    <FrameLayout
+        android:id="@+id/flSaveCheckbox"
+        android:layout_width="16dp"
+        android:layout_height="16dp"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:background="@drawable/bg_checkbox_outline">
+
+        <ImageView
+            android:id="@+id/ivSaveCheck"
+            android:layout_width="10dp"
+            android:layout_height="10dp"
+            android:layout_gravity="center"
+            android:src="@drawable/ic_check_small"
+            android:visibility="gone"
+            app:tint="@android:color/white" />
+    </FrameLayout>
+
     <ImageView
         android:id="@+id/ivSavePlaylistThumb"
         android:layout_width="48dp"
         android:layout_height="48dp"
+        android:layout_marginEnd="12dp"
         android:background="@color/surface_high"
         android:scaleType="centerCrop" />
 
     <LinearLayout
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginStart="14dp"
         android:layout_weight="1"
         android:orientation="vertical">
 

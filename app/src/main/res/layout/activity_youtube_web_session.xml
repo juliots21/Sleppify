@@ -163,23 +163,27 @@
                         android:layout_marginStart="16dp" />
                 </LinearLayout>
 
-                <androidx.appcompat.widget.AppCompatButton
+                <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnOverlayLogin"
                     android:layout_width="wrap_content"
-                    android:minWidth="0dp"
-                    android:layout_height="46dp"
+                    android:minWidth="310dp"
+                    android:layout_height="60dp"
                     android:text="Iniciar sesión en YouTube Music"
                     android:textColor="@android:color/white"
+                    app:backgroundTint="@null"
                     android:background="@drawable/bg_youtube_button"
-                    android:drawableStart="@drawable/ic_yt_music_logo"
-                    android:drawablePadding="10dp"
-                    android:paddingStart="24dp"
-                    android:paddingEnd="24dp"
+                    app:icon="@drawable/ic_yt_music_logo"
+                    app:iconGravity="textStart"
+                    app:iconPadding="10dp"
+                    app:iconSize="38dp"
+                    app:iconTint="@null"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="20dp"
                     android:textAllCaps="false"
                     android:fontFamily="sans-serif-medium"
                     android:textStyle="bold"
-                    android:textSize="14sp"
-                    android:elevation="4dp" />
+                    android:textSize="16sp"
+                    android:elevation="8dp" />
 
                 <TextView
                     android:layout_width="match_parent"

@@ -21,10 +21,6 @@ import android.widget.*
 import androidx.appcompat.app.AlertDialog
 import android.app.UiModeManager
 import android.content.res.Configuration
-import android.net.ConnectivityManager
-import android.net.Network
-import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
@@ -127,40 +123,9 @@ class SettingsFragment : Fragment() {
     private var lastProfileEmail: String? = null
     private var lastProfilePhotoUrl: String? = null
 
-    private val connectivityManager by lazy {
-        requireContext().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-    }
-    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
-        override fun onAvailable(network: Network) = checkAndAutoSetOfflineMode()
-        override fun onLost(network: Network) = checkAndAutoSetOfflineMode()
-        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = checkAndAutoSetOfflineMode()
-    }
-
-    private fun checkAndAutoSetOfflineMode() {
-        val ctx = context ?: return
-        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = cm.activeNetwork
-        val caps = if (network != null) cm.getNetworkCapabilities(network) else null
-        val hasInternet = caps != null &&
-            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-        val prefs = ctx.getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE)
-        val currentOffline = prefs.getBoolean(CloudSyncManager.KEY_OFFLINE_MODE_ENABLED, false)
-        if (!hasInternet && !currentOffline) {
-            prefs.edit().putBoolean(CloudSyncManager.KEY_OFFLINE_MODE_ENABLED, true).apply()
-            activity?.runOnUiThread {
-                hasSettingsSnapshot = false
-                renderSettingsState()
-                (activity as? MainActivity)?.notifyOfflineModeChanged()
-            }
-        } else if (hasInternet && currentOffline) {
-            prefs.edit().putBoolean(CloudSyncManager.KEY_OFFLINE_MODE_ENABLED, false).apply()
-            activity?.runOnUiThread {
-                hasSettingsSnapshot = false
-                renderSettingsState()
-                (activity as? MainActivity)?.notifyOfflineModeChanged()
-            }
-        }
+    fun refreshOfflineStateFromPrefs() {
+        hasSettingsSnapshot = false
+        renderSettingsState()
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
@@ -221,19 +186,9 @@ class SettingsFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        val request = NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .build()
-        try { connectivityManager.registerNetworkCallback(request, networkCallback) } catch (_: Exception) {}
-        checkAndAutoSetOfflineMode()
         renderSettingsState()
         renderProfileState()
         refreshStorageBreakdownAsync()
-    }
-
-    override fun onPause() {
-        super.onPause()
-        try { connectivityManager.unregisterNetworkCallback(networkCallback) } catch (_: Exception) {}
     }
 
     private fun showDeleteCacheConfirmation() {

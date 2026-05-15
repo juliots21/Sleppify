@@ -267,6 +267,8 @@ public class SongPlayerFragment extends Fragment {
     private String currentPlaylistContextId = "";
     @NonNull
     private String currentPlaylistContextName = "";
+    @NonNull
+    private String pendingDownloadVideoId = "";
     /**
      * Tracks the videoId for which we already consumed a one-shot InnerTube re-resolution
      * retry after an ExoPlayer failure. If another error occurs for the same videoId,
@@ -548,6 +550,7 @@ public class SongPlayerFragment extends Fragment {
         actionDownloadTrack = view.findViewById(R.id.actionDownloadTrack);
         ivActionDownloadIcon = view.findViewById(R.id.ivActionDownloadIcon);
         tvActionDownloadLabel = view.findViewById(R.id.tvActionDownloadLabel);
+        actionRemoveFromPlaylist = view.findViewById(R.id.actionRemoveFromPlaylist);
         tvActionLikeCount = view.findViewById(R.id.tvActionLikeCount);
         tvActionCommentCount = view.findViewById(R.id.tvActionCommentCount);
         tvActionFavoriteLabel = view.findViewById(R.id.tvActionFavoriteLabel);
@@ -748,7 +751,7 @@ public class SongPlayerFragment extends Fragment {
         long now = SystemClock.elapsedRealtime();
         boolean bootstrapWindow = (now - lastPlaybackStartRequestAtMs) < PLAYBACK_BOOTSTRAP_GRACE_MS;
 
-        if (usingOfflineSource && localExoMediaPlayer != null) {
+        if (localExoMediaPlayer != null) {
             if (localSourcePreparing && bootstrapWindow) {
                 Log.d(TAG, "ensureActivePlaybackIfExpected: waiting local prepare. reason=" + reason);
                 return;
@@ -795,7 +798,7 @@ public class SongPlayerFragment extends Fragment {
         if (!isPlaying) {
             return false;
         }
-        if (usingOfflineSource && localExoMediaPlayer != null) {
+        if (localExoMediaPlayer != null) {
             try {
                 return localExoMediaPlayer.isPlaying();
             } catch (Exception ignored) {
@@ -1491,56 +1494,38 @@ public class SongPlayerFragment extends Fragment {
         // requestToken already incremented above
         final long token = activePlaybackRequestToken;
 
-        // ✅ ASYNC: Merge offline check + stream resolution into a single background
-        // submission to eliminate the extra main→executor round-trip (~30-60ms saved).
-        pendingStreamResolverFuture = streamResolverExecutor.submit(() -> {
-            if (!isAdded() || requestToken != activePlaybackRequestToken) {
+        // ✅ FAST-PATH: check offline on the main thread immediately — no executor queue wait.
+        // OfflineAudioStore.hasOfflineAudio is a simple SharedPrefs/file existence check.
+        boolean hasOfflineLocal = OfflineAudioStore.hasOfflineAudio(requireContext(), track.videoId);
+        if (hasOfflineLocal) {
+            if (shouldSkipRestrictedTrack(track.videoId, true)) {
+                Log.d(TAG, "playCurrentTrack: restricted track skipped in queue. videoId=" + track.videoId);
+                skipRestrictedTrackInQueue();
                 return;
             }
-            
-            boolean hasOfflineLocal = OfflineAudioStore.hasOfflineAudio(requireContext(), track.videoId);
+            Log.d(TAG, "playCurrentTrack: prioritizing local offline audio. videoId=" + track.videoId);
+            List<String> directSources = buildDirectSourceCandidates(track);
+            attemptPlaybackFromSources(track, directSources, 0, requestToken, 0);
+            return;
+        }
 
-            // Fast-path: if offline or prefetched, go straight to main thread
-            if (hasOfflineLocal) {
-                localProgressHandler.post(() -> {
-                    if (!isAdded() || requestToken != activePlaybackRequestToken) return;
-                    if (shouldSkipRestrictedTrack(track.videoId, true)) {
-                        Log.d(TAG, "playCurrentTrack: restricted track skipped in queue. videoId=" + track.videoId);
-                        skipRestrictedTrackInQueue();
-                        return;
-                    }
-                    Log.d(TAG, "playCurrentTrack: prioritizing local offline audio. videoId=" + track.videoId);
-                    List<String> directSources = buildDirectSourceCandidates(track);
-                    attemptPlaybackFromSources(track, directSources, 0, requestToken, 0);
-                });
-                return;
-            }
-
-            // Check prefetch on main thread (fields are main-thread-only)
-            // but resolve online in THIS same background thread if no prefetch
-            final String[] prefetchHolder = new String[1];
-            final boolean[] hasPrefetch = new boolean[1];
-            // Read prefetch state via quick main-thread bounce
-            localProgressHandler.post(() -> {
-                if (!isAdded() || requestToken != activePlaybackRequestToken) return;
-                if (shouldSkipRestrictedTrack(track.videoId, false)) {
-                    Log.d(TAG, "playCurrentTrack: restricted track skipped in queue. videoId=" + track.videoId);
-                    skipRestrictedTrackInQueue();
-                    return;
-                }
-                if (TextUtils.equals(track.videoId, prefetchedNextVideoId) && !TextUtils.isEmpty(prefetchedNextUrl)) {
-                    Log.d(TAG, "playCurrentTrack: using prefetched stream for videoId=" + track.videoId);
-                    String url = prefetchedNextUrl;
-                    prefetchedNextVideoId = null;
-                    prefetchedNextUrl = null;
-                    startMediaPlaybackFromSource(track, url, requestToken, () -> {
-                        resolveAndPlayOnlineTrack(track, requestToken);
-                    });
-                    return;
-                }
+        // Not offline — check prefetch (main-thread fields), then resolve online via executor.
+        if (shouldSkipRestrictedTrack(track.videoId, false)) {
+            Log.d(TAG, "playCurrentTrack: restricted track skipped in queue. videoId=" + track.videoId);
+            skipRestrictedTrackInQueue();
+            return;
+        }
+        if (TextUtils.equals(track.videoId, prefetchedNextVideoId) && !TextUtils.isEmpty(prefetchedNextUrl)) {
+            Log.d(TAG, "playCurrentTrack: using prefetched stream for videoId=" + track.videoId);
+            String url = prefetchedNextUrl;
+            prefetchedNextVideoId = null;
+            prefetchedNextUrl = null;
+            startMediaPlaybackFromSource(track, url, requestToken, () -> {
                 resolveAndPlayOnlineTrack(track, requestToken);
             });
-        });
+            return;
+        }
+        resolveAndPlayOnlineTrack(track, requestToken);
     }
 
     private void handleLocalPlaybackCompletion() {
@@ -3165,6 +3150,7 @@ public class SongPlayerFragment extends Fragment {
         refreshSocialActionsForCurrentTrack(track);
         refreshFavoriteActionForCurrentTrack();
         refreshRemoveChipVisibility();
+        refreshDownloadChipState();
 
         totalSeconds = Math.max(1, parseDurationSeconds(track.duration));
         currentSeconds = 0;
@@ -3256,8 +3242,51 @@ public class SongPlayerFragment extends Fragment {
         if (actionDownloadTrack != null) {
             actionDownloadTrack.setOnClickListener(v -> toggleOfflineDownloadForCurrentTrack());
         }
+        if (actionRemoveFromPlaylist != null) {
+            actionRemoveFromPlaylist.setOnClickListener(v -> removeCurrentTrackFromSourcePlaylist());
+        }
         refreshFavoriteActionForCurrentTrack();
         refreshDownloadChipState();
+        observeManualDownloadWork();
+    }
+
+    private void observeManualDownloadWork() {
+        if (!isAdded()) return;
+        try {
+            androidx.work.WorkManager.getInstance(requireContext().getApplicationContext())
+                    .getWorkInfosForUniqueWorkLiveData("offline_manual_track_queue")
+                    .observe(getViewLifecycleOwner(), workInfos -> {
+                        if (workInfos == null || workInfos.isEmpty()) return;
+                        if (!isAdded() || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) return;
+                        String currentVideoId = tracks.get(currentIndex).videoId;
+                        if (TextUtils.isEmpty(currentVideoId) || !currentVideoId.equals(pendingDownloadVideoId)) return;
+                        for (androidx.work.WorkInfo info : workInfos) {
+                            if (info.getState() == androidx.work.WorkInfo.State.RUNNING) {
+                                String[] activeIds = info.getProgress().getStringArray(
+                                        OfflinePlaylistDownloadWorker.PROGRESS_ACTIVE_IDS);
+                                if (activeIds != null) {
+                                    for (String id : activeIds) {
+                                        if (currentVideoId.equals(id)) {
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
+                            if (info.getState() == androidx.work.WorkInfo.State.SUCCEEDED
+                                    || info.getState() == androidx.work.WorkInfo.State.FAILED
+                                    || info.getState() == androidx.work.WorkInfo.State.CANCELLED) {
+                                boolean nowOffline = OfflineAudioStore.hasValidatedOfflineAudio(
+                                        requireContext(), currentVideoId, null);
+                                if (nowOffline || info.getState() != androidx.work.WorkInfo.State.SUCCEEDED) {
+                                    pendingDownloadVideoId = "";
+                                }
+                                refreshDownloadChipState();
+                                return;
+                            }
+                        }
+                    });
+        } catch (Exception ignored) {
+        }
     }
 
     private void toggleCurrentTrackFavorite() {
@@ -3358,8 +3387,62 @@ public class SongPlayerFragment extends Fragment {
             actionRemoveFromPlaylist.setVisibility(View.GONE);
             return;
         }
-        java.util.List<String[]> containing = getPlaylistsContainingTrack(track.videoId);
-        actionRemoveFromPlaylist.setVisibility(containing.isEmpty() ? View.GONE : View.VISIBLE);
+        boolean isLocalPlaylist = FavoritesPlaylistStore.PLAYLIST_ID.equals(currentPlaylistContextId)
+                || currentPlaylistContextId.startsWith(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX);
+        if (!isLocalPlaylist) {
+            actionRemoveFromPlaylist.setVisibility(View.GONE);
+            return;
+        }
+        boolean belongsToSource = false;
+        if (FavoritesPlaylistStore.PLAYLIST_ID.equals(currentPlaylistContextId)) {
+            belongsToSource = FavoritesPlaylistStore.isFavorite(requireContext(), track.videoId);
+        } else {
+            String playlistName = currentPlaylistContextId.substring(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX.length());
+            java.util.List<FavoritesPlaylistStore.FavoriteTrack> playlistTracks =
+                    CustomPlaylistsStore.INSTANCE.getTracksFromPlaylist(requireContext(), playlistName);
+            for (FavoritesPlaylistStore.FavoriteTrack t : playlistTracks) {
+                if (track.videoId.equals(t.videoId)) {
+                    belongsToSource = true;
+                    break;
+                }
+            }
+        }
+        actionRemoveFromPlaylist.setVisibility(belongsToSource ? View.VISIBLE : View.GONE);
+    }
+
+    private void removeCurrentTrackFromSourcePlaylist() {
+        if (!isAdded() || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) return;
+        PlayerTrack track = tracks.get(currentIndex);
+        if (TextUtils.isEmpty(track.videoId)) return;
+        if (TextUtils.isEmpty(currentPlaylistContextId)) return;
+
+        String displayName;
+        if (FavoritesPlaylistStore.PLAYLIST_ID.equals(currentPlaylistContextId)) {
+            FavoritesPlaylistStore.removeFavorite(requireContext(), track.videoId);
+            displayName = FavoritesPlaylistStore.PLAYLIST_TITLE;
+        } else if (currentPlaylistContextId.startsWith(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX)) {
+            String playlistName = currentPlaylistContextId.substring(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX.length());
+            CustomPlaylistsStore.INSTANCE.removeTrackFromPlaylist(requireContext(), playlistName, track.videoId);
+            displayName = playlistName;
+        } else {
+            return;
+        }
+
+        android.widget.Toast.makeText(requireContext(), "Eliminada de " + displayName, android.widget.Toast.LENGTH_SHORT).show();
+        refreshRemoveChipVisibility();
+        notifyPlaylistDetailAfterRemoval();
+    }
+
+    private void notifyPlaylistDetailAfterRemoval() {
+        if (!isAdded()) return;
+        Fragment playlist = getParentFragmentManager().findFragmentByTag("playlist_detail");
+        if (playlist instanceof PlaylistDetailFragment) {
+            String videoId = null;
+            if (!tracks.isEmpty() && currentIndex >= 0 && currentIndex < tracks.size()) {
+                videoId = tracks.get(currentIndex).videoId;
+            }
+            ((PlaylistDetailFragment) playlist).externalRefreshFavoritesIfActive(videoId);
+        }
     }
 
     @NonNull
@@ -3429,13 +3512,23 @@ public class SongPlayerFragment extends Fragment {
 
         actionDownloadTrack.setVisibility(View.VISIBLE);
         boolean isDownloaded = OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), track.videoId, null);
+        boolean isPending = track.videoId.equals(pendingDownloadVideoId);
         if (isDownloaded) {
+            if (isPending) pendingDownloadVideoId = "";
             tvActionDownloadLabel.setText("Eliminar descarga");
-            ivActionDownloadIcon.setImageResource(R.drawable.ic_check_small); // Or a delete icon
-            // Optional: change color if needed
+            ivActionDownloadIcon.setImageResource(R.drawable.ic_download_bold);
+            actionDownloadTrack.setAlpha(1f);
+            actionDownloadTrack.setClickable(true);
+        } else if (isPending) {
+            tvActionDownloadLabel.setText("Descargando...");
+            ivActionDownloadIcon.setImageResource(R.drawable.ic_download_bold);
+            actionDownloadTrack.setAlpha(0.6f);
+            actionDownloadTrack.setClickable(false);
         } else {
             tvActionDownloadLabel.setText("Descargar");
             ivActionDownloadIcon.setImageResource(R.drawable.ic_download_bold);
+            actionDownloadTrack.setAlpha(1f);
+            actionDownloadTrack.setClickable(true);
         }
     }
 
@@ -3446,14 +3539,15 @@ public class SongPlayerFragment extends Fragment {
 
         boolean isDownloaded = OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), track.videoId, null);
         if (isDownloaded) {
+            pendingDownloadVideoId = "";
             OfflineAudioStore.deleteOfflineAudio(requireContext(), track.videoId);
             android.widget.Toast.makeText(requireContext(), "Descarga eliminada", android.widget.Toast.LENGTH_SHORT).show();
             refreshDownloadChipState();
         } else {
+            pendingDownloadVideoId = track.videoId;
             enqueueOfflineDownloadForTrack(track);
             android.widget.Toast.makeText(requireContext(), "Descarga en cola", android.widget.Toast.LENGTH_SHORT).show();
-            // Button will naturally say 'Descargar' until it finishes, or we could update it. 
-            // In a more complex setup, we would observe WorkManager for this track.
+            refreshDownloadChipState();
         }
     }
 
@@ -5132,67 +5226,156 @@ public class SongPlayerFragment extends Fragment {
         ImageView ivClose = sheet.findViewById(R.id.ivSaveClose);
         ivClose.setOnClickListener(v -> saveDialog.dismiss());
 
+        final String[] lastAddedKey = {null};
+        final String[] lastAddedName = {null};
+        final boolean[] didRemove = {false};
+
+        sheet.findViewById(R.id.btnSaveCancel).setOnClickListener(v -> saveDialog.dismiss());
+        sheet.findViewById(R.id.btnSaveConfirm).setOnClickListener(v -> {
+            saveDialog.dismiss();
+            if (lastAddedKey[0] != null && lastAddedName[0] != null) {
+                showSavedInPlaylistBarPlayer(track, lastAddedKey[0], lastAddedName[0]);
+            } else if (didRemove[0]) {
+                showRemovedFromPlaylistBarPlayer();
+            }
+        });
+
         android.widget.LinearLayout llList = sheet.findViewById(R.id.llSavePlaylistList);
         llList.removeAllViews();
 
-        // Build playlist entries: Favoritos first, then custom playlists
-        java.util.List<String[]> entries = new ArrayList<>();
-        java.util.List<FavoritesPlaylistStore.FavoriteTrack> favs = FavoritesPlaylistStore.loadFavorites(ctx);
-        String favThumb = "";
-        for (FavoritesPlaylistStore.FavoriteTrack f : favs) {
-            if (f != null && !TextUtils.isEmpty(f.imageUrl)) { favThumb = f.imageUrl; break; }
-        }
-        entries.add(new String[]{FavoritesPlaylistStore.PLAYLIST_ID, FavoritesPlaylistStore.PLAYLIST_TITLE,
-                favs.size() + " pistas", favThumb});
+        float density = ctx.getResources().getDisplayMetrics().density;
+        int thumbSizePx = (int) (48 * density);
 
+        // Favoritos
+        java.util.List<FavoritesPlaylistStore.FavoriteTrack> favs = FavoritesPlaylistStore.loadFavorites(ctx);
+        java.util.List<String> favUrls = new ArrayList<>();
+        for (FavoritesPlaylistStore.FavoriteTrack f : favs) {
+            if (f != null && !TextUtils.isEmpty(f.imageUrl)) {
+                if (!favUrls.contains(f.imageUrl)) favUrls.add(f.imageUrl);
+                if (favUrls.size() >= 4) break;
+            }
+        }
+
+        {
+            View row = LayoutInflater.from(ctx).inflate(R.layout.item_save_playlist_row, llList, false);
+            ImageView ivThumb = row.findViewById(R.id.ivSavePlaylistThumb);
+            android.widget.TextView tvName = row.findViewById(R.id.tvSavePlaylistName);
+            android.widget.TextView tvCount = row.findViewById(R.id.tvSavePlaylistCount);
+            ImageView ivCheck = row.findViewById(R.id.ivSaveCheck);
+            tvName.setText(FavoritesPlaylistStore.PLAYLIST_TITLE);
+            tvCount.setText(favs.size() + " pistas");
+            if (favUrls.size() >= 4) {
+                PlaylistGridArtLoader.load(ivThumb, favUrls, thumbSizePx);
+            } else if (!favUrls.isEmpty()) {
+                Glide.with(this).load(favUrls.get(0)).centerCrop().into(ivThumb);
+            }
+            boolean isIn = isTrackInPlaylist(ctx, track.videoId, FavoritesPlaylistStore.PLAYLIST_ID);
+            if (ivCheck != null) ivCheck.setVisibility(isIn ? View.VISIBLE : View.GONE);
+            final boolean[] checked = {isIn};
+            row.setOnClickListener(v -> {
+                if (checked[0]) {
+                    removeTrackFromPlaylistByKey(FavoritesPlaylistStore.PLAYLIST_ID, track.videoId);
+                    checked[0] = false;
+                    didRemove[0] = true;
+                    if (ivCheck != null) ivCheck.setVisibility(View.GONE);
+                    if (FavoritesPlaylistStore.PLAYLIST_ID.equals(lastAddedKey[0])) {
+                        lastAddedKey[0] = null;
+                        lastAddedName[0] = null;
+                    }
+                } else {
+                    addTrackToPlaylistByKey(FavoritesPlaylistStore.PLAYLIST_ID, track);
+                    checked[0] = true;
+                    if (ivCheck != null) ivCheck.setVisibility(View.VISIBLE);
+                    lastAddedKey[0] = FavoritesPlaylistStore.PLAYLIST_ID;
+                    lastAddedName[0] = FavoritesPlaylistStore.PLAYLIST_TITLE;
+                }
+                int count = getPlaylistTrackCount(ctx, FavoritesPlaylistStore.PLAYLIST_ID);
+                tvCount.setText(count + " pistas");
+                refreshRemoveChipVisibility();
+            });
+            llList.addView(row);
+        }
+
+        // Custom playlists
         java.util.List<String> customNames = CustomPlaylistsStore.INSTANCE.getAllPlaylistNames(ctx);
         for (String name : customNames) {
+            String playlistKey = CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX + name;
             java.util.List<FavoritesPlaylistStore.FavoriteTrack> customTracks =
                     CustomPlaylistsStore.INSTANCE.getTracksFromPlaylist(ctx, name);
-            String thumb = "";
+            java.util.List<String> urls = new ArrayList<>();
             for (FavoritesPlaylistStore.FavoriteTrack t : customTracks) {
-                if (!TextUtils.isEmpty(t.imageUrl)) { thumb = t.imageUrl; break; }
+                if (!TextUtils.isEmpty(t.imageUrl)) {
+                    if (!urls.contains(t.imageUrl)) urls.add(t.imageUrl);
+                    if (urls.size() >= 4) break;
+                }
             }
-            entries.add(new String[]{CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX + name, name,
-                    customTracks.size() + " pistas", thumb});
-        }
-
-        for (String[] entry : entries) {
-            String playlistKey = entry[0];
-            String playlistName = entry[1];
-            String countLabel = entry[2];
-            String thumbUrl = entry[3];
 
             View row = LayoutInflater.from(ctx).inflate(R.layout.item_save_playlist_row, llList, false);
             ImageView ivThumb = row.findViewById(R.id.ivSavePlaylistThumb);
             android.widget.TextView tvName = row.findViewById(R.id.tvSavePlaylistName);
             android.widget.TextView tvCount = row.findViewById(R.id.tvSavePlaylistCount);
-
-            tvName.setText(playlistName);
-            tvCount.setText(countLabel);
-            if (!TextUtils.isEmpty(thumbUrl)) {
-                Glide.with(this).load(thumbUrl).centerCrop().into(ivThumb);
+            ImageView ivCheck = row.findViewById(R.id.ivSaveCheck);
+            tvName.setText(name);
+            tvCount.setText(customTracks.size() + " pistas");
+            if (urls.size() >= 4) {
+                PlaylistGridArtLoader.load(ivThumb, urls, thumbSizePx);
+            } else if (!urls.isEmpty()) {
+                Glide.with(this).load(urls.get(0)).centerCrop().into(ivThumb);
             }
-
+            boolean isIn = isTrackInPlaylist(ctx, track.videoId, playlistKey);
+            if (ivCheck != null) ivCheck.setVisibility(isIn ? View.VISIBLE : View.GONE);
+            final boolean[] checked = {isIn};
+            final String pName = name;
             row.setOnClickListener(v -> {
-                saveDialog.dismiss();
-
-                // Move semantics: remove from previous playlist if changing
-                if (previousPlaylistKey != null && !previousPlaylistKey.equals(playlistKey)) {
-                    removeTrackFromPlaylistByKey(previousPlaylistKey, track.videoId);
+                if (checked[0]) {
+                    removeTrackFromPlaylistByKey(playlistKey, track.videoId);
+                    checked[0] = false;
+                    didRemove[0] = true;
+                    if (ivCheck != null) ivCheck.setVisibility(View.GONE);
+                    if (playlistKey.equals(lastAddedKey[0])) {
+                        lastAddedKey[0] = null;
+                        lastAddedName[0] = null;
+                    }
+                } else {
+                    addTrackToPlaylistByKey(playlistKey, track);
+                    checked[0] = true;
+                    if (ivCheck != null) ivCheck.setVisibility(View.VISIBLE);
+                    lastAddedKey[0] = playlistKey;
+                    lastAddedName[0] = pName;
                 }
-
-                // Save to the selected playlist
-                addTrackToPlaylistByKey(playlistKey, track);
-
-                // Show snackbar-like confirmation bar
-                showSavedInPlaylistBarPlayer(track, playlistKey, playlistName);
+                int count = getPlaylistTrackCount(ctx, playlistKey);
+                tvCount.setText(count + " pistas");
+                refreshRemoveChipVisibility();
             });
-
             llList.addView(row);
         }
 
         saveDialog.show();
+    }
+
+    private boolean isTrackInPlaylist(@NonNull Context ctx, @NonNull String videoId, @NonNull String playlistKey) {
+        if (TextUtils.isEmpty(videoId)) return false;
+        if (FavoritesPlaylistStore.PLAYLIST_ID.equals(playlistKey)) {
+            return FavoritesPlaylistStore.isFavorite(ctx, videoId);
+        } else if (playlistKey.startsWith(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX)) {
+            String name = playlistKey.substring(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX.length());
+            java.util.List<FavoritesPlaylistStore.FavoriteTrack> tracks =
+                    CustomPlaylistsStore.INSTANCE.getTracksFromPlaylist(ctx, name);
+            for (FavoritesPlaylistStore.FavoriteTrack t : tracks) {
+                if (videoId.equals(t.videoId)) return true;
+            }
+        }
+        return false;
+    }
+
+    private int getPlaylistTrackCount(@NonNull Context ctx, @NonNull String playlistKey) {
+        if (FavoritesPlaylistStore.PLAYLIST_ID.equals(playlistKey)) {
+            return FavoritesPlaylistStore.loadFavorites(ctx).size();
+        } else if (playlistKey.startsWith(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX)) {
+            String name = playlistKey.substring(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX.length());
+            return CustomPlaylistsStore.INSTANCE.getTracksFromPlaylist(ctx, name).size();
+        }
+        return 0;
     }
 
     private void addTrackToPlaylistByKey(@NonNull String playlistKey, @NonNull PlayerTrack track) {
@@ -5239,7 +5422,7 @@ public class SongPlayerFragment extends Fragment {
         bar.setGravity(android.view.Gravity.CENTER_VERTICAL);
         bar.setBackgroundColor(android.graphics.Color.parseColor("#FF1E1E1E"));
         int hPad = (int) (16 * density);
-        int vPad = (int) (16 * density);
+        int vPad = (int) (20 * density);
         bar.setPadding(hPad, vPad, hPad, vPad);
         bar.setElevation(8 * density);
 
@@ -5265,12 +5448,14 @@ public class SongPlayerFragment extends Fragment {
         });
         bar.addView(btnChange);
 
+        int barBottomMargin = (int) (12 * density);
         if (rootView instanceof androidx.constraintlayout.widget.ConstraintLayout) {
             androidx.constraintlayout.widget.ConstraintLayout.LayoutParams clp =
                     new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
                             androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.MATCH_PARENT,
                             androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.WRAP_CONTENT);
             clp.bottomToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
+            clp.bottomMargin = barBottomMargin;
             clp.startToStart = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
             clp.endToEnd = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
             rootView.addView(bar, clp);
@@ -5279,10 +5464,80 @@ public class SongPlayerFragment extends Fragment {
                     android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                     android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
             flp.gravity = android.view.Gravity.BOTTOM;
+            flp.bottomMargin = barBottomMargin;
             rootView.addView(bar, flp);
         }
 
         // Auto-dismiss after 4 seconds
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            if (bar.getParent() != null) {
+                ((android.view.ViewGroup) bar.getParent()).removeView(bar);
+            }
+        }, 4000L);
+    }
+
+    private void showRemovedFromPlaylistBarPlayer() {
+        if (!isAdded() || getView() == null) return;
+
+        android.view.ViewGroup rootView = (android.view.ViewGroup) getView();
+        View existing = rootView.findViewWithTag("saved_bar");
+        if (existing != null) rootView.removeView(existing);
+
+        float density = getResources().getDisplayMetrics().density;
+
+        android.widget.LinearLayout bar = new android.widget.LinearLayout(requireContext());
+        bar.setTag("saved_bar");
+        bar.setId(View.generateViewId());
+        bar.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        bar.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        bar.setBackgroundColor(android.graphics.Color.parseColor("#FF1E1E1E"));
+        int hPad = (int) (16 * density);
+        int vPad = (int) (20 * density);
+        bar.setPadding(hPad, vPad, hPad, vPad);
+        bar.setElevation(8 * density);
+
+        TextView tvMsg = new TextView(requireContext());
+        tvMsg.setText("Se eliminó correctamente");
+        tvMsg.setTextColor(android.graphics.Color.WHITE);
+        tvMsg.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
+        tvMsg.setTypeface(null, android.graphics.Typeface.BOLD);
+        android.widget.LinearLayout.LayoutParams tvParams = new android.widget.LinearLayout.LayoutParams(
+                0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        tvMsg.setLayoutParams(tvParams);
+        bar.addView(tvMsg);
+
+        TextView btnChange = new TextView(requireContext());
+        btnChange.setText("Cambiar");
+        btnChange.setTextColor(android.graphics.Color.parseColor("#8AB4F8"));
+        btnChange.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
+        btnChange.setTypeface(null, android.graphics.Typeface.BOLD);
+        btnChange.setPadding((int) (12 * density), 0, 0, 0);
+        btnChange.setOnClickListener(v -> {
+            rootView.removeView(bar);
+            showSaveToPlaylistSheetFromPlayer();
+        });
+        bar.addView(btnChange);
+
+        int barBM = (int) (12 * density);
+        if (rootView instanceof androidx.constraintlayout.widget.ConstraintLayout) {
+            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams clp =
+                    new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
+                            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.MATCH_PARENT,
+                            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.WRAP_CONTENT);
+            clp.bottomToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
+            clp.bottomMargin = barBM;
+            clp.startToStart = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
+            clp.endToEnd = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
+            rootView.addView(bar, clp);
+        } else {
+            FrameLayout.LayoutParams flp = new FrameLayout.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+            flp.gravity = android.view.Gravity.BOTTOM;
+            flp.bottomMargin = barBM;
+            rootView.addView(bar, flp);
+        }
+
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
             if (bar.getParent() != null) {
                 ((android.view.ViewGroup) bar.getParent()).removeView(bar);

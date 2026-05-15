@@ -162,6 +162,9 @@ class MainActivity : AppCompatActivity() {
     private var headerBrandTypeface: Typeface? = null
     private var headerSettingsTypeface: Typeface? = null
     private var audioManager: AudioManager? = null
+    private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
+    private var wasNetworkAvailable: Boolean? = null
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     private val outputDeviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>?) {
@@ -272,6 +275,8 @@ class MainActivity : AppCompatActivity() {
             || intent?.action == ACTION_MEDIA_PREV) {
             bottomNav.post { dispatchMediaNotificationAction(intent.action) }
         }
+
+        registerNetworkCallback()
     }
 
     private fun initViews() {
@@ -469,6 +474,14 @@ class MainActivity : AppCompatActivity() {
                 if (m is MusicPlayerFragment && m.isAdded) m.refreshLibraryUi()
             }, 800)
         }
+        val detail = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL)
+        if (detail is PlaylistDetailFragment && detail.isAdded) {
+            detail.refreshForOfflineModeChange()
+        }
+        val settings = supportFragmentManager.findFragmentByTag(TAG_MODULE_SETTINGS)
+        if (settings is SettingsFragment && settings.isAdded) {
+            settings.refreshOfflineStateFromPrefs()
+        }
     }
 
     private fun runDeferredResumeWork() {
@@ -522,7 +535,141 @@ class MainActivity : AppCompatActivity() {
             activeInstance = null
         }
         cloudSyncManager.setSyncStateListener(null)
+        unregisterNetworkCallback()
         super.onDestroy()
+    }
+
+    private fun registerNetworkCallback() {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager ?: return
+        // Seed initial state without showing bar
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork)
+        wasNetworkAvailable = caps != null
+                && caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                && caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+
+        val cb = object : android.net.ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: android.net.Network) {
+                // onAvailable fires before validation; wait for onCapabilitiesChanged
+            }
+
+            override fun onCapabilitiesChanged(
+                network: android.net.Network,
+                caps: android.net.NetworkCapabilities
+            ) {
+                val hasInternet = caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        && caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                if (hasInternet && wasNetworkAvailable != true) {
+                    wasNetworkAvailable = true
+                    mainHandler.post { onNetworkRestored() }
+                }
+            }
+
+            override fun onLost(network: android.net.Network) {
+                // Delay check to allow system to fully release network and avoid false positive
+                mainHandler.postDelayed({
+                    val cmInner = getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+                    val active = cmInner?.activeNetwork
+                    val activeCaps = if (active != null) cmInner.getNetworkCapabilities(active) else null
+                    val stillOnline = activeCaps != null
+                            && activeCaps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                            && activeCaps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                    if (!stillOnline && wasNetworkAvailable != false) {
+                        wasNetworkAvailable = false
+                        onNetworkLost()
+                    }
+                }, 400L)
+            }
+        }
+        networkCallback = cb
+        cm.registerDefaultNetworkCallback(cb)
+    }
+
+    private fun unregisterNetworkCallback() {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+        networkCallback?.let { runCatching { cm?.unregisterNetworkCallback(it) } }
+        networkCallback = null
+    }
+
+    private fun onNetworkLost() {
+        if (isFinishing || isDestroyed) return
+        settingsPrefs.edit().putBoolean(CloudSyncManager.KEY_OFFLINE_MODE_ENABLED, true).apply()
+        showNetworkStatusBar("Modo offline activado", android.graphics.Color.parseColor("#FF1E1E1E"))
+        mainHandler.postDelayed({ notifyOfflineModeChanged() }, 1500L)
+    }
+
+    private fun onNetworkRestored() {
+        if (isFinishing || isDestroyed) return
+        settingsPrefs.edit().putBoolean(CloudSyncManager.KEY_OFFLINE_MODE_ENABLED, false).apply()
+        showNetworkStatusBar("Vuelves a tener conexión", android.graphics.Color.parseColor("#FF00C853"))
+        mainHandler.postDelayed({ notifyOfflineModeChanged() }, 1500L)
+    }
+
+    private fun showNetworkStatusBar(message: String, bgColor: Int) {
+        val root = findViewById<androidx.constraintlayout.widget.ConstraintLayout>(R.id.main) ?: return
+        val existing = root.findViewWithTag<View>("network_status_bar")
+        if (existing != null) root.removeView(existing)
+
+        val density = resources.displayMetrics.density
+
+        val bar = android.widget.LinearLayout(this).apply {
+            tag = "network_status_bar"
+            id = View.generateViewId()
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setBackgroundColor(bgColor)
+            val hPad = (16 * density).toInt()
+            val vPad = (16 * density).toInt()
+            setPadding(hPad, vPad, hPad, vPad)
+            elevation = 45 * density
+        }
+
+        val tv = TextView(this).apply {
+            text = message
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 14f
+            val font = ResourcesCompat.getFont(this@MainActivity, R.font.inter_variable)
+            setTypeface(font, android.graphics.Typeface.BOLD)
+        }
+        bar.addView(tv)
+
+        // Compute extra margin if mini-player is visible
+        var extraMiniPlayerMargin = 0
+        val miniPlayer = fragmentContainer.findViewById<View>(R.id.llMiniPlayer)
+        if (miniPlayer != null && miniPlayer.visibility == View.VISIBLE) {
+            extraMiniPlayerMargin = miniPlayer.height
+        }
+
+        val clp = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
+            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.MATCH_PARENT,
+            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            bottomToTop = R.id.bottomNavigation
+            bottomMargin = (12 * density).toInt() + extraMiniPlayerMargin
+            startToStart = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+            endToEnd = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+        }
+
+        // Start off-screen and slide up
+        bar.translationY = 100 * density
+        bar.alpha = 0f
+        root.addView(bar, clp)
+        bar.animate()
+            .translationY(0f)
+            .alpha(1f)
+            .setDuration(300)
+            .start()
+
+        // Auto-dismiss after 4 seconds
+        mainHandler.postDelayed({
+            if (bar.parent != null) {
+                bar.animate()
+                    .translationY(100 * density)
+                    .alpha(0f)
+                    .setDuration(280)
+                    .withEndAction { (bar.parent as? android.view.ViewGroup)?.removeView(bar) }
+                    .start()
+            }
+        }, 4000L)
     }
 
     private fun shouldShowLoginGateAtStartup() = forceInitialOauthGate || !(authManagerLazy.isSignedIn() && authManagerLazy.getCurrentUser() != null)
