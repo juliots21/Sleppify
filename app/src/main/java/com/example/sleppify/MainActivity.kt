@@ -1128,7 +1128,9 @@ class MainActivity : AppCompatActivity() {
         bottomNav.selectedItemId = R.id.nav_search
         suppressNavListener = false
 
-        val target = searchFragment ?: SearchFragment.newInstance().also { searchFragment = it }
+        val target = (supportFragmentManager.findFragmentByTag(TAG_MODULE_SEARCH) as? SearchFragment)
+            ?.also { searchFragment = it }
+            ?: SearchFragment.newInstance().also { searchFragment = it }
 
         supportFragmentManager.beginTransaction().apply {
             setReorderingAllowed(true)

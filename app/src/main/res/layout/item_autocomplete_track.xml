@@ -11,11 +11,13 @@
     android:focusable="true">
 
     <ImageView
-        android:layout_width="18dp"
-        android:layout_height="18dp"
-        android:src="@drawable/ic_search"
-        android:layout_marginEnd="14dp"
-        android:alpha="0.45" />
+        android:id="@+id/ivAutoCompleteThumb"
+        android:layout_width="50dp"
+        android:layout_height="50dp"
+        android:layout_marginStart="4dp"
+        android:layout_marginEnd="12dp"
+        android:background="@color/surface_high"
+        android:scaleType="centerCrop" />
 
     <LinearLayout
         android:layout_width="0dp"
@@ -28,6 +30,8 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:ellipsize="end"
+            android:fontFamily="sans-serif-black"
+            android:includeFontPadding="false"
             android:maxLines="1"
             android:textColor="@color/text_primary"
             android:textSize="14sp"
@@ -38,9 +42,11 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:ellipsize="end"
+            android:fontFamily="@font/inter_variable"
+            android:includeFontPadding="false"
             android:maxLines="1"
             android:textColor="@color/text_secondary"
-            android:textSize="12sp" />
+            android:textSize="14sp" />
 
     </LinearLayout>
 

@@ -148,9 +148,9 @@ public class SongPlayerFragment extends Fragment {
     private static final long PLAYBACK_BOOTSTRAP_GRACE_MS = 1800L;
     private static final int MAX_PLAYBACK_SOURCE_RETRY = 1;
     private static final long PLAYBACK_SOURCE_RETRY_DELAY_MS = 350L;
-    // Match the primary InnerTube client (ANDROID_MUSIC) so the streaming server sees a
-    // consistent identity between the URL resolution and the playback request.
-    private static final String STREAM_HTTP_USER_AGENT = "com.google.android.apps.youtube.music/7.02.52 (Linux; U; Android 14; es_US; Pixel 7 Pro; Build/UQ1A.240205.002; Cronet/121.0.6167.71)";
+    // Match the primary InnerTube client (ANDROID_MUSIC) so the CDN sees a
+    // consistent identity between the URL resolution and the playback HTTP request.
+    private static final String STREAM_HTTP_USER_AGENT = "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 11; en_US; Pixel 4; Build/RQ3A.210705.001; Cronet/112.0.5615.49) gzip";
     private static final String AUDIUS_API_BASE_URL = "https://discoveryprovider.audius.co/v1";
     private static final String AUDIUS_APP_NAME = "sleppify";
     private static final int AUDIUS_SEARCH_LIMIT = 6;
@@ -208,6 +208,9 @@ public class SongPlayerFragment extends Fragment {
     private ImageView ivActionFavoriteIcon;
     private View actionShare;
     private View actionRemoveFromPlaylist;
+    private View actionDownloadTrack;
+    private ImageView ivActionDownloadIcon;
+    private TextView tvActionDownloadLabel;
 
     private NextUpAdapter nextUpAdapter;
     @Nullable
@@ -302,6 +305,7 @@ public class SongPlayerFragment extends Fragment {
 
     // Direct streaming & pre-fetching
     private volatile String prefetchedNextVideoId = null;
+    private volatile String prefetchedNextUrl = null;
 
     @Nullable
     private Future<?> pendingStreamResolverFuture;
@@ -492,6 +496,11 @@ public class SongPlayerFragment extends Fragment {
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        persistentAppContext = requireContext().getApplicationContext();
+        if (savedInstanceState != null) {
+            // Prevent auto-playback when restoring from a crash/process death
+            isPlaying = false;
+        }
         notificationPermissionLauncher = registerForActivityResult(
                 new ActivityResultContracts.RequestPermission(),
                 granted -> {
@@ -536,7 +545,9 @@ public class SongPlayerFragment extends Fragment {
         actionComments = view.findViewById(R.id.actionComments);
         actionFavorite = view.findViewById(R.id.actionFavorite);
         actionShare = view.findViewById(R.id.actionShare);
-        actionRemoveFromPlaylist = view.findViewById(R.id.actionRemoveFromPlaylist);
+        actionDownloadTrack = view.findViewById(R.id.actionDownloadTrack);
+        ivActionDownloadIcon = view.findViewById(R.id.ivActionDownloadIcon);
+        tvActionDownloadLabel = view.findViewById(R.id.tvActionDownloadLabel);
         tvActionLikeCount = view.findViewById(R.id.tvActionLikeCount);
         tvActionCommentCount = view.findViewById(R.id.tvActionCommentCount);
         tvActionFavoriteLabel = view.findViewById(R.id.tvActionFavoriteLabel);
@@ -1428,6 +1439,9 @@ public class SongPlayerFragment extends Fragment {
         lastSeekTargetSeconds = -1;
         isRestoringPosition = false;
 
+        long requestToken = ++activePlaybackRequestToken;
+        Log.d(TAG, "playCurrentTrack: starting for videoId=" + track.videoId + " newToken=" + requestToken);
+
         PlaybackHistoryStore.Snapshot snapshot = PlaybackHistoryStore.load(requireContext());
         androidx.media3.exoplayer.ExoPlayer sharedExoPlayer = ExoPlayerManager.INSTANCE.getSharedExoPlayer();
         boolean isSharedPlayerActive = sharedExoPlayer != null 
@@ -1474,7 +1488,8 @@ public class SongPlayerFragment extends Fragment {
         }
         cancelPendingStreamResolver();
 
-        long requestToken = ++activePlaybackRequestToken;
+        // requestToken already incremented above
+        final long token = activePlaybackRequestToken;
 
         // ✅ ASYNC: Merge offline check + stream resolution into a single background
         // submission to eliminate the extra main→executor round-trip (~30-60ms saved).
@@ -1513,12 +1528,16 @@ public class SongPlayerFragment extends Fragment {
                     skipRestrictedTrackInQueue();
                     return;
                 }
-                if (TextUtils.equals(track.videoId, prefetchedNextVideoId)) {
+                if (TextUtils.equals(track.videoId, prefetchedNextVideoId) && !TextUtils.isEmpty(prefetchedNextUrl)) {
                     Log.d(TAG, "playCurrentTrack: using prefetched stream for videoId=" + track.videoId);
+                    String url = prefetchedNextUrl;
                     prefetchedNextVideoId = null;
+                    prefetchedNextUrl = null;
+                    startMediaPlaybackFromSource(track, url, requestToken, () -> {
+                        resolveAndPlayOnlineTrack(track, requestToken);
+                    });
+                    return;
                 }
-                // resolveAndPlayOnlineTrack uses innertube:// URI which resolves
-                // instantly from StreamResolvingDataSource's URL cache if prefetched.
                 resolveAndPlayOnlineTrack(track, requestToken);
             });
         });
@@ -1553,17 +1572,24 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
-        // Use innertube:// URI — ExoPlayer resolves the stream URL lazily inside its
-        // buffering pipeline via StreamResolvingDataSource, eliminating the separate
-        // resolve step and reducing time-to-first-audio by 2-5 seconds.
-        // Encode forceAlternativeClient as query param so StreamResolvingDataSource
-        // can pass it through to InnertubeResolver on retry.
-        String innertubeUri = StreamResolvingDataSource.SCHEME + "://" + track.videoId
-                + (forceAlternativeClient ? "?alt=1" : "");
-        startMediaPlaybackFromSource(track, innertubeUri, requestToken, () -> {
-            // On failure: invalidate cache and re-resolve
-            StreamResolvingDataSource.invalidateUrl(track.videoId);
-            tryReresolveOrSkipCurrentTrack("Fallo de reproducción directa: re-resolviendo.", false);
+        pendingStreamResolverFuture = streamResolverExecutor.submit(() -> {
+            String resolvedUrl = forceAlternativeClient
+                    ? InnertubeResolver.resolveStreamUrl(requireContext(), track.videoId, true)
+                    : InnertubeResolver.resolveStreamUrl(requireContext(), track.videoId);
+
+            localProgressHandler.post(() -> {
+                if (requestToken != activePlaybackRequestToken || !isAdded()) return;
+                pendingStreamResolverFuture = null;
+
+                if (!TextUtils.isEmpty(resolvedUrl)) {
+                    startMediaPlaybackFromSource(track, resolvedUrl, requestToken, () -> {
+                        InnertubeResolver.invalidate(track.videoId);
+                        tryReresolveOrSkipCurrentTrack("Fallo de reproducción directa: re-resolviendo.", false);
+                    });
+                } else {
+                    tryReresolveOrSkipCurrentTrack("No se pudo resolver el stream directo. Reintentando.", false);
+                }
+            });
         });
     }
 
@@ -1584,10 +1610,12 @@ public class SongPlayerFragment extends Fragment {
 
         Log.d(TAG, "prefetchNextTrackStream: starting pre-fetch for videoId=" + nextTrack.videoId);
         streamResolverExecutor.submit(() -> {
-            // Pre-warm the StreamResolvingDataSource URL cache so next track plays instantly
-            StreamResolvingDataSource.prefetchUrl(requireContext(), nextTrack.videoId);
-            prefetchedNextVideoId = nextTrack.videoId;
-            Log.d(TAG, "prefetchNextTrackStream: successfully prefetched videoId=" + nextTrack.videoId);
+            String url = InnertubeResolver.resolveStreamUrl(requireContext(), nextTrack.videoId);
+            if (!TextUtils.isEmpty(url)) {
+                prefetchedNextVideoId = nextTrack.videoId;
+                prefetchedNextUrl = url;
+                Log.d(TAG, "prefetchNextTrackStream: successfully prefetched videoId=" + nextTrack.videoId);
+            }
         });
     }
 
@@ -2001,7 +2029,7 @@ public class SongPlayerFragment extends Fragment {
         lastReresolveVideoId = track.videoId;
 
         // Drop cached URL so the next resolveStreamUrl fetches a fresh one.
-        StreamResolvingDataSource.invalidateUrl(track.videoId);
+        InnertubeResolver.invalidate(track.videoId);
 
         cancelSourcePrepareTimeout();
         cancelPendingStreamResolver();
@@ -2222,7 +2250,7 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private boolean isInnertubeSource(@NonNull String source) {
-        return source.startsWith(StreamResolvingDataSource.SCHEME + "://");
+        return false;
     }
 
     private void scheduleSourcePrepareTimeout(
@@ -2487,10 +2515,13 @@ public class SongPlayerFragment extends Fragment {
             }
         }
 
-        // Try innertube:// URI for online playback (resolves lazily via StreamResolvingDataSource)
+        // Try resolving URL for online playback
         if (nextUrl == null && isNetworkAvailable()) {
-            nextUrl = StreamResolvingDataSource.SCHEME + "://" + nextTrack.videoId;
-            nextIsNetwork = true;
+            String resolved = InnertubeResolver.resolveStreamUrl(requireContext(), nextTrack.videoId);
+            if (!TextUtils.isEmpty(resolved)) {
+                nextUrl = resolved;
+                nextIsNetwork = true;
+            }
         }
 
         if (nextUrl == null) {
@@ -2534,10 +2565,13 @@ public class SongPlayerFragment extends Fragment {
             }
         }
 
-        // Try innertube:// URI for online playback (resolves lazily via StreamResolvingDataSource)
+        // Try resolving URL for online playback
         if (nextUrl == null && isNetworkAvailable()) {
-            nextUrl = StreamResolvingDataSource.SCHEME + "://" + nextTrack.videoId;
-            nextIsNetwork = true;
+            String resolved = InnertubeResolver.resolveStreamUrl(requireContext(), nextTrack.videoId);
+            if (!TextUtils.isEmpty(resolved)) {
+                nextUrl = resolved;
+                nextIsNetwork = true;
+            }
         }
 
         if (nextUrl == null) {
@@ -3219,11 +3253,11 @@ public class SongPlayerFragment extends Fragment {
         if (actionShare != null) {
             actionShare.setOnClickListener(v -> shareCurrentTrack());
         }
-        if (actionRemoveFromPlaylist != null) {
-            actionRemoveFromPlaylist.setOnClickListener(v -> showRemoveFromPlaylistPopup(actionRemoveFromPlaylist));
+        if (actionDownloadTrack != null) {
+            actionDownloadTrack.setOnClickListener(v -> toggleOfflineDownloadForCurrentTrack());
         }
         refreshFavoriteActionForCurrentTrack();
-        refreshRemoveChipVisibility();
+        refreshDownloadChipState();
     }
 
     private void toggleCurrentTrackFavorite() {
@@ -3313,6 +3347,43 @@ public class SongPlayerFragment extends Fragment {
         );
     }
 
+    private void refreshRemoveChipVisibility() {
+        if (actionRemoveFromPlaylist == null) return;
+        if (!isAdded() || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) {
+            actionRemoveFromPlaylist.setVisibility(View.GONE);
+            return;
+        }
+        PlayerTrack track = tracks.get(currentIndex);
+        if (TextUtils.isEmpty(track.videoId)) {
+            actionRemoveFromPlaylist.setVisibility(View.GONE);
+            return;
+        }
+        java.util.List<String[]> containing = getPlaylistsContainingTrack(track.videoId);
+        actionRemoveFromPlaylist.setVisibility(containing.isEmpty() ? View.GONE : View.VISIBLE);
+    }
+
+    @NonNull
+    private java.util.List<String[]> getPlaylistsContainingTrack(@NonNull String videoId) {
+        java.util.List<String[]> result = new ArrayList<>();
+        if (!isAdded()) return result;
+        Context ctx = requireContext();
+        if (FavoritesPlaylistStore.isFavorite(ctx, videoId)) {
+            result.add(new String[]{FavoritesPlaylistStore.PLAYLIST_ID, FavoritesPlaylistStore.PLAYLIST_TITLE});
+        }
+        java.util.List<String> customNames = CustomPlaylistsStore.INSTANCE.getAllPlaylistNames(ctx);
+        for (String name : customNames) {
+            java.util.List<FavoritesPlaylistStore.FavoriteTrack> playlistTracks =
+                    CustomPlaylistsStore.INSTANCE.getTracksFromPlaylist(ctx, name);
+            for (FavoritesPlaylistStore.FavoriteTrack t : playlistTracks) {
+                if (videoId.equals(t.videoId)) {
+                    result.add(new String[]{CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX + name, name});
+                    break;
+                }
+            }
+        }
+        return result;
+    }
+
     private void refreshFavoriteActionForCurrentTrack() {
         if (!isAdded()) {
             return;
@@ -3344,109 +3415,73 @@ public class SongPlayerFragment extends Fragment {
         startActivity(android.content.Intent.createChooser(shareIntent, "Compartir"));
     }
 
-    private void refreshRemoveChipVisibility() {
-        if (actionRemoveFromPlaylist == null) return;
+    private void refreshDownloadChipState() {
+        if (actionDownloadTrack == null || ivActionDownloadIcon == null || tvActionDownloadLabel == null) return;
         if (!isAdded() || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) {
-            actionRemoveFromPlaylist.setVisibility(View.GONE);
+            actionDownloadTrack.setVisibility(View.GONE);
             return;
         }
         PlayerTrack track = tracks.get(currentIndex);
         if (TextUtils.isEmpty(track.videoId)) {
-            actionRemoveFromPlaylist.setVisibility(View.GONE);
+            actionDownloadTrack.setVisibility(View.GONE);
             return;
         }
-        java.util.List<String[]> containing = getPlaylistsContainingTrack(track.videoId);
-        actionRemoveFromPlaylist.setVisibility(containing.isEmpty() ? View.GONE : View.VISIBLE);
+
+        actionDownloadTrack.setVisibility(View.VISIBLE);
+        boolean isDownloaded = OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), track.videoId, null);
+        if (isDownloaded) {
+            tvActionDownloadLabel.setText("Eliminar descarga");
+            ivActionDownloadIcon.setImageResource(R.drawable.ic_check_small); // Or a delete icon
+            // Optional: change color if needed
+        } else {
+            tvActionDownloadLabel.setText("Descargar");
+            ivActionDownloadIcon.setImageResource(R.drawable.ic_download_bold);
+        }
     }
 
-    @NonNull
-    private java.util.List<String[]> getPlaylistsContainingTrack(@NonNull String videoId) {
-        java.util.List<String[]> result = new ArrayList<>();
-        if (!isAdded()) return result;
-        Context ctx = requireContext();
-        // Check Favoritos
-        if (FavoritesPlaylistStore.isFavorite(ctx, videoId)) {
-            result.add(new String[]{FavoritesPlaylistStore.PLAYLIST_ID, FavoritesPlaylistStore.PLAYLIST_TITLE});
-        }
-        // Check custom playlists
-        java.util.List<String> customNames = CustomPlaylistsStore.INSTANCE.getAllPlaylistNames(ctx);
-        for (String name : customNames) {
-            java.util.List<FavoritesPlaylistStore.FavoriteTrack> playlistTracks =
-                    CustomPlaylistsStore.INSTANCE.getTracksFromPlaylist(ctx, name);
-            for (FavoritesPlaylistStore.FavoriteTrack t : playlistTracks) {
-                if (videoId.equals(t.videoId)) {
-                    result.add(new String[]{CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX + name, name});
-                    break;
-                }
-            }
-        }
-        return result;
-    }
-
-    private void showRemoveFromPlaylistPopup(@NonNull View anchor) {
+    private void toggleOfflineDownloadForCurrentTrack() {
         if (!isAdded() || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) return;
         PlayerTrack track = tracks.get(currentIndex);
         if (TextUtils.isEmpty(track.videoId)) return;
 
-        java.util.List<String[]> containing = getPlaylistsContainingTrack(track.videoId);
-        if (containing.isEmpty()) return;
-
-        float density = getResources().getDisplayMetrics().density;
-
-        android.widget.LinearLayout popupContent = new android.widget.LinearLayout(requireContext());
-        popupContent.setOrientation(android.widget.LinearLayout.VERTICAL);
-        popupContent.setBackgroundResource(R.drawable.bg_popup_menu);
-        int pad = (int) (12 * density);
-        popupContent.setPadding(pad, pad, pad, pad);
-
-        android.widget.PopupWindow popup = new android.widget.PopupWindow(
-                popupContent,
-                (int) (220 * density),
-                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-                true);
-        popup.setElevation(12 * density);
-        popup.setOutsideTouchable(true);
-        popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
-
-        for (String[] entry : containing) {
-            String playlistKey = entry[0];
-            String playlistName = entry[1];
-
-            android.widget.LinearLayout row = new android.widget.LinearLayout(requireContext());
-            row.setOrientation(android.widget.LinearLayout.HORIZONTAL);
-            row.setGravity(android.view.Gravity.CENTER_VERTICAL);
-            int rowPad = (int) (10 * density);
-            row.setPadding(rowPad, rowPad, rowPad, rowPad);
-            row.setBackgroundResource(android.R.attr.selectableItemBackground);
-            android.content.res.TypedArray ta = requireContext().obtainStyledAttributes(new int[]{android.R.attr.selectableItemBackground});
-            row.setBackground(ta.getDrawable(0));
-            ta.recycle();
-
-            ImageView ivIcon = new ImageView(requireContext());
-            ivIcon.setImageResource(R.drawable.ic_delete_modern);
-            ivIcon.setColorFilter(android.graphics.Color.WHITE);
-            int iconSize = (int) (18 * density);
-            android.widget.LinearLayout.LayoutParams iconParams = new android.widget.LinearLayout.LayoutParams(iconSize, iconSize);
-            ivIcon.setLayoutParams(iconParams);
-            row.addView(ivIcon);
-
-            TextView tvName = new TextView(requireContext());
-            tvName.setText(playlistName);
-            tvName.setTextColor(android.graphics.Color.WHITE);
-            tvName.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
-            tvName.setPadding((int) (10 * density), 0, 0, 0);
-            row.addView(tvName);
-
-            row.setOnClickListener(v -> {
-                popup.dismiss();
-                removeTrackFromPlaylistByKey(playlistKey, track.videoId);
-                refreshRemoveChipVisibility();
-            });
-
-            popupContent.addView(row);
+        boolean isDownloaded = OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), track.videoId, null);
+        if (isDownloaded) {
+            OfflineAudioStore.deleteOfflineAudio(requireContext(), track.videoId);
+            android.widget.Toast.makeText(requireContext(), "Descarga eliminada", android.widget.Toast.LENGTH_SHORT).show();
+            refreshDownloadChipState();
+        } else {
+            enqueueOfflineDownloadForTrack(track);
+            android.widget.Toast.makeText(requireContext(), "Descarga en cola", android.widget.Toast.LENGTH_SHORT).show();
+            // Button will naturally say 'Descargar' until it finishes, or we could update it. 
+            // In a more complex setup, we would observe WorkManager for this track.
         }
+    }
 
-        popup.showAsDropDown(anchor, 0, (int) (4 * density), android.view.Gravity.START);
+    private void enqueueOfflineDownloadForTrack(PlayerTrack track) {
+        androidx.work.Data input = new androidx.work.Data.Builder()
+                .putString(OfflinePlaylistDownloadWorker.INPUT_PLAYLIST_ID, "")
+                .putString(OfflinePlaylistDownloadWorker.INPUT_PLAYLIST_TITLE, "Descargas Manuales")
+                .putStringArray(OfflinePlaylistDownloadWorker.INPUT_VIDEO_IDS, new String[]{track.videoId})
+                .putStringArray(OfflinePlaylistDownloadWorker.INPUT_TITLES, new String[]{track.title})
+                .putStringArray(OfflinePlaylistDownloadWorker.INPUT_ARTISTS, new String[]{track.artist})
+                .putStringArray(OfflinePlaylistDownloadWorker.INPUT_DURATIONS, new String[]{track.duration})
+                .putInt(OfflinePlaylistDownloadWorker.INPUT_ALREADY_OFFLINE_COUNT, 0)
+                .putInt(OfflinePlaylistDownloadWorker.INPUT_TOTAL_WITH_VIDEO_ID, 1)
+                .putBoolean(OfflinePlaylistDownloadWorker.INPUT_USER_INITIATED, true)
+                .putBoolean(OfflinePlaylistDownloadWorker.INPUT_MANUAL_QUEUE, true)
+                .build();
+        SharedPreferences prefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE);
+        boolean allowMobileData = prefs.getBoolean(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false);
+        androidx.work.Constraints constraints = new androidx.work.Constraints.Builder()
+                .setRequiredNetworkType(allowMobileData ? androidx.work.NetworkType.CONNECTED : androidx.work.NetworkType.UNMETERED)
+                .build();
+        androidx.work.OneTimeWorkRequest request = new androidx.work.OneTimeWorkRequest.Builder(OfflinePlaylistDownloadWorker.class)
+                .setInputData(input)
+                .setConstraints(constraints)
+                .addTag("offline_manual_track_queue")
+                .build();
+        androidx.work.WorkManager.getInstance(requireContext().getApplicationContext())
+                .enqueueUniqueWork("offline_manual_track_queue", androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE, request);
     }
 
     private void refreshSocialActionsForCurrentTrack(@Nullable PlayerTrack track) {

@@ -76,19 +76,6 @@
         </LinearLayout>
     </LinearLayout>
 
-    <!-- Autocomplete dropdown — floats directly below search bar -->
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/rvAutoComplete"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:background="@color/surface_low"
-        android:elevation="20dp"
-        android:visibility="gone"
-        android:overScrollMode="never"
-        app:layout_constraintTop_toBottomOf="@id/llSearchBar"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
-
     <!-- Status / loading text (Overlay) -->
     <LinearLayout
         android:id="@+id/llSearchState"
@@ -276,36 +263,7 @@
         app:layout_constraintTop_toBottomOf="@id/llSearchBar"
         app:layout_constraintBottom_toTopOf="@id/llMiniPlayer">
 
-        <!-- Recent searches images carousel -->
-        <LinearLayout
-            android:id="@+id/llRecentSearchesSection"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:paddingStart="16dp"
-            android:paddingTop="16dp"
-            android:paddingBottom="12dp">
-
-            <TextView
-                android:id="@+id/tvRecentSearchesLabel"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:fontFamily="@font/inter_variable"
-                android:text="Búsquedas recientes"
-                android:textColor="@color/text_secondary"
-                android:textSize="12sp" />
-
-            <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/rvRecentSearchImages"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:clipToPadding="false"
-                android:overScrollMode="never"
-                android:paddingEnd="16dp" />
-        </LinearLayout>
-
-        <!-- Search suggestions list -->
+        <!-- Search suggestions list (includes recent images carousel as first item) -->
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/rvSearchSuggestions"
             android:layout_width="match_parent"

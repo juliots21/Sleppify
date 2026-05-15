@@ -915,9 +915,13 @@ public class PlaylistDetailFragment extends Fragment
             return;
         }
 
+        // Invalidate offline state cache for the visible range so that
+        // triggerOfflineStateLookup re-runs the disk check instead of returning
+        // the stale cached value (which would keep the icon stuck at "not offline").
+        trackAdapter.invalidateVisibleTrackStateCache(currentTracks, start, end);
         // Use PAYLOAD_STATE_ONLY so onBindViewHolder skips image reload and
-        // click listener re-setup. Cache stays valid — states are still correct
-        // from before the fragment was hidden; async re-lookups update them naturally.
+        // click listener re-setup. The invalidated cache will trigger fresh
+        // async lookups that call notifyItemChanged when they resolve.
         trackAdapter.notifyItemRangeChanged(start, (end - start) + 1, PAYLOAD_STATE_ONLY);
     }
 
@@ -2487,14 +2491,20 @@ public class PlaylistDetailFragment extends Fragment
                 Log.e(TAG_OFFLINE_DOWNLOAD, "terminal_state=" + terminalInfo.getState());
                 setOfflineDownloadVisualState(false, "");
 
-                if (!offlineObserverNotifyTerminalToasts) {
-                    stopObservingOfflineDownload();
-                    maybeUpdateOfflineReadyState();
+                stopObservingOfflineDownload();
+                maybeUpdateOfflineReadyState();
+
+                if (terminalInfo.getState() == WorkInfo.State.FAILED
+                        && isCurrentPlaylistOfflineAutoEnabled()
+                        && isInternetAvailable()) {
+                    Log.w(TAG_OFFLINE_DOWNLOAD, "terminal_failed: auto-retrying download for playlist=" + currentPlaylistId);
+                    startOfflinePlaylistDownload(false);
                     return;
                 }
 
-                notifyHeaderChanged();
-                stopObservingOfflineDownload();
+                if (offlineObserverNotifyTerminalToasts) {
+                    notifyHeaderChanged();
+                }
             }
         };
 

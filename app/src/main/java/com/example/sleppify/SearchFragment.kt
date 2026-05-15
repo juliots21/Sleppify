@@ -101,8 +101,6 @@ class SearchFragment : Fragment() {
     private lateinit var llSearchState: View
     private lateinit var nsvSearchContent: View
     private lateinit var rvSearchSuggestions: RecyclerView
-    private lateinit var rvRecentSearchImages: RecyclerView
-    private lateinit var llRecentSearchesSection: LinearLayout
     private lateinit var llSearchSuggestionsContainer: View
     private lateinit var moduleLoadingOverlay: View
     private lateinit var llFeaturedResult: View
@@ -116,9 +114,6 @@ class SearchFragment : Fragment() {
     private lateinit var tvMiniPlayerSubtitle: TextView
     private lateinit var btnMiniPlayPause: android.widget.ImageButton
     private lateinit var sbMiniPlayerProgress: android.widget.SeekBar
-    private lateinit var rvAutoComplete: RecyclerView
-    private var autoCompleteAdapter: AutoCompleteAdapter? = null
-
     private var adapter: SearchResultsAdapter? = null
     private var featuredTrack: YouTubeMusicService.TrackResult? = null
     
@@ -149,14 +144,12 @@ class SearchFragment : Fragment() {
         initViews(view)
         setupRecyclerView()
         setupSuggestionsRecyclerView()
-        setupRecentSearchImagesRecyclerView()
         setupSearchInput()
         setupBackButton()
 
         restoreRecentSearchQueries()
         loadRecentSearchesFromFirebase()
         refreshSearchSuggestions("")
-        setupAutoComplete()
 
         setupBackNavigation()
 
@@ -172,11 +165,8 @@ class SearchFragment : Fragment() {
         llSearchState = root.findViewById(R.id.llSearchState)
         nsvSearchContent = root.findViewById(R.id.nsvSearchContent)
         rvSearchSuggestions = root.findViewById(R.id.rvSearchSuggestions)
-        rvRecentSearchImages = root.findViewById(R.id.rvRecentSearchImages)
-        llRecentSearchesSection = root.findViewById(R.id.llRecentSearchesSection)
         llSearchSuggestionsContainer = root.findViewById(R.id.llSearchSuggestionsContainer)
         moduleLoadingOverlay = root.findViewById(R.id.moduleLoadingOverlay)
-        rvAutoComplete = root.findViewById(R.id.rvAutoComplete)
         llFeaturedResult = root.findViewById(R.id.llFeaturedResult)
         ivFeaturedThumb = root.findViewById(R.id.ivFeaturedThumb)
         tvFeaturedTitle = root.findViewById(R.id.tvFeaturedTitle)
@@ -294,44 +284,6 @@ class SearchFragment : Fragment() {
         rvSearchSuggestions.adapter = suggestionsAdapter
     }
 
-    private fun setupRecentSearchImagesRecyclerView() {
-        val layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
-        rvRecentSearchImages.layoutManager = layoutManager
-        rvRecentSearchImages.adapter = RecentSearchImageAdapter { recentSearch ->
-            if (recentSearch.videoId.isNotEmpty()) {
-                var artist = recentSearch.artist
-                if (artist.isEmpty()) {
-                    artist = resolveArtistForVideoId(recentSearch.videoId)
-                }
-                val track = YouTubeMusicService.TrackResult(
-                    "video",
-                    recentSearch.videoId,
-                    recentSearch.title,
-                    artist,
-                    recentSearch.thumbnail
-                )
-                // Back-fill artist into saved data if it was missing
-                if (recentSearch.artist.isEmpty() && artist.isNotEmpty()) {
-                    val idx = recentSearchData.indexOfFirst { it.videoId == recentSearch.videoId }
-                    if (idx >= 0) {
-                        recentSearchData[idx] = recentSearch.copy(artist = artist)
-                        saveRecentSearchQueries()
-                    }
-                }
-                playTrackDirectly(track)
-            } else {
-                etSearchQuery.setText(recentSearch.query)
-                etSearchQuery.setSelection(recentSearch.query.length)
-            }
-        }
-    }
-
-    private fun updateRecentSearchImages() {
-        val adapter = rvRecentSearchImages.adapter as? RecentSearchImageAdapter
-        val itemsWithImages = recentSearchData.filter { it.thumbnail.isNotEmpty() }.take(5)
-        adapter?.updateItems(itemsWithImages)
-        llRecentSearchesSection.visibility = if (itemsWithImages.isEmpty()) View.GONE else View.VISIBLE
-    }
 
     private fun setupSearchInput() {
         etSearchQuery.setOnFocusChangeListener { _, hasFocus ->
@@ -358,31 +310,11 @@ class SearchFragment : Fragment() {
             override fun afterTextChanged(s: Editable?) {
                 val query = s?.toString()?.trim() ?: ""
                 ivSearchClear.visibility = if (query.isEmpty()) View.GONE else View.VISIBLE
-                // Hide recent images when typing, show when empty
-                if (query.isEmpty()) {
-                    updateRecentSearchImages()
-                    hideAutoComplete()
-                } else {
-                    llRecentSearchesSection.visibility = View.GONE
-                    filterAutoComplete(query)
-                }
                 refreshSearchSuggestions(query)
             }
         })
     }
 
-    private fun setupAutoComplete() {
-        autoCompleteAdapter = AutoCompleteAdapter { track ->
-            hideAutoComplete()
-            val result = YouTubeMusicService.TrackResult(
-                "video", track.videoId, track.title, track.artist, track.imageUrl
-            )
-            playTrackDirectly(result)
-        }
-        rvAutoComplete.layoutManager = LinearLayoutManager(requireContext())
-        rvAutoComplete.adapter = autoCompleteAdapter
-        rvAutoComplete.itemAnimator = null
-    }
 
     private fun loadLocalTrackIndex() {
         lifecycleScope.launch(Dispatchers.IO) {
@@ -433,35 +365,12 @@ class SearchFragment : Fragment() {
         }
     }
 
-    private fun filterAutoComplete(query: String) {
-        if (localTrackIndex.isEmpty()) { hideAutoComplete(); return }
-        val norm = normalizeForFilter(query)
-        if (norm.isEmpty()) { hideAutoComplete(); return }
-        val matches = localTrackIndex
-            .filter { normalizeForFilter(it.title).contains(norm) || normalizeForFilter(it.artist).contains(norm) }
-            .sortedByDescending { if (normalizeForFilter(it.title).startsWith(norm)) 2 else if (normalizeForFilter(it.artist).startsWith(norm)) 1 else 0 }
-            .take(6)
-        if (matches.isEmpty()) { hideAutoComplete(); return }
-        autoCompleteAdapter?.updateItems(matches)
-        rvAutoComplete.visibility = View.VISIBLE
-    }
-
-    private fun hideAutoComplete() {
-        rvAutoComplete.visibility = View.GONE
-        autoCompleteAdapter?.updateItems(emptyList())
-    }
 
     private fun showSuggestionsMode() {
         val query = etSearchQuery.text?.toString()?.trim() ?: ""
         refreshSearchSuggestions(query)
         llSearchSuggestionsContainer.visibility = View.VISIBLE
         rvSearchSuggestions.visibility = View.VISIBLE
-        // Only show recent search images when search bar is empty
-        if (query.isEmpty()) {
-            updateRecentSearchImages()
-        } else {
-            llRecentSearchesSection.visibility = View.GONE
-        }
         nsvSearchContent.visibility = View.GONE
         llSearchState.visibility = View.GONE
         view?.requestLayout()
@@ -498,7 +407,6 @@ class SearchFragment : Fragment() {
         nextSearchPageToken = ""
 
         refreshSearchSuggestions(query)
-        hideAutoComplete()
         rvSearchSuggestions.visibility = View.GONE
         llSearchSuggestionsContainer.visibility = View.GONE
         nsvSearchContent.visibility = View.VISIBLE
@@ -533,7 +441,10 @@ class SearchFragment : Fragment() {
             }
         }
 
-        if (!isNetworkAvailable()) return
+        if (!isNetworkAvailable()) {
+            if (!append) setSearchLoadingState(true, "Buscando en tu biblioteca...")
+            return
+        }
 
         // 2. Proceso de búsqueda Online
         if (append) {
@@ -914,19 +825,29 @@ class SearchFragment : Fragment() {
             return
         }
 
-        val allResults = listOfNotNull(featuredTrack) + tracks
-        val videoResults = allResults.filter { it.videoId?.isNotEmpty() == true }
-        
-        val tracksArray = JSONArray()
-        videoResults.forEach {
-            val obj = JSONObject()
-            obj.put("resultType", it.resultType)
-            obj.put("videoId", it.videoId)
-            obj.put("contentId", it.contentId)
-            obj.put("title", it.title)
-            obj.put("subtitle", it.subtitle)
-            obj.put("thumbnailUrl", it.thumbnailUrl)
-            tracksArray.put(obj)
+        // First, try to find the track in a local playlist for full playlist playback
+        val videoId = track.videoId ?: ""
+        val playlistQueue = buildPlaylistQueueForTrack(videoId)
+
+        val tracksArray: JSONArray
+        if (playlistQueue.length() > 0) {
+            // Use the playlist queue (contains the full playlist starting from selected track)
+            tracksArray = playlistQueue
+        } else {
+            // Fall back to search results as queue
+            val allResults = listOfNotNull(featuredTrack) + tracks
+            val videoResults = allResults.filter { it.videoId?.isNotEmpty() == true }
+            tracksArray = JSONArray()
+            videoResults.forEach {
+                val obj = JSONObject()
+                obj.put("resultType", it.resultType)
+                obj.put("videoId", it.videoId)
+                obj.put("contentId", it.contentId)
+                obj.put("title", it.title)
+                obj.put("subtitle", it.subtitle)
+                obj.put("thumbnailUrl", it.thumbnailUrl)
+                tracksArray.put(obj)
+            }
         }
 
         val playbackIntent = Intent(requireContext(), MainActivity::class.java).apply {
@@ -951,15 +872,20 @@ class SearchFragment : Fragment() {
     }
 
     private fun playTrackDirectly(track: YouTubeMusicService.TrackResult) {
-        val tracksArray = JSONArray()
-        val obj = JSONObject()
-        obj.put("resultType", track.resultType)
-        obj.put("videoId", track.videoId)
-        obj.put("contentId", track.contentId)
-        obj.put("title", track.title)
-        obj.put("subtitle", track.subtitle)
-        obj.put("thumbnailUrl", track.thumbnailUrl)
-        tracksArray.put(obj)
+        val videoId = track.videoId ?: ""
+        val tracksArray = buildPlaylistQueueForTrack(videoId)
+
+        // If no playlist was found, fall back to just the single track
+        if (tracksArray.length() == 0) {
+            val obj = JSONObject()
+            obj.put("resultType", track.resultType)
+            obj.put("videoId", track.videoId)
+            obj.put("contentId", track.contentId)
+            obj.put("title", track.title)
+            obj.put("subtitle", track.subtitle)
+            obj.put("thumbnailUrl", track.thumbnailUrl)
+            tracksArray.put(obj)
+        }
 
         val playbackIntent = Intent(requireContext(), MainActivity::class.java).apply {
             action = MainActivity.ACTION_PLAY_FROM_SEARCH
@@ -975,6 +901,137 @@ class SearchFragment : Fragment() {
         if (requireActivity() is MainActivity) {
             (requireActivity() as MainActivity).handlePlayFromSearchIntent(playbackIntent)
         }
+    }
+
+    /**
+     * Searches through all local playlists to find the best one containing the given videoId.
+     * Priority order: Favoritos > Custom playlists > Cached YT playlists > Playback history.
+     * Returns the full playlist as a JSONArray with the selected track positioned first,
+     * or an empty JSONArray if no playlist contains the track.
+     */
+    private fun buildPlaylistQueueForTrack(videoId: String): JSONArray {
+        if (videoId.isEmpty()) return JSONArray()
+        val ctx = context ?: return JSONArray()
+
+        // 1. Check Favoritos
+        try {
+            val favs = FavoritesPlaylistStore.loadFavorites(ctx)
+            if (favs.any { it.videoId == videoId }) {
+                return buildQueueFromFavoriteTracks(favs, videoId)
+            }
+        } catch (_: Exception) {}
+
+        // 2. Check custom playlists
+        try {
+            for (name in CustomPlaylistsStore.getAllPlaylistNames(ctx)) {
+                val playlistTracks = CustomPlaylistsStore.getTracksFromPlaylist(ctx, name)
+                if (playlistTracks.any { it.videoId == videoId }) {
+                    return buildQueueFromFavoriteTracks(playlistTracks, videoId)
+                }
+            }
+        } catch (_: Exception) {}
+
+        // 3. Check cached YouTube playlists
+        try {
+            val cache = ctx.getSharedPreferences("streaming_cache", Context.MODE_PRIVATE)
+            for ((key, value) in cache.all) {
+                if (key.startsWith("playlist_tracks_data_") && value is String) {
+                    val arr = org.json.JSONArray(value)
+                    var found = false
+                    for (i in 0 until arr.length()) {
+                        if (arr.getJSONObject(i).optString("videoId") == videoId) {
+                            found = true
+                            break
+                        }
+                    }
+                    if (found) {
+                        return buildQueueFromCachedPlaylist(arr, videoId)
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        // 4. Check playback history queue
+        try {
+            val snapshot = PlaybackHistoryStore.load(ctx)
+            if (snapshot.queue.any { it.videoId == videoId }) {
+                return buildQueueFromHistoryTracks(snapshot.queue, videoId)
+            }
+        } catch (_: Exception) {}
+
+        return JSONArray()
+    }
+
+    private fun buildQueueFromFavoriteTracks(
+        tracks: List<FavoritesPlaylistStore.FavoriteTrack>,
+        selectedVideoId: String
+    ): JSONArray {
+        val result = JSONArray()
+        // Place selected track first, then the rest in order
+        val selectedIdx = tracks.indexOfFirst { it.videoId == selectedVideoId }
+        if (selectedIdx < 0) return result
+
+        val ordered = tracks.subList(selectedIdx, tracks.size) + tracks.subList(0, selectedIdx)
+        for (t in ordered) {
+            val obj = JSONObject()
+            obj.put("resultType", "video")
+            obj.put("videoId", t.videoId)
+            obj.put("contentId", t.videoId)
+            obj.put("title", t.title)
+            obj.put("subtitle", t.artist)
+            obj.put("thumbnailUrl", t.imageUrl)
+            result.put(obj)
+        }
+        return result
+    }
+
+    private fun buildQueueFromCachedPlaylist(arr: org.json.JSONArray, selectedVideoId: String): JSONArray {
+        val result = JSONArray()
+        var selectedIdx = -1
+        val items = mutableListOf<JSONObject>()
+        for (i in 0 until arr.length()) {
+            val obj = arr.getJSONObject(i)
+            items.add(obj)
+            if (obj.optString("videoId") == selectedVideoId && selectedIdx < 0) {
+                selectedIdx = i
+            }
+        }
+        if (selectedIdx < 0) return result
+
+        val ordered = items.subList(selectedIdx, items.size) + items.subList(0, selectedIdx)
+        for (cached in ordered) {
+            val obj = JSONObject()
+            obj.put("resultType", "video")
+            obj.put("videoId", cached.optString("videoId"))
+            obj.put("contentId", cached.optString("videoId"))
+            obj.put("title", cached.optString("title"))
+            obj.put("subtitle", cached.optString("artist"))
+            obj.put("thumbnailUrl", cached.optString("imageUrl"))
+            result.put(obj)
+        }
+        return result
+    }
+
+    private fun buildQueueFromHistoryTracks(
+        tracks: List<PlaybackHistoryStore.QueueTrack>,
+        selectedVideoId: String
+    ): JSONArray {
+        val result = JSONArray()
+        val selectedIdx = tracks.indexOfFirst { it.videoId == selectedVideoId }
+        if (selectedIdx < 0) return result
+
+        val ordered = tracks.subList(selectedIdx, tracks.size) + tracks.subList(0, selectedIdx)
+        for (t in ordered) {
+            val obj = JSONObject()
+            obj.put("resultType", "video")
+            obj.put("videoId", t.videoId)
+            obj.put("contentId", t.videoId)
+            obj.put("title", t.title)
+            obj.put("subtitle", t.artist)
+            obj.put("thumbnailUrl", t.imageUrl)
+            result.put(obj)
+        }
+        return result
     }
 
     private fun showTrackOptionsBottomSheet(track: YouTubeMusicService.TrackResult, anchor: View) {
@@ -1185,7 +1242,6 @@ class SearchFragment : Fragment() {
             }
         }
         if (dirty) saveRecentSearchQueries()
-        updateRecentSearchImages()
     }
 
     private fun rememberRecentSearchQuery(query: String, firstResult: YouTubeMusicService.TrackResult? = null) {
@@ -1206,7 +1262,6 @@ class SearchFragment : Fragment() {
             if (size > SEARCH_SUGGESTION_RECENT_LIMIT) removeAt(size - 1)
         }
         saveRecentSearchQueries()
-        updateRecentSearchImages()
     }
 
     private fun saveRecentSearchQueries() {
@@ -1271,7 +1326,6 @@ class SearchFragment : Fragment() {
                     recentSearchData.clear()
                     recentSearchData.addAll(parsed)
                     saveRecentSearchQueries()
-                    updateRecentSearchImages()
                     refreshSearchSuggestions(etSearchQuery.text?.toString()?.trim() ?: "")
                 }
             }
@@ -1286,7 +1340,6 @@ class SearchFragment : Fragment() {
                 recentSearchData.removeAll { it.query == query }
                 saveRecentSearchQueries()
                 saveRecentSearchesToFirebase()
-                updateRecentSearchImages()
                 refreshSearchSuggestions(etSearchQuery.text?.toString()?.trim() ?: "")
             }
             .setNegativeButton("No", null)
@@ -1304,23 +1357,48 @@ class SearchFragment : Fragment() {
         val normDraft = normalizeForFilter(draft)
         val recentQueries = recentSearchData.map { it.query }
 
-        val matchingRecent = recentQueries.filter { candidate ->
+        val matchingRecent = recentSearchData.filter { candidate ->
             if (normDraft.isEmpty()) true
-            else normalizeForFilter(candidate).let { it.contains(normDraft) || normDraft.contains(it) }
+            else normalizeForFilter(candidate.query).let { it.contains(normDraft) || normDraft.contains(it) }
         }.take(SEARCH_SUGGESTION_RECENT_LIMIT)
 
         val smartSuggestions = buildSmartSuggestions(normDraft, recentQueries)
 
         val result = mutableListOf<SuggestionItem>()
 
+        // Show recent images carousel only when bar is empty (no query typed)
+        if (normDraft.isEmpty()) {
+            val itemsWithImages = recentSearchData.filter { it.thumbnail.isNotEmpty() }.take(5)
+            if (itemsWithImages.isNotEmpty()) {
+                result.add(SuggestionItem.RecentImages(itemsWithImages))
+            }
+        }
+
         if (matchingRecent.isNotEmpty()) {
-            result.add(SuggestionItem.Header("Búsquedas recientes"))
-            matchingRecent.forEach { result.add(SuggestionItem.Recent(it)) }
+            if (normDraft.isNotEmpty()) result.add(SuggestionItem.Header("Búsquedas recientes"))
+            matchingRecent.forEach { result.add(SuggestionItem.Recent(it.query, it.thumbnail)) }
         }
 
         if (smartSuggestions.isNotEmpty()) {
             result.add(SuggestionItem.Header("Temas relacionados"))
             smartSuggestions.forEach { result.add(SuggestionItem.Suggestion(it)) }
+        }
+
+        if (normDraft.length >= 3 && localTrackIndex.isNotEmpty()) {
+            val trackMatches = localTrackIndex
+                .filter { normalizeForFilter(it.title).contains(normDraft) || normalizeForFilter(it.artist).contains(normDraft) }
+                .sortedByDescending {
+                    when {
+                        normalizeForFilter(it.title).startsWith(normDraft) -> 2
+                        normalizeForFilter(it.artist).startsWith(normDraft) -> 1
+                        else -> 0
+                    }
+                }
+                .take(5)
+            if (trackMatches.isNotEmpty()) {
+                result.add(SuggestionItem.Header("En tu biblioteca"))
+                trackMatches.forEach { result.add(SuggestionItem.Track(it)) }
+            }
         }
 
         return result
@@ -1576,7 +1654,6 @@ class SearchFragment : Fragment() {
         (activity as? MainActivity)?.hideTopAppBarForSearch()
         // Clear input on every entry
         etSearchQuery.setText("")
-        hideAutoComplete()
         showSuggestionsMode()
         loadLocalTrackIndex()
         lastMiniArtUrl = "" // Resetear para forzar recarga de imagen
@@ -1610,10 +1687,7 @@ class SearchFragment : Fragment() {
             // When returning from the player after a search, preserve results and query.
             if (activeSearchQuery.isEmpty()) {
                 etSearchQuery.setText("")
-                hideAutoComplete()
                 showSuggestionsMode()
-            } else {
-                hideAutoComplete()
             }
             loadLocalTrackIndex()
             if (!hasBeenVisible) {
@@ -1783,41 +1857,13 @@ class SearchFragment : Fragment() {
             .commit()
     }
 
-    private inner class AutoCompleteAdapter(
-        val onClick: (FavoritesPlaylistStore.FavoriteTrack) -> Unit
-    ) : RecyclerView.Adapter<AutoCompleteAdapter.VH>() {
-        private val data = mutableListOf<FavoritesPlaylistStore.FavoriteTrack>()
-
-        fun updateItems(newList: List<FavoritesPlaylistStore.FavoriteTrack>) {
-            data.clear()
-            data.addAll(newList)
-            notifyDataSetChanged()
-        }
-
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
-            val v = LayoutInflater.from(parent.context).inflate(R.layout.item_autocomplete_track, parent, false)
-            return VH(v)
-        }
-
-        override fun onBindViewHolder(h: VH, position: Int) {
-            val item = data[position]
-            h.title.text = item.title
-            h.artist.text = item.artist
-            h.itemView.setOnClickListener { onClick(item) }
-        }
-
-        override fun getItemCount() = data.size
-
-        inner class VH(v: View) : RecyclerView.ViewHolder(v) {
-            val title: TextView = v.findViewById(R.id.tvAutoCompleteTitle)
-            val artist: TextView = v.findViewById(R.id.tvAutoCompleteArtist)
-        }
-    }
 
     sealed class SuggestionItem {
         data class Header(val label: String) : SuggestionItem()
-        data class Recent(val query: String) : SuggestionItem()
+        data class Recent(val query: String, val thumbnail: String = "") : SuggestionItem()
         data class Suggestion(val query: String) : SuggestionItem()
+        data class Track(val track: FavoritesPlaylistStore.FavoriteTrack) : SuggestionItem()
+        data class RecentImages(val items: List<RecentSearch>) : SuggestionItem()
     }
 
     private inner class SuggestionsAdapter(val onClick: (String) -> Unit) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
@@ -1826,6 +1872,8 @@ class SearchFragment : Fragment() {
         private val TYPE_HEADER = 0
         private val TYPE_RECENT = 1
         private val TYPE_SUGGESTION = 2
+        private val TYPE_TRACK = 3
+        private val TYPE_RECENT_IMAGES = 4
 
         fun updateItems(newList: List<SuggestionItem>) {
             data.clear()
@@ -1837,12 +1885,16 @@ class SearchFragment : Fragment() {
             is SuggestionItem.Header -> TYPE_HEADER
             is SuggestionItem.Recent -> TYPE_RECENT
             is SuggestionItem.Suggestion -> TYPE_SUGGESTION
+            is SuggestionItem.Track -> TYPE_TRACK
+            is SuggestionItem.RecentImages -> TYPE_RECENT_IMAGES
         }
 
         override fun onCreateViewHolder(p: ViewGroup, t: Int): RecyclerView.ViewHolder {
             val inflater = LayoutInflater.from(p.context)
             return when (t) {
                 TYPE_HEADER -> HeaderViewHolder(inflater.inflate(R.layout.item_search_suggestion_header, p, false))
+                TYPE_TRACK -> TrackViewHolder(inflater.inflate(R.layout.item_autocomplete_track, p, false))
+                TYPE_RECENT_IMAGES -> RecentImagesViewHolder(inflater.inflate(R.layout.item_suggestion_recent_images, p, false))
                 else -> RowViewHolder(inflater.inflate(R.layout.item_search_suggestion, p, false))
             }
         }
@@ -1853,8 +1905,23 @@ class SearchFragment : Fragment() {
                 is SuggestionItem.Recent -> {
                     (h as RowViewHolder).apply {
                         text.text = item.query
-                        icon.setImageResource(R.drawable.ic_time_24)
-                        icon.setColorFilter(android.graphics.Color.WHITE)
+                        if (item.thumbnail.isNotEmpty()) {
+                            icon.clearColorFilter()
+                            icon.scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                            icon.setPadding(0, 0, 0, 0)
+                            Glide.with(this@SearchFragment)
+                                .load(item.thumbnail)
+                                .transform(SHARED_YT_CROP)
+                                .diskCacheStrategy(DiskCacheStrategy.ALL)
+                                .placeholder(android.R.color.darker_gray)
+                                .into(icon)
+                        } else {
+                            icon.setImageResource(R.drawable.ic_time_24)
+                            icon.setColorFilter(android.graphics.Color.WHITE)
+                            icon.scaleType = android.widget.ImageView.ScaleType.CENTER
+                            val pad = (11 * resources.displayMetrics.density).toInt()
+                            icon.setPadding(pad, pad, pad, pad)
+                        }
                         itemView.setOnClickListener { onClick(item.query) }
                         itemView.setOnLongClickListener { showDeleteSearchDialog(item.query); true }
                     }
@@ -1864,9 +1931,64 @@ class SearchFragment : Fragment() {
                         text.text = item.query
                         icon.setImageResource(R.drawable.ic_search)
                         icon.setColorFilter(android.graphics.Color.WHITE)
+                        icon.scaleType = android.widget.ImageView.ScaleType.CENTER
+                        val pad = (11 * resources.displayMetrics.density).toInt()
+                        icon.setPadding(pad, pad, pad, pad)
                         itemView.setOnClickListener { onClick(item.query) }
                         itemView.setOnLongClickListener { true }
                     }
+                }
+                is SuggestionItem.Track -> {
+                    (h as TrackViewHolder).apply {
+                        title.text = item.track.title
+                        artist.text = item.track.artist
+                        if (item.track.imageUrl.isNotEmpty()) {
+                            Glide.with(this@SearchFragment)
+                                .load(item.track.imageUrl)
+                                .transform(SHARED_YT_CROP)
+                                .diskCacheStrategy(DiskCacheStrategy.ALL)
+                                .placeholder(android.R.color.darker_gray)
+                                .into(thumb)
+                            thumb.visibility = View.VISIBLE
+                        } else {
+                            thumb.visibility = View.GONE
+                        }
+                        itemView.setOnClickListener {
+                            val result = YouTubeMusicService.TrackResult(
+                                "video", item.track.videoId, item.track.title, item.track.artist, item.track.imageUrl
+                            )
+                            playTrackDirectly(result)
+                        }
+                    }
+                }
+                is SuggestionItem.RecentImages -> {
+                    val vh = h as RecentImagesViewHolder
+                    val imgAdapter = vh.rv.adapter as? RecentSearchImageAdapter
+                        ?: RecentSearchImageAdapter { recentSearch ->
+                            if (recentSearch.videoId.isNotEmpty()) {
+                                var artist = recentSearch.artist
+                                if (artist.isEmpty()) artist = resolveArtistForVideoId(recentSearch.videoId)
+                                val track = YouTubeMusicService.TrackResult(
+                                    "video", recentSearch.videoId, recentSearch.title, artist, recentSearch.thumbnail
+                                )
+                                if (recentSearch.artist.isEmpty() && artist.isNotEmpty()) {
+                                    val idx = recentSearchData.indexOfFirst { it.videoId == recentSearch.videoId }
+                                    if (idx >= 0) {
+                                        recentSearchData[idx] = recentSearch.copy(artist = artist)
+                                        saveRecentSearchQueries()
+                                    }
+                                }
+                                playTrackDirectly(track)
+                            } else {
+                                etSearchQuery.setText(recentSearch.query)
+                                etSearchQuery.setSelection(recentSearch.query.length)
+                            }
+                        }.also {
+                            vh.rv.layoutManager = LinearLayoutManager(vh.rv.context, LinearLayoutManager.HORIZONTAL, false)
+                            vh.rv.adapter = it
+                            vh.rv.itemAnimator = null
+                        }
+                    imgAdapter.updateItems(item.items)
                 }
             }
         }
@@ -1880,6 +2002,16 @@ class SearchFragment : Fragment() {
         inner class RowViewHolder(v: View) : RecyclerView.ViewHolder(v) {
             val text: TextView = v.findViewById(R.id.tvSuggestionText)
             val icon: ImageView = v.findViewById(R.id.ivSuggestionIcon)
+        }
+
+        inner class TrackViewHolder(v: View) : RecyclerView.ViewHolder(v) {
+            val title: TextView = v.findViewById(R.id.tvAutoCompleteTitle)
+            val artist: TextView = v.findViewById(R.id.tvAutoCompleteArtist)
+            val thumb: ImageView = v.findViewById(R.id.ivAutoCompleteThumb)
+        }
+
+        inner class RecentImagesViewHolder(v: View) : RecyclerView.ViewHolder(v) {
+            val rv: RecyclerView = v.findViewById(R.id.rvRecentImagesInline)
         }
     }
 

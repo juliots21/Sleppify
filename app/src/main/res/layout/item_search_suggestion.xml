@@ -13,25 +13,26 @@
 
     <ImageView
         android:id="@+id/ivSuggestionIcon"
-        android:layout_width="27dp"
-        android:layout_height="27dp"
-        android:layout_marginStart="20dp"
-        android:layout_marginEnd="10dp"
-        android:src="@drawable/ic_time_24"
-        app:tint="#FFFFFF" />
+        android:layout_width="50dp"
+        android:layout_height="50dp"
+        android:layout_marginStart="4dp"
+        android:layout_marginEnd="12dp"
+        android:scaleType="centerCrop"
+        android:src="@drawable/ic_time_24" />
 
     <TextView
         android:id="@+id/tvSuggestionText"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginStart="16dp"
         android:layout_weight="1"
         android:ellipsize="end"
-        android:fontFamily="@font/inter_variable"
+        android:fontFamily="sans-serif-black"
+        android:includeFontPadding="false"
         android:maxLines="1"
         android:text="Sugerencia"
         android:textColor="@color/text_primary"
-        android:textSize="14sp" />
+        android:textSize="14sp"
+        android:textStyle="bold" />
 
     <ImageView
         android:id="@+id/ivSuggestionArrow"

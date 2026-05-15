@@ -837,6 +837,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         updateClearSearchBackPressedEnabled();
         if (isHidden()) return;
         startObservingOfflineQueue();
+        maybeResumeStarledOfflineDownloads();
         resetMiniPlayerRenderCache();
         refreshCurrentPlayingPlaylistState();
         if (adapter != null) {
@@ -1393,8 +1394,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         // Activar inmediatamente la cookie en InnertubeResolver para que las
         // siguientes peticiones de resolución y playback estén autenticadas.
         InnertubeResolver.setAuthCookies(cookieHeader);
-        // Reload WebView resolver to pick up the new authenticated session
-        WebViewStreamResolver.reload();
         streamingOauthCompleted = true;
         updateYoutubeButtonLabel();
         // Keep user-agent available for future web-session API extensions.
@@ -1664,6 +1663,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 return;
             }
             setLibraryLoading(false, "Conecta YouTube para cargar tu biblioteca.");
+ 
             return;
         }
         if (!isNetworkAvailable()) {
@@ -4079,9 +4079,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         if (openPlayerFromSnapshot(snapshot, false)) {
             return;
         }
-        if (launchPlayerFromLastTrackPrefs(false, true)) {
-            return;
-        }
         if (!openLastPlaylistDetailFromPrefs()) {
         }
     }
@@ -4097,9 +4094,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         if (startHiddenPlayerFromSnapshot(snapshot, true)) {
             return;
         }
-        if (launchPlayerFromLastTrackPrefs(true, false)) {
-            return;
-        }
         if (!openLastPlaylistDetailFromPrefs()) {
         }
     }
@@ -4112,78 +4106,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             updateMiniPlayerUi();
         }
     }
-    private boolean launchPlayerFromLastTrackPrefs(boolean startPlaying, boolean showPlayer) {
-        if (!isAdded()) {
-            return false;
-        }
-        SharedPreferences prefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
-        String videoId = prefs.getString(PREF_LAST_VIDEO_ID, "");
-        if (TextUtils.isEmpty(videoId)) {
-            return false;
-        }
-        String title = prefs.getString(PREF_LAST_TRACK_TITLE, "");
-        String artist = prefs.getString(PREF_LAST_TRACK_ARTIST, "");
-        String duration = prefs.getString(PREF_LAST_TRACK_DURATION, "");
-        String image = prefs.getString(PREF_LAST_TRACK_IMAGE, "");
-        ArrayList<String> ids = new ArrayList<>();
-        ArrayList<String> titles = new ArrayList<>();
-        ArrayList<String> artists = new ArrayList<>();
-        ArrayList<String> durations = new ArrayList<>();
-        ArrayList<String> images = new ArrayList<>();
-        ids.add(videoId);
-        titles.add(TextUtils.isEmpty(title) ? "Ultima reproduccion" : title);
-        artists.add(artist == null ? "" : artist);
-        durations.add(duration == null ? "" : duration);
-        images.add(image == null ? "" : image);
-        SongPlayerFragment existingPlayer = findSongPlayerFragment();
-        if (existingPlayer != null) {
-            if (existingPlayer.isAdded()) {
-                existingPlayer.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
-                existingPlayer.externalReplaceQueue(ids, titles, artists, durations, images, 0, startPlaying);
-                if (showPlayer) {
-                    getParentFragmentManager()
-                            .beginTransaction()
-                            .setReorderingAllowed(true)
-                            .show(existingPlayer)
-                            .runOnCommit(existingPlayer::externalAnimateEnterSlide)
-                            .commit();
-                }
-                invalidateMiniSnapshotCache();
-                updateMiniPlayerUi();
-            }
-            return true;
-        }
-        if (getParentFragmentManager().isStateSaved()) {
-            return false;
-        }
-        SongPlayerFragment playerFragment = SongPlayerFragment.newInstance(
-                ids,
-                titles,
-                artists,
-                durations,
-                images,
-                0,
-                startPlaying
-        );
-        playerFragment.externalSetReturnTargetTag(TAG_MODULE_MUSIC);
-        final SongPlayerFragment newPlayerForAnim = playerFragment;
-        androidx.fragment.app.FragmentTransaction transaction = getParentFragmentManager()
-                .beginTransaction()
-                .setReorderingAllowed(true)
-                .add(R.id.playerContainer, playerFragment, "song_player");
-        if (showPlayer) {
-            transaction
-                    .runOnCommit(newPlayerForAnim::externalAnimateEnterSlide)
-                    .commit();
-        } else {
-            transaction
-                    .hide(playerFragment)
-                    .commit();
-        }
-        invalidateMiniSnapshotCache();
-        updateMiniPlayerUi();
-        return true;
-    }
+
     private boolean startHiddenPlayerFromSnapshot(
             @NonNull PlaybackHistoryStore.Snapshot snapshot,
             boolean startPlaying
@@ -5059,6 +4982,23 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         }
         boolean hasActiveWork = hasActiveOfflineWork(workInfos);
         boolean hasEnqueuedWork = hasEnqueuedOfflineWork(workInfos);
+        boolean hasBlockedWork = hasBlockedOfflineWork(workInfos);
+
+        if (!hasActiveWork && !hasEnqueuedWork && hasBlockedWork) {
+            Log.w(TAG_STREAMING, "offline_queue: detected BLOCKED-only work, resetting queue to unblock");
+            WorkManager.getInstance(requireContext().getApplicationContext())
+                    .cancelUniqueWork(OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME);
+            offlineQueueHadActiveWork = false;
+            synchronized (fragmentLock) {
+                isOfflineSyncInFlight = false;
+            }
+            mainHandler.postDelayed(() -> {
+                if (!isAdded()) return;
+                maybeEnqueueNextOfflineAutoPlaylist();
+            }, 800L);
+            return;
+        }
+
         if (hasActiveWork) {
             offlineQueueHadActiveWork = true;
             if (!hasEnqueuedWork) {
@@ -5119,6 +5059,20 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         }
         return false;
     }
+    private boolean hasBlockedOfflineWork(@Nullable List<WorkInfo> workInfos) {
+        if (workInfos == null || workInfos.isEmpty()) {
+            return false;
+        }
+        for (WorkInfo info : workInfos) {
+            if (info == null) {
+                continue;
+            }
+            if (info.getState() == WorkInfo.State.BLOCKED) {
+                return true;
+            }
+        }
+        return false;
+    }
     /**
      * Called after pull-to-refresh succeeds. Checks if any offline-auto-enabled playlists
      * have stalled downloads (no RUNNING/ENQUEUED work) and re-enqueues them.
@@ -5132,25 +5086,37 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                     try {
                         List<WorkInfo> infos = wm.getWorkInfosForUniqueWork(OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME).get();
                         int activeCount = 0;
+                        boolean hasBlocked = false;
+                        boolean hasEnqueued = false;
                         if (infos != null) {
                             for (WorkInfo info : infos) {
                                 WorkInfo.State state = info.getState();
                                 if (state == WorkInfo.State.RUNNING || state == WorkInfo.State.ENQUEUED) {
                                     activeCount++;
                                 }
+                                if (state == WorkInfo.State.BLOCKED) hasBlocked = true;
+                                if (state == WorkInfo.State.ENQUEUED) hasEnqueued = true;
                             }
                         }
                         final int finalActiveCount = activeCount;
-                        if (finalActiveCount >= 3) {
+                        final boolean onlyBlocked = hasBlocked && !hasEnqueued && activeCount == 0;
+                        if (onlyBlocked) {
+                            Log.w(TAG_STREAMING, "resume_stalled: BLOCKED-only chain detected, cancelling to unblock");
+                            wm.cancelUniqueWork(OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME);
+                        }
+                        if (!onlyBlocked && finalActiveCount >= 3) {
                             Log.d(TAG_STREAMING, "pull_refresh: " + finalActiveCount + " download workers active, skipping resume");
                             return;
                         }
-                        mainHandler.post(() -> {
+                        mainHandler.postDelayed(() -> {
                             if (!isAdded()) return;
-                            Log.i(TAG_STREAMING, "pull_refresh: resuming stalled offline downloads (active=" + finalActiveCount + ")");
+                            Log.i(TAG_STREAMING, "pull_refresh: resuming stalled offline downloads (active=" + finalActiveCount + " onlyBlocked=" + onlyBlocked + ")");
                             offlineSyncRecentlyProcessedPlaylistIds.clear();
+                            synchronized (fragmentLock) {
+                                isOfflineSyncInFlight = false;
+                            }
                             maybeEnqueueNextOfflineAutoPlaylist();
-                        });
+                        }, onlyBlocked ? 600L : 0L);
                     } catch (Exception e) {
                         Log.w(TAG_STREAMING, "pull_refresh: failed to check work status", e);
                     }

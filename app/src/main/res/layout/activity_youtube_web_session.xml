@@ -166,19 +166,19 @@
                 <androidx.appcompat.widget.AppCompatButton
                     android:id="@+id/btnOverlayLogin"
                     android:layout_width="wrap_content"
-                    android:minWidth="280dp"
-                    android:layout_height="56dp"
-                    android:text="Iniciar sesión"
+                    android:minWidth="0dp"
+                    android:layout_height="46dp"
+                    android:text="Iniciar sesión en YouTube Music"
                     android:textColor="@android:color/white"
                     android:background="@drawable/bg_youtube_button"
                     android:drawableStart="@drawable/ic_yt_music_logo"
-                    android:drawablePadding="12dp"
+                    android:drawablePadding="10dp"
                     android:paddingStart="24dp"
-                    android:paddingEnd="32dp"
+                    android:paddingEnd="24dp"
                     android:textAllCaps="false"
                     android:fontFamily="sans-serif-medium"
                     android:textStyle="bold"
-                    android:textSize="16sp"
+                    android:textSize="14sp"
                     android:elevation="4dp" />
 
                 <TextView

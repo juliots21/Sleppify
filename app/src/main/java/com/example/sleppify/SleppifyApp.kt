@@ -12,6 +12,14 @@ class SleppifyApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        
+        try {
+            com.google.android.gms.security.ProviderInstaller.installIfNeeded(this)
+            Log.d("SleppifyApp", "ProviderInstaller succeeded")
+        } catch (e: Exception) {
+            Log.w("SleppifyApp", "ProviderInstaller failed", e)
+        }
+
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
         // Pre-warm Glide
         try {
@@ -24,9 +32,6 @@ class SleppifyApp : Application() {
 
         // Pre-initialize ExoPlayer to reduce playback startup latency
         ExoPlayerManager.initialize(this)
-
-        // Initialize WebView-based stream resolver (loads music.youtube.com in background)
-        WebViewStreamResolver.initialize(this)
 
         // Pre-initialize NewPipeExtractor on a background thread so the first
         // stream resolution doesn't pay the cold-start penalty (~500-800ms).

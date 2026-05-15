@@ -899,9 +899,6 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
             openPlayerFromSnapshot(snapshot, snapshot.isPlaying);
             return;
         }
-
-        boolean persistedPlaying = getPlayerStatePrefs().getBoolean("stream_last_is_playing", false);
-        launchPlayerFromLastTrackPrefs(persistedPlaying, true);
     }
 
     private void toggleMiniPlayback() {
@@ -1010,54 +1007,6 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
         return true;
     }
 
-    private boolean launchPlayerFromLastTrackPrefs(boolean startPlaying, boolean showPlayer) {
-        if (!isAdded()) return false;
-        SharedPreferences prefs = getPlayerStatePrefs();
-        String videoId = prefs.getString("stream_last_track_video_id", "");
-        String title = prefs.getString("stream_last_track_title", "");
-        String artist = prefs.getString("stream_last_track_artist", "");
-        String image = prefs.getString("stream_last_track_image", "");
-        String duration = prefs.getString("stream_last_track_duration", "");
-
-        if (TextUtils.isEmpty(videoId)) return false;
-
-        ArrayList<String> ids = new ArrayList<>();
-        ArrayList<String> titles = new ArrayList<>();
-        ArrayList<String> artists = new ArrayList<>();
-        ArrayList<String> durations = new ArrayList<>();
-        ArrayList<String> images = new ArrayList<>();
-        ids.add(videoId);
-        titles.add(title != null ? title : "");
-        artists.add(artist != null ? artist : "");
-        durations.add(duration != null ? duration : "");
-        images.add(image != null ? image : "");
-
-        SongPlayerFragment existingPlayer = findSongPlayerFragment();
-        if (existingPlayer != null && existingPlayer.isAdded()) {
-            existingPlayer.externalSetReturnTargetTag("module_principal");
-            existingPlayer.externalReplaceQueue(ids, titles, artists, durations, images, 0, startPlaying);
-            if (showPlayer) showSongPlayerWithEnterAnimation(existingPlayer);
-            updateMiniPlayerUi();
-            return true;
-        }
-
-        SongPlayerFragment playerFragment = SongPlayerFragment.newInstance(
-                ids, titles, artists, durations, images, 0, startPlaying
-        );
-        playerFragment.externalSetReturnTargetTag("module_principal");
-        if (showPlayer) {
-            addSongPlayerWithEnterAnimation(playerFragment);
-        } else {
-            getParentFragmentManager()
-                    .beginTransaction()
-                    .setReorderingAllowed(true)
-                    .add(R.id.playerContainer, playerFragment, TAG_SONG_PLAYER)
-                    .hide(playerFragment)
-                    .commit();
-        }
-        updateMiniPlayerUi();
-        return true;
-    }
 
     private void maybeRestoreHiddenPlayerFromSnapshot() {
         if (!isAdded() || isHidden()) return;
