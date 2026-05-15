@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: sleppify-download
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars: []
