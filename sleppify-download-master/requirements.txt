@@ -1,0 +1,5 @@
+pandas
+Flask
+yt-dlp
+openpyxl
+gunicorn

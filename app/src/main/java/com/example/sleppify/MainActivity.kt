@@ -15,7 +15,6 @@ import android.media.AudioManager
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
-import android.text.TextUtils
 import android.view.View
 import android.view.KeyEvent
 import android.widget.ImageView
@@ -66,7 +65,6 @@ class MainActivity : AppCompatActivity() {
 
         private const val PREFS_PLAYER_STATE = "player_state"
         private const val PREFS_BOOTSTRAP = "sleppify_bootstrap"
-        private const val KEY_INITIAL_OAUTH_GATE_COMPLETED = "initial_oauth_gate_completed"
         private const val PREF_LAST_STREAM_SCREEN = "stream_last_screen"
         private const val PREF_LAST_MAIN_MODULE = "last_main_module"
         private const val STREAM_SCREEN_LIBRARY = "library"
@@ -116,16 +114,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var fragmentContainer: View
     private lateinit var moduleLoadingOverlay: View
     private lateinit var scannerLoadingOverlay: View
-    private var loginGateContainer: View? = null
-    private var tvLoginStatus: TextView? = null
-    private var btnLoginGoogle: MaterialButton? = null
+    private var btnSignInHeader: MaterialButton? = null
 
     private var inSettings = false
     private var inEqualizerFromSettings = false
     private var inEqualizerFromPlayer = false
     private var inScannerFromSettings = false
-    private var forceInitialOauthGate = false
-    private var loginGateAuthInProgress = false
     private var isNavigating = false
     private var suppressNavListener = false
 
@@ -165,6 +159,7 @@ class MainActivity : AppCompatActivity() {
     private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
     private var wasNetworkAvailable: Boolean? = null
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var globalMiniPlayer: GlobalMiniPlayerController? = null
 
     private val outputDeviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>?) {
@@ -214,6 +209,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         initViews()
+        globalMiniPlayer = GlobalMiniPlayerController(this)
         audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         syncAudioProfile(false) // Initial sync on startup
         // Cargar cookies de la sesión web YouTube Music (si existen) lo más
@@ -229,24 +225,13 @@ class MainActivity : AppCompatActivity() {
         localPrefs = getSharedPreferences("sleppify_local_config", Context.MODE_PRIVATE)
         updateNavigationForScreenSize()
 
-        forceInitialOauthGate = !isInitialOauthGateCompleted()
-        val shouldShowLoginGate = shouldShowLoginGateAtStartup()
-
-        if (!shouldShowLoginGate) {
-            // Always start on the music/library module regardless of what was last open.
-            // This covers both cold-start (savedInstanceState == null) and activity
-            // recreation triggered by AMOLED theme changes (savedInstanceState != null),
-            // where Android restores bottomNav to the previously-selected item (e.g.
-            // nav_principal) which would cause the wrong module to appear after the overlay.
-            suppressNavListener = true
-            bottomNav.selectedItemId = R.id.nav_music
-            suppressNavListener = false
-            currentMainNavItemId = R.id.nav_music
-            switchToMainModule(R.id.nav_music)
-            showMainShell()
-        } else {
-            showLoginGate()
-        }
+        // Always open directly on Biblioteca — no login gate.
+        suppressNavListener = true
+        bottomNav.selectedItemId = R.id.nav_music
+        suppressNavListener = false
+        currentMainNavItemId = R.id.nav_music
+        switchToMainModule(R.id.nav_music)
+        showMainShell()
 
         // Defer heavy startup work to background thread
         lifecycleScope.launch {
@@ -254,8 +239,8 @@ class MainActivity : AppCompatActivity() {
             withContext(Dispatchers.IO) {
                 syncAudioEffectsServiceFromPreferences(forceSync = true)
             }
-            // Handle signed in user async to avoid blocking UI
-            if (!shouldShowLoginGate && authManagerLazy.isSignedIn()) {
+            // Sync signed-in user state if already authenticated
+            if (authManagerLazy.isSignedIn()) {
                 authManagerLazy.getCurrentUser()?.let { handleSignedInUser(it, null) }
             }
         }
@@ -290,9 +275,7 @@ class MainActivity : AppCompatActivity() {
         fragmentContainer = findViewById(R.id.fragmentContainer)
         moduleLoadingOverlay = findViewById(R.id.moduleLoadingOverlay)
         scannerLoadingOverlay = findViewById(R.id.scannerLoadingOverlay)
-        loginGateContainer = findViewById(R.id.loginGateContainer)
-        tvLoginStatus = findViewById(R.id.tvLoginStatus)
-        btnLoginGoogle = findViewById(R.id.btnLoginGoogle)
+        btnSignInHeader = findViewById(R.id.btnSignInHeader)
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -314,7 +297,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupListeners() {
-        btnLoginGoogle?.setOnClickListener { startLoginFromGate() }
+        btnSignInHeader?.setOnClickListener { triggerHeaderSignIn() }
         btnProfilePhoto.setOnClickListener { if (inSettings) exitSettings() else enterSettings() }
         btnCamera.setOnClickListener { openScannerFromSettings() }
         bottomNav.setOnItemSelectedListener { item ->
@@ -437,10 +420,16 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         applySystemBarsStyle()
+        globalMiniPlayer?.onResume()
         lifecycleScope.launch {
             delay(RESUME_WORK_DELAY_MS)
             runDeferredResumeWork()
         }
+    }
+
+    override fun onPause() {
+        globalMiniPlayer?.onPause()
+        super.onPause()
     }
 
     override fun onStart() {
@@ -485,18 +474,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun runDeferredResumeWork() {
-        if (isFinishing || isDestroyed || loginGateAuthInProgress) return
+        if (isFinishing || isDestroyed) return
 
         cloudSyncManager.setSyncStateListener(this::setSyncOverlayVisible)
         syncAudioEffectsServiceFromPreferences(false)
-
-        val signedIn = authManagerLazy.isSignedIn() && authManagerLazy.getCurrentUser() != null
-        if (!signedIn) {
-            showLoginGate()
-            return
-        }
-
-        if (loginGateContainer?.visibility == View.VISIBLE && !signedIn) return
 
         showMainShell()
         // AI prefetch deliberately disabled here: the only allowed triggers are
@@ -632,11 +613,18 @@ class MainActivity : AppCompatActivity() {
         }
         bar.addView(tv)
 
-        // Compute extra margin if mini-player is visible
+        // Compute extra margin if global mini-player is visible
         var extraMiniPlayerMargin = 0
-        val miniPlayer = fragmentContainer.findViewById<View>(R.id.llMiniPlayer)
+        val miniPlayer = findViewById<View>(R.id.llGlobalMiniPlayer)
         if (miniPlayer != null && miniPlayer.visibility == View.VISIBLE) {
             extraMiniPlayerMargin = miniPlayer.height
+        }
+        // Also check per-fragment mini-player (PrincipalFragment still has its own)
+        if (extraMiniPlayerMargin == 0) {
+            val fragMiniPlayer = fragmentContainer.findViewById<View>(R.id.llMiniPlayer)
+            if (fragMiniPlayer != null && fragMiniPlayer.visibility == View.VISIBLE) {
+                extraMiniPlayerMargin = fragMiniPlayer.height
+            }
         }
 
         val clp = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
@@ -670,15 +658,6 @@ class MainActivity : AppCompatActivity() {
                     .start()
             }
         }, 4000L)
-    }
-
-    private fun shouldShowLoginGateAtStartup() = forceInitialOauthGate || !(authManagerLazy.isSignedIn() && authManagerLazy.getCurrentUser() != null)
-
-    private fun isInitialOauthGateCompleted() = getSharedPreferences(PREFS_BOOTSTRAP, MODE_PRIVATE).getBoolean(KEY_INITIAL_OAUTH_GATE_COMPLETED, false)
-
-    private fun markInitialOauthGateCompleted() {
-        forceInitialOauthGate = false
-        getSharedPreferences(PREFS_BOOTSTRAP, MODE_PRIVATE).edit().putBoolean(KEY_INITIAL_OAUTH_GATE_COMPLETED, true).apply()
     }
 
     fun requestAudioEffectsApplyFromUi() = syncAudioEffectsServiceFromPreferences(true, true)
@@ -783,7 +762,6 @@ class MainActivity : AppCompatActivity() {
     fun requireAuth(onSuccess: Runnable? = null, onError: Runnable? = null) {
         if (authManagerLazy.isSignedIn()) {
             authManagerLazy.getCurrentUser()?.let {
-                if (loginGateAuthInProgress) setLoginGateButtonState(true, "Sincronizando...")
                 handleSignedInUser(it, onSuccess)
                 return
             }
@@ -791,7 +769,6 @@ class MainActivity : AppCompatActivity() {
 
         authManagerLazy.signIn(this, object : AuthManager.AuthCallback {
             override fun onSuccess(user: FirebaseUser) {
-                setLoginGateButtonState(true, "Sincronizando...")
                 handleSignedInUser(user, onSuccess)
             }
             override fun onError(message: String) {
@@ -800,68 +777,51 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    private fun startLoginFromGate() {
-        if (loginGateAuthInProgress) return
-        setLoginGateButtonState(true, "Conectando...")
+    private fun triggerHeaderSignIn() {
+        btnSignInHeader?.isEnabled = false
+        btnSignInHeader?.alpha = 0.56f
         requireAuth(
             onSuccess = {
-                setLoginGateButtonState(false, "Sign in with Google")
-                showMainShell()
-                bottomNav.selectedItemId = R.id.nav_music
-                switchToMainModule(R.id.nav_music)
+                btnSignInHeader?.isEnabled = true
+                btnSignInHeader?.alpha = 1f
+                loadProfilePhoto()
             },
-            onError = { setLoginGateButtonState(false, "Sign in with Google") }
+            onError = {
+                btnSignInHeader?.isEnabled = true
+                btnSignInHeader?.alpha = 1f
+            }
         )
     }
 
-    private fun setLoginGateButtonState(loading: Boolean, buttonText: String) {
-        loginGateAuthInProgress = loading
-        btnLoginGoogle?.apply {
-            isEnabled = !loading
-            alpha = if (loading) 0.56f else 1f
-            text = buttonText
-        }
-    }
-
-    private fun showLoginGate() {
-        loginGateContainer?.visibility = View.VISIBLE
-        topAppBar.visibility = View.GONE
-        fragmentContainer.visibility = View.GONE
-        bottomNav.visibility = View.GONE
-        tvLoginStatus?.text = if (forceInitialOauthGate) "Inicia sesión para la configuración." else "Inicia sesión para sincronizar."
-        if (!loginGateAuthInProgress) setLoginGateButtonState(false, "Sign in with Google")
-    }
-
     private fun showMainShell() {
-        loginGateContainer?.visibility = View.GONE
         if (!isSearchFragmentVisible() && !isPlaylistDetailVisible()) {
             topAppBar.visibility = View.VISIBLE
         }
         fragmentContainer.visibility = View.VISIBLE
         bottomNav.visibility = View.VISIBLE
-        // Refresh profile photo every time the main shell becomes visible (e.g. after first sign-in)
+        // Refresh profile photo / sign-in button every time the shell becomes visible
         loadProfilePhoto()
     }
 
     private fun handleSignedInUser(user: FirebaseUser, onSuccess: Runnable?) {
-        cloudSyncManager.onUserSignedIn(user.uid) { ok, message ->
-            if (!ok) {
-                tvLoginStatus?.text = if (TextUtils.isEmpty(message)) "Error de sincronización." else message
-                setLoginGateButtonState(false, "Sign in with Google")
-                return@onUserSignedIn
-            }
-            markInitialOauthGateCompleted()
+        cloudSyncManager.onUserSignedIn(user.uid) { ok, _ ->
+            if (!ok) return@onUserSignedIn
             applyHydratedUserState(onSuccess)
         }
     }
 
     private fun applyHydratedUserState(onSuccess: Runnable?) {
-        tvLoginStatus?.text = "Sincronizando ajustes..."
-
         val finalize = {
             if (!isFinishing && !isDestroyed) {
                 notifyHydrationCompleted()
                 syncAudioEffectsServiceFromPreferences(true)
+                // Always refresh header (swap sign-in button → profile photo)
+                runOnUiThread { loadProfilePhoto() }
+                // Refresh library so playlists/favorites from cloud appear immediately
+                val music = supportFragmentManager.findFragmentByTag(TAG_MODULE_MUSIC)
+                if (music is MusicPlayerFragment && music.isAdded) {
+                    runOnUiThread { music.refreshLibraryUi() }
+                }
                 onSuccess?.run()
             }
         }
@@ -911,20 +871,25 @@ class MainActivity : AppCompatActivity() {
             ?: com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.photoUrl
             ?: if (cachedUrl.isNotEmpty()) android.net.Uri.parse(cachedUrl) else null
 
-        if (photoUri != null) {
+        val signedIn = authManagerLazy.isSignedIn() && photoUri != null
+        if (signedIn) {
+            btnSignInHeader?.visibility = View.GONE
+            btnProfilePhoto.visibility = View.VISIBLE
             com.bumptech.glide.Glide.with(this)
                 .load(photoUri)
                 .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL)
                 .circleCrop()
                 .into(btnProfilePhoto)
         } else {
-            // Eliminar imagen residual por si acaso
+            btnProfilePhoto.visibility = View.GONE
             btnProfilePhoto.setImageDrawable(null)
+            btnSignInHeader?.visibility = View.VISIBLE
         }
     }
 
     private fun configureHeaderActionForSettings() {
         btnProfilePhoto.visibility = View.GONE
+        btnSignInHeader?.visibility = View.GONE
         btnHeaderSearch.visibility = View.GONE
         btnCamera.visibility = View.VISIBLE
 
@@ -941,6 +906,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun configureHeaderActionForScanner() {
         btnProfilePhoto.visibility = View.GONE
+        btnSignInHeader?.visibility = View.GONE
         btnCamera.visibility = View.GONE
 
         tvModuleTitle.apply {
@@ -1149,6 +1115,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun configureHeaderActionForEqualizer() {
         btnProfilePhoto.visibility = View.GONE
+        btnSignInHeader?.visibility = View.GONE
         btnCamera.visibility = View.GONE
         btnHeaderSearch.visibility = View.GONE
 
@@ -1243,6 +1210,7 @@ class MainActivity : AppCompatActivity() {
     fun openSongPlayer() {
         val player = findSongPlayerFragment() ?: return
         if (player.isAdded) {
+            globalMiniPlayer?.animateOut()
             supportFragmentManager.beginTransaction()
                 .setReorderingAllowed(true)
                 .show(player)
@@ -1255,6 +1223,19 @@ class MainActivity : AppCompatActivity() {
     fun isSongPlayerVisible(): Boolean {
         val player = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER) as? SongPlayerFragment ?: return false
         return player.isAdded && !player.isHidden
+    }
+
+    fun getGlobalMiniPlayer(): GlobalMiniPlayerController? = globalMiniPlayer
+    fun getGlobalMiniPlayerController(): GlobalMiniPlayerController? = globalMiniPlayer
+
+    fun isMiniPlayerAllowedForCurrentScreen(): Boolean {
+        // Mini-player only in these 4 screens
+        if (isSearchFragmentVisible()) return true
+        if (isPlaylistDetailVisible()) return true
+        return when (currentMainNavItemId) {
+            R.id.nav_music, R.id.nav_principal -> true
+            else -> false
+        }
     }
 
     fun isSearchFragmentVisible(): Boolean {
@@ -1493,6 +1474,9 @@ class MainActivity : AppCompatActivity() {
             }
             configureHeaderActionForMainModules()
             updateHeaderTitleForModule(itemId)
+            if (!isMiniPlayerAllowedForCurrentScreen()) {
+                globalMiniPlayer?.hide()
+            }
 
             lifecycleScope.launch {
                 delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)

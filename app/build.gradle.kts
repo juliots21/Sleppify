@@ -6,6 +6,7 @@ plugins {
 android {
     namespace = "com.example.sleppify"
     val youtubeDataApiKey = (project.findProperty("YOUTUBE_DATA_API_KEY") as String?) ?: ""
+    val sleppifyDownloadServiceUrl = (project.findProperty("SLEPPIFY_DOWNLOAD_SERVICE_URL") as String?) ?: ""
 
     compileSdk = 35
 
@@ -16,6 +17,7 @@ android {
         versionCode = 1
         versionName = "1.0"
         buildConfigField("String", "YOUTUBE_DATA_API_KEY", "\"$youtubeDataApiKey\"")
+        buildConfigField("String", "SLEPPIFY_DOWNLOAD_SERVICE_URL", "\"$sleppifyDownloadServiceUrl\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

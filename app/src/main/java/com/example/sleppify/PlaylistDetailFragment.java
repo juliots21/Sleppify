@@ -6,11 +6,8 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.graphics.Color;
-import android.graphics.PorterDuff;
 import android.graphics.RenderEffect;
 import android.graphics.Shader;
-import android.graphics.drawable.ColorDrawable;
-import android.graphics.drawable.Drawable;
 import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
 import android.net.Uri;
@@ -33,14 +30,12 @@ import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.FrameLayout;
-import android.widget.PopupWindow;
 import android.widget.ProgressBar;
 import android.widget.SeekBar;
 import android.widget.TextView;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
-import androidx.annotation.DrawableRes;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.constraintlayout.widget.ConstraintLayout;
@@ -62,12 +57,7 @@ import androidx.work.WorkManager;
 import com.bumptech.glide.Glide;
 import com.bumptech.glide.load.engine.DiskCacheStrategy;
 import com.bumptech.glide.load.DecodeFormat;
-import com.bumptech.glide.load.DataSource;
-import com.bumptech.glide.load.engine.GlideException;
 import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions;
-import com.bumptech.glide.request.RequestListener;
-import com.bumptech.glide.request.RequestOptions;
-import com.bumptech.glide.request.target.Target;
 import com.google.android.gms.auth.api.signin.GoogleSignIn;
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount;
 import com.google.android.material.button.MaterialButton;
@@ -100,9 +90,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class PlaylistDetailFragment extends Fragment
-        implements PlaybackEventBus.Listener,
-                   RestrictedTrackReplacementSheet.OnReplacementConfirmedListener,
-                   RestrictedTrackReplacementSheet.OnReplacementUndoneListener {
+        implements PlaybackEventBus.Listener {
 
     private static final String PREFS_STREAMING_CACHE = "streaming_cache";
     private static final long TRACKS_CACHE_TTL_MS = 24 * 60 * 60 * 1000L;
@@ -127,8 +115,6 @@ public class PlaylistDetailFragment extends Fragment
     private static final String PREF_LAST_YOUTUBE_ACCESS_TOKEN = "stream_last_youtube_access_token";
     private static final String STREAM_SCREEN_LIBRARY = "library";
     private static final String STREAM_SCREEN_PLAYLIST_DETAIL = "playlist_detail";
-    private static final long MINI_PROGRESS_TICK_MS = 200L;
-    private static final long MINI_SNAPSHOT_REFRESH_MS = 1200L;
     private static final long TRACKS_TOKEN_RETRY_DELAY_MS = 1200L;
     private static final int MAX_TRACKS_TOKEN_RETRY = 3;
     private static final int PLAYLIST_TRACKS_INITIAL_FETCH_LIMIT = 280;
@@ -161,12 +147,6 @@ public class PlaylistDetailFragment extends Fragment
     private RecyclerView rvPlaylistContent;
     private View playlistLoadingOverlay;
     private ProgressBar pbPlaylistLoading;
-    private ImageView ivMiniPlayerArt;
-    private TextView tvMiniPlayerTitle;
-    private TextView tvMiniPlayerSubtitle;
-    private SeekBar sbMiniPlayerProgress;
-    private LinearLayout llMiniPlayer;
-    private ImageButton btnMiniPlayPause;
 
     // Playlist toolbar members (back + search + scroll-aware title)
     private View llPlaylistToolbar;
@@ -239,57 +219,15 @@ public class PlaylistDetailFragment extends Fragment
     @NonNull
     private final Map<String, Float> offlineTrackProgressFractions = new HashMap<>();
     private boolean restoringHiddenPlayerFromSnapshot;
-    @Nullable
-    private PopupWindow trackActionPopupWindow;
     private boolean awaitingInitialPlaylistRender = true;
-    private int lastMiniArtTrackIndex = -1;
-    @NonNull
-    private String lastMiniArtUrl = "";
     private boolean isScrolling = false;
     private boolean pendingOfflineToggle = false;
     private final Map<String, Long> lastOfflineStateLookupTimeByTrack = new HashMap<>();
-    private final Map<String, Long> lastRestrictedStateLookupTimeByTrack = new HashMap<>();
     private SongPlayerFragment cachedSongPlayer = null;
     private long lastCachedSongPlayerTime = 0;
-    @Nullable
-    private PlaybackHistoryStore.Snapshot miniSnapshotCache;
-    private long miniSnapshotCacheReadAtMs;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService offlineReadyStateExecutor = Executors.newSingleThreadExecutor();
     private final AtomicLong offlineReadyStateGeneration = new AtomicLong(0L);
-    private final Handler miniProgressHandler = new Handler(Looper.getMainLooper());
-    private int lastTickerTrackIndex = -1;
-    private boolean lastTickerPlaying = false;
-    private final Runnable miniProgressTicker = new Runnable() {
-        @Override
-        public void run() {
-            if (!isAdded() || isHidden()) {
-                miniProgressHandler.removeCallbacks(this);
-                return;
-            }
-
-            // Skip update if the full player is covering the screen
-            SongPlayerFragment player = findSongPlayerFragment();
-            if (player == null || !player.isVisible()) {
-                // Only do full UI update when track or play state changed
-                boolean trackChanged = currentTrackIndex != lastTickerTrackIndex;
-                boolean playStateChanged = miniPlaying != lastTickerPlaying;
-                if (trackChanged || playStateChanged) {
-                    lastTickerTrackIndex = currentTrackIndex;
-                    lastTickerPlaying = miniPlaying;
-                    updateMiniPlayerUi();
-                    if (trackAdapter != null && currentTrackIndex >= 0) {
-                        trackAdapter.setActiveIndex(currentTrackIndex);
-                    }
-                } else {
-                    // Lightweight: only update progress bar and equalizer
-                    updateMiniProgressBarOnly(player);
-                }
-                if (!isScrolling) refreshActiveEqualizerState();
-            }
-
-            miniProgressHandler.postDelayed(this, MINI_PROGRESS_TICK_MS);
-        }
-    };
 
     @NonNull
     public static PlaylistDetailFragment newInstance(
@@ -338,12 +276,6 @@ public class PlaylistDetailFragment extends Fragment
         rvPlaylistContent = view.findViewById(R.id.rvPlaylistContent);
         playlistLoadingOverlay = view.findViewById(R.id.flPlaylistLoadingOverlay);
         pbPlaylistLoading = view.findViewById(R.id.pbPlaylistLoading);
-        ivMiniPlayerArt = view.findViewById(R.id.ivMiniPlayerArt);
-        tvMiniPlayerTitle = view.findViewById(R.id.tvMiniPlayerTitle);
-        tvMiniPlayerSubtitle = view.findViewById(R.id.tvMiniPlayerSubtitle);
-        sbMiniPlayerProgress = view.findViewById(R.id.sbMiniPlayerProgress);
-        llMiniPlayer = view.findViewById(R.id.llMiniPlayer);
-        btnMiniPlayPause = view.findViewById(R.id.btnMiniPlayPause);
 
         // Playlist toolbar initialization (back + search + scroll title)
         llPlaylistToolbar = view.findViewById(R.id.llPlaylistToolbar);
@@ -411,10 +343,7 @@ public class PlaylistDetailFragment extends Fragment
         rvPlaylistContent.setLayoutManager(layoutManager);
         rvPlaylistContent.setHasFixedSize(true);
         rvPlaylistContent.setItemAnimator(null);
-        rvPlaylistContent.setItemViewCacheSize(2);
-        RecyclerView.RecycledViewPool pool = new RecyclerView.RecycledViewPool();
-        pool.setMaxRecycledViews(0, 8);
-        rvPlaylistContent.setRecycledViewPool(pool);
+        rvPlaylistContent.setItemViewCacheSize(5);
 
         // Single unified scroll listener — reduces per-frame dispatch overhead vs. 3 separate listeners
         rvPlaylistContent.addOnScrollListener(new RecyclerView.OnScrollListener() {
@@ -423,16 +352,16 @@ public class PlaylistDetailFragment extends Fragment
                 if (!isAdded()) return;
                 isScrolling = newState != RecyclerView.SCROLL_STATE_IDLE;
 
-                if (newState == RecyclerView.SCROLL_STATE_SETTLING) {
-                    // ── FLING ──
-                    // Finger lifted, list coasting. Mark fast-scrolling so onBind shows
-                    // placeholders instead of starting new Glide requests. Glide keeps
-                    // running at LOW priority — images fill in naturally as the list slows.
+                if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
+                    // ── DRAG ──
+                    // Only suppress new Glide requests during finger-down drag to
+                    // avoid initiating loads for rapidly recycled views.
                     if (trackAdapter != null) trackAdapter.setFastScrolling(true);
 
-                } else if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
-                    // ── DRAG ──
-                    // Finger on screen. Clear fast-scroll flag so slow-drag items load.
+                } else if (newState == RecyclerView.SCROLL_STATE_SETTLING) {
+                    // ── FLING ──
+                    // Finger lifted, list coasting — allow Glide to load normally
+                    // so images fill in as the list decelerates.
                     if (trackAdapter != null) trackAdapter.setFastScrolling(false);
 
                 } else {
@@ -493,8 +422,6 @@ public class PlaylistDetailFragment extends Fragment
         shuffleModeEnabled = loadPersistedShuffleMode();
         syncShuffleModeFromPlayer();
 
-        llMiniPlayer.setOnClickListener(v -> openPlayerFromMiniBar());
-        btnMiniPlayPause.setOnClickListener(v -> toggleMiniPlayback());
 
         final String requestPlaylistId = playlistId;
         final String requestToken = youtubeAccessToken;
@@ -506,8 +433,7 @@ public class PlaylistDetailFragment extends Fragment
             // fragment transactions, and Glide calls before the overlay was visible
             restoreOfflineDownloadObservation();
             maybeRestoreHiddenPlayerFromSnapshot();
-            updateMiniPlayerUi();
-            startMiniProgressTicker();
+            syncTrackStateFromPlayer();
             refreshPlaylistMeta(requestPlaylistId, requestToken);
             bindTrackList(requestPlaylistId, requestToken);
         });
@@ -524,16 +450,13 @@ public class PlaylistDetailFragment extends Fragment
         if (isAdded()) {
             try { Glide.with(this).resumeRequests(); } catch (Exception ignored) {}
         }
-        invalidateMiniSnapshotCache();
-        lastTickerTrackIndex = -1;
-        lastTickerPlaying = false;
         onBecameVisible(false);
     }
 
     @Override
     public void onPlaybackSnapshotUpdated() {
         if (isAdded() && getActivity() != null) {
-            getActivity().runOnUiThread(this::updateMiniPlayerUi);
+            getActivity().runOnUiThread(this::syncTrackStateFromPlayer);
         }
     }
 
@@ -547,20 +470,7 @@ public class PlaylistDetailFragment extends Fragment
             }
         }
         if (hidden) {
-            stopMiniProgressTicker();
             return;
-        }
-
-        if (llMiniPlayer != null) {
-            if (llMiniPlayer.getVisibility() == View.VISIBLE && llMiniPlayer.getTranslationY() == 0f) {
-                // Already visible and in place (e.g. returning from search) — no animation
-            } else {
-                float distance = llMiniPlayer.getHeight() > 0 ? llMiniPlayer.getHeight() : 300f;
-                llMiniPlayer.setTranslationY(distance);
-                llMiniPlayer.setVisibility(View.VISIBLE);
-                llMiniPlayer.animate().cancel();
-                llMiniPlayer.animate().translationY(0f).setDuration(280).setInterpolator(MATERIAL_EASE).start();
-            }
         }
 
         onBecameVisible(true);
@@ -568,8 +478,7 @@ public class PlaylistDetailFragment extends Fragment
 
     private void onBecameVisible(boolean deferHeavyWork) {
         persistStreamingScreen(STREAM_SCREEN_PLAYLIST_DETAIL);
-        startMiniProgressTicker();
-        updateMiniPlayerUi();
+        syncTrackStateFromPlayer();
 
         if (deferHeavyWork) {
             View v = getView();
@@ -619,20 +528,16 @@ public class PlaylistDetailFragment extends Fragment
 
     @Override
     public void onPause() {
-        stopMiniProgressTicker();
         super.onPause();
     }
 
     @Override
     public void onDestroyView() {
-        dismissTrackActionPopup();
         stopObservingOfflineDownload();
         setOfflineDownloadVisualState(false, "");
         pendingImportTrackIds.clear();
         cancelPendingTracksTokenRetry();
         persistLibraryScreenIfReturningToMusic();
-        stopMiniProgressTicker();
-        invalidateMiniSnapshotCache();
         offlineReadyStateGeneration.incrementAndGet();
         restoringHiddenPlayerFromSnapshot = false;
         cachedSongPlayer = null;
@@ -648,12 +553,6 @@ public class PlaylistDetailFragment extends Fragment
         playlistLoadingOverlay = null;
         pbPlaylistLoading = null;
         rvPlaylistContent = null;
-        ivMiniPlayerArt = null;
-        tvMiniPlayerTitle = null;
-        tvMiniPlayerSubtitle = null;
-        sbMiniPlayerProgress = null;
-        llMiniPlayer = null;
-        btnMiniPlayPause = null;
         // Cleanup toolbar views
         llPlaylistToolbar = null;
         btnPlaylistBack = null;
@@ -675,56 +574,37 @@ public class PlaylistDetailFragment extends Fragment
     private void updateToolbarScrollState(@NonNull RecyclerView recyclerView) {
         if (llPlaylistToolbar == null || toolbarBgDrawable == null) return;
 
-        float fraction = 0f;
-        // Header is at adapter position 0 in ConcatAdapter
+        float fraction;
+        // Header is at adapter position 0 in ConcatAdapter.
+        // headerView.getBottom() returns the header's bottom edge in RecyclerView-local
+        // coordinates — the same space as toolbarHeight, so math is correct.
         RecyclerView.ViewHolder headerVH = recyclerView.findViewHolderForAdapterPosition(0);
         if (headerVH != null) {
-            View headerView = headerVH.itemView;
-            // Use cached reference from HeaderViewHolder — avoids per-frame findViewById O(n)
-            View btnListenNow = (headerVH instanceof PlaylistHeaderAdapter.HeaderViewHolder)
-                    ? ((PlaylistHeaderAdapter.HeaderViewHolder) headerVH).btnListenNow
-                    : headerView.findViewById(R.id.btnListenNow);
-            if (btnListenNow != null && btnListenNow.getHeight() > 0) {
-                int toolbarHeight = llPlaylistToolbar.getHeight();
-                if (toolbarHeight <= 0) toolbarHeight = llPlaylistToolbar.getMeasuredHeight();
-                if (toolbarHeight <= 0) {
-                    // Toolbar not measured yet — keep fully transparent
-                    toolbarBgDrawable.setAlpha(0);
-                    if (tvToolbarPlaylistTitle != null) tvToolbarPlaylistTitle.setAlpha(0f);
-                    return;
-                }
-                // Bottom of btnListenNow relative to the RecyclerView top
-                int buttonBottom = getDescendantBottom(headerView, btnListenNow);
-                // Transition starts when buttonBottom falls below toolbarHeight + transitionZone,
-                // and finishes (fully solid) when buttonBottom <= toolbarHeight.
-                // Use a shorter zone (60dp) so the transition is snappy.
-                float transitionZone = toolbarHeight * 2.5f;
-                if (buttonBottom <= toolbarHeight) {
-                    fraction = 1f;
-                } else if (buttonBottom >= toolbarHeight + transitionZone) {
-                    fraction = 0f;
-                } else {
-                    fraction = 1f - (buttonBottom - toolbarHeight) / transitionZone;
-                }
+            int toolbarHeight = llPlaylistToolbar.getHeight();
+            if (toolbarHeight <= 0) toolbarHeight = llPlaylistToolbar.getMeasuredHeight();
+            if (toolbarHeight <= 0) {
+                toolbarBgDrawable.setAlpha(0);
+                if (tvToolbarPlaylistTitle != null) tvToolbarPlaylistTitle.setAlpha(0f);
+                return;
+            }
+            int headerBottom = headerVH.itemView.getBottom(); // RV-local coords
+            float transitionZone = toolbarHeight * 3f;
+            if (headerBottom <= toolbarHeight) {
+                fraction = 1f;
+            } else if (headerBottom >= toolbarHeight + transitionZone) {
+                fraction = 0f;
+            } else {
+                fraction = 1f - (float) (headerBottom - toolbarHeight) / transitionZone;
             }
         } else {
             // Header scrolled completely off-screen — fully solid
             fraction = 1f;
         }
 
-        int bgAlpha = Math.round(fraction * 255f);
-        toolbarBgDrawable.setAlpha(bgAlpha);
+        toolbarBgDrawable.setAlpha(Math.round(fraction * 255f));
         if (tvToolbarPlaylistTitle != null) {
             tvToolbarPlaylistTitle.setAlpha(fraction);
         }
-    }
-
-    private int getDescendantBottom(@NonNull View ancestor, @NonNull View descendant) {
-        int[] ancestorLoc = new int[2];
-        int[] descendantLoc = new int[2];
-        ancestor.getLocationInWindow(ancestorLoc);
-        descendant.getLocationInWindow(descendantLoc);
-        return (descendantLoc[1] - ancestorLoc[1]) + descendant.getHeight();
     }
 
     private void showInitialLoadingOverlay() {
@@ -757,23 +637,6 @@ public class PlaylistDetailFragment extends Fragment
                 rvPlaylistContent.animate().alpha(1f).setDuration(PLAYLIST_INITIAL_CONTENT_FADE_MS).start();
             } else {
                 rvPlaylistContent.setAlpha(1f);
-            }
-        }
-
-        if (llMiniPlayer != null) {
-            llMiniPlayer.animate().cancel();
-            if (animated) {
-                float distance = llMiniPlayer.getHeight() > 0 ? llMiniPlayer.getHeight() : 300f;
-                if (llMiniPlayer.getTranslationY() == 0f && llMiniPlayer.getVisibility() != View.VISIBLE) {
-                    llMiniPlayer.setTranslationY(distance);
-                } else if (llMiniPlayer.getVisibility() == View.VISIBLE) {
-                     distance = llMiniPlayer.getTranslationY();
-                } else {
-                     llMiniPlayer.setTranslationY(distance);
-                }
-                llMiniPlayer.animate().translationY(0f).setDuration(PLAYLIST_INITIAL_CONTENT_FADE_MS).setInterpolator(MATERIAL_EASE).start();
-            } else {
-                llMiniPlayer.setTranslationY(0f);
             }
         }
 
@@ -843,17 +706,7 @@ public class PlaylistDetailFragment extends Fragment
         persistStreamingScreen(STREAM_SCREEN_LIBRARY);
     }
 
-    private void startMiniProgressTicker() {
-        if (!isAdded() || getView() == null || isHidden()) {
-            return;
-        }
-        miniProgressHandler.removeCallbacks(miniProgressTicker);
-        miniProgressHandler.post(miniProgressTicker);
-    }
 
-    private void stopMiniProgressTicker() {
-        miniProgressHandler.removeCallbacks(miniProgressTicker);
-    }
 
     private void notifyHeaderChanged() {
         if (headerAdapter != null) {
@@ -915,14 +768,13 @@ public class PlaylistDetailFragment extends Fragment
             return;
         }
 
-        // Invalidate offline state cache for the visible range so that
-        // triggerOfflineStateLookup re-runs the disk check instead of returning
-        // the stale cached value (which would keep the icon stuck at "not offline").
+        // Invalidate cache for visible range so lookups re-run after app return.
+        // Do NOT call notifyItemRangeChanged here — that would immediately rebind
+        // with an empty cache (showing icons as not-downloaded) before the async
+        // disk check completes. The lookup callbacks call immediateNotifyStateChanged
+        // themselves once the real result is available.
         trackAdapter.invalidateVisibleTrackStateCache(currentTracks, start, end);
-        // Use PAYLOAD_STATE_ONLY so onBindViewHolder skips image reload and
-        // click listener re-setup. The invalidated cache will trigger fresh
-        // async lookups that call notifyItemChanged when they resolve.
-        trackAdapter.notifyItemRangeChanged(start, (end - start) + 1, PAYLOAD_STATE_ONLY);
+        trackAdapter.loadStateForVisibleRange(start, end);
     }
 
     private void setOfflineDownloadVisualState(boolean running, @Nullable String currentTrackId) {
@@ -1144,11 +996,11 @@ public class PlaylistDetailFragment extends Fragment
         notifyHeaderChanged();
     }
 
-    private static void loadTrackArt(@NonNull ImageView target, @Nullable String imageUrl) {
+    private void loadTrackArt(@NonNull ImageView target, @Nullable String imageUrl) {
         loadTrackArt(target, imageUrl, com.bumptech.glide.Priority.NORMAL);
     }
 
-    private static void loadTrackArt(
+    private void loadTrackArt(
             @NonNull ImageView target,
             @Nullable String imageUrl,
             @NonNull com.bumptech.glide.Priority priority
@@ -1159,6 +1011,10 @@ public class PlaylistDetailFragment extends Fragment
             target.setImageDrawable(null);
             return;
         }
+        // DO NOT call target.setImageDrawable(null) here — it causes a visible
+        // white flash before the new image loads. Glide's crossFade transition
+        // handles the swap smoothly from old→new image.
+        boolean offlineOnly = !cachedHasValidatedInternet(ctx);
         float density = ctx.getResources().getDisplayMetrics().density;
         int px = Math.max(100, Math.round(50 * density));
         Glide.with(target)
@@ -1166,24 +1022,10 @@ public class PlaylistDetailFragment extends Fragment
                 .transform(SHARED_YT_CROP)
                 .format(DecodeFormat.PREFER_RGB_565)
                 .diskCacheStrategy(DiskCacheStrategy.ALL)
+                .onlyRetrieveFromCache(offlineOnly)
                 .priority(priority)
                 .override(px, px)
-                .listener(new RequestListener<Drawable>() {
-                    @Override
-                    public boolean onLoadFailed(@Nullable GlideException e, Object model,
-                            Target<Drawable> t, boolean isFirstResource) {
-                        return false;
-                    }
-                    @Override
-                    public boolean onResourceReady(Drawable resource, Object model,
-                            Target<Drawable> t, DataSource dataSource, boolean isFirstResource) {
-                        if (dataSource != DataSource.MEMORY_CACHE) {
-                            target.setAlpha(0f);
-                            target.animate().alpha(1f).setDuration(120).start();
-                        }
-                        return false;
-                    }
-                })
+                .transition(DrawableTransitionOptions.withCrossFade(100))
                 .into(target);
     }
 
@@ -1665,7 +1507,7 @@ public class PlaylistDetailFragment extends Fragment
                 trackAdapter.submitTracks(currentTracks);
                 currentTrackIndex = -1;
                 miniPlaying = false;
-                updateMiniPlayerUi();
+                syncTrackStateFromPlayer();
                 revealPlaylistContentIfNeeded(true);
                 playlistTracksCanLoadMore = false;
             }
@@ -1702,7 +1544,7 @@ public class PlaylistDetailFragment extends Fragment
 
         offlineReadyStateExecutor.execute(() -> {
             boolean complete = computeOfflineReadyState(appContext, tracksSnapshot);
-            miniProgressHandler.post(() -> {
+            mainHandler.post(() -> {
                 if (!isAdded()
                         || generation != offlineReadyStateGeneration.get()
                         || !TextUtils.equals(playlistIdSnapshot, currentPlaylistId)) {
@@ -1723,37 +1565,11 @@ public class PlaylistDetailFragment extends Fragment
             return true;
         }
 
-        // ✅ Batch cache restrictions and offline availability instead of per-track I/O
-        // Extract all videoIds for batch queries
-        List<String> videoIds = new ArrayList<>(tracksSnapshot.size());
-        for (PlaylistTrack track : tracksSnapshot) {
-            if (track != null && !TextUtils.isEmpty(track.videoId)) {
-                videoIds.add(track.videoId);
-            }
-        }
-
-        // ✅ Get all restricted tracks in one operation (cache batch result)
-        Set<String> restrictedIds = new HashSet<>();
-        if (!videoIds.isEmpty()) {
-            // Use batch query if available, otherwise fall back to individual checks
-            // This is still better because we're doing lookups on a local set in-memory
-            for (String videoId : videoIds) {
-                if (OfflineRestrictionStore.isRestricted(appContext, videoId)) {
-                    restrictedIds.add(videoId);
-                }
-            }
-        }
-
         int eligibleCount = 0;
         int offlineCount = 0;
 
         for (PlaylistTrack track : tracksSnapshot) {
             if (track == null || TextUtils.isEmpty(track.videoId)) {
-                continue;
-            }
-
-            // ✅ Check cached restrictions first (O(1) set lookup vs disk I/O)
-            if (restrictedIds.contains(track.videoId)) {
                 continue;
             }
 
@@ -1815,15 +1631,10 @@ public class PlaylistDetailFragment extends Fragment
         ArrayList<String> artists = new ArrayList<>();
         ArrayList<String> durations = new ArrayList<>();
         int skippedAlreadyOffline = 0;
-        int skippedRestricted = 0;
         int totalWithVideoId = 0;
         for (PlaylistTrack track : currentTracks) {
             if (!TextUtils.isEmpty(track.videoId)) {
                 totalWithVideoId++;
-                if (isRestrictedTrack(track.videoId)) {
-                    skippedRestricted++;
-                    continue;
-                }
                 boolean alreadyOffline = OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), track.videoId, track.duration);
                 if (alreadyOffline) {
                     skippedAlreadyOffline++;
@@ -1835,17 +1646,7 @@ public class PlaylistDetailFragment extends Fragment
                 durations.add(track.duration);
             }
         }
-        int totalEligibleWithVideoId = Math.max(0, totalWithVideoId - skippedRestricted);
         if (ids.isEmpty()) {
-            if (userInitiated) {
-                if (totalEligibleWithVideoId <= 0 && skippedRestricted > 0) {
-                    
-                } else if (totalEligibleWithVideoId > 0 && skippedAlreadyOffline >= totalEligibleWithVideoId) {
-                    
-                } else {
-                    
-                }
-            }
             return;
         }
 
@@ -1858,7 +1659,7 @@ public class PlaylistDetailFragment extends Fragment
                 .putStringArray(OfflinePlaylistDownloadWorker.INPUT_ARTISTS, artists.toArray(new String[0]))
                 .putStringArray(OfflinePlaylistDownloadWorker.INPUT_DURATIONS, durations.toArray(new String[0]))
                 .putInt(OfflinePlaylistDownloadWorker.INPUT_ALREADY_OFFLINE_COUNT, skippedAlreadyOffline)
-                .putInt(OfflinePlaylistDownloadWorker.INPUT_TOTAL_WITH_VIDEO_ID, totalEligibleWithVideoId)
+                .putInt(OfflinePlaylistDownloadWorker.INPUT_TOTAL_WITH_VIDEO_ID, totalWithVideoId)
             .putBoolean(OfflinePlaylistDownloadWorker.INPUT_USER_INITIATED, userInitiated)
             .putBoolean(OfflinePlaylistDownloadWorker.INPUT_MANUAL_QUEUE, false)
                 .build();
@@ -1867,8 +1668,7 @@ public class PlaylistDetailFragment extends Fragment
             "enqueue uniqueName=" + uniqueName
                 + " playlistId=" + currentPlaylistId
                 + " tracksPending=" + ids.size()
-                + " skippedAlreadyOffline=" + skippedAlreadyOffline
-                + " skippedRestricted=" + skippedRestricted);
+                + " skippedAlreadyOffline=" + skippedAlreadyOffline);
 
         SharedPreferences prefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE);
         boolean allowMobileData = prefs.getBoolean(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false);
@@ -1973,199 +1773,12 @@ public class PlaylistDetailFragment extends Fragment
         return ids;
     }
 
-    private boolean isRestrictedTrack(@Nullable String videoId) {
-        if (!isAdded() || TextUtils.isEmpty(videoId)) {
-            return false;
-        }
-        return OfflineRestrictionStore.isRestricted(requireContext(), videoId);
-    }
-
-    private int countRestrictedTracks(@NonNull List<PlaylistTrack> source) {
-        if (!isAdded() || source.isEmpty()) {
-            return 0;
-        }
-
-        int count = 0;
-        HashSet<String> seen = new HashSet<>();
-        for (PlaylistTrack track : source) {
-            if (track == null || TextUtils.isEmpty(track.videoId)) {
-                continue;
-            }
-            if (!seen.add(track.videoId)) {
-                continue;
-            }
-            if (OfflineRestrictionStore.isRestricted(requireContext(), track.videoId)) {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    private boolean hasRestrictedTracksInCurrentPlaylist() {
-        return countRestrictedTracks(currentTracks) > 0;
-    }
 
     @NonNull
     private String resolvePlaylistType(@NonNull String playlistId) {
         if (isFavoritesPlaylistContext(playlistId)) return "favorites";
         if (isCustomPlaylistContext(playlistId)) return "custom";
         return "youtube";
-    }
-
-    /**
-     * If {@code videoId} is currently a replacement in any override for the
-     * current playlist, return the <b>original</b> videoId that it replaced.
-     * Otherwise return {@code videoId} unchanged.  This is needed so that
-     * re-replacing an already-replaced track correctly updates the existing
-     * override (original → newReplacement) instead of creating a dangling
-     * one (oldReplacement → newReplacement) that never matches the cache.
-     */
-    @NonNull
-    private String resolveOriginalVideoId(@NonNull String videoId) {
-        if (!isAdded() || TextUtils.isEmpty(currentPlaylistId) || TextUtils.isEmpty(videoId))
-            return videoId;
-        java.util.Map<String, PlaylistOverrideStore.Override> overrides =
-                PlaylistOverrideStore.INSTANCE.getOverrides(requireContext(), currentPlaylistId);
-        for (java.util.Map.Entry<String, PlaylistOverrideStore.Override> entry : overrides.entrySet()) {
-            if (videoId.equals(entry.getValue().getReplacementVideoId())) {
-                return entry.getKey();
-            }
-        }
-        return videoId;
-    }
-
-    @Override
-    public void onReplacementUndone(@NonNull String playlistId, @NonNull String originalVideoId) {
-        if (!isAdded()) return;
-        Context ctx = requireContext();
-
-        // 1. Delete offline audio for the replacement that is being undone
-        PlaylistOverrideStore.Override existing =
-                PlaylistOverrideStore.INSTANCE.getOverrides(ctx, playlistId).get(originalVideoId);
-        String replacementVideoId = existing != null ? existing.getReplacementVideoId() : "";
-        if (!TextUtils.isEmpty(replacementVideoId)) {
-            OfflineAudioStore.deleteOfflineAudio(ctx, replacementVideoId);
-        }
-
-        // 2. Remove the override
-        PlaylistOverrideStore.INSTANCE.removeOverride(ctx, playlistId, originalVideoId);
-
-        // 3. Re-render from existing cached data (override is now removed, so the
-        //    original track reappears). Do NOT invalidate the cache.
-        List<PlaylistTrack> updatedTracks = sanitizeTracksForPlaylist(playlistId, loadCachedTracks(playlistId));
-        renderTracks(updatedTracks, playlistId, false);
-
-        // 4. Refresh adapter download-state indicators
-        if (trackAdapter != null) {
-            trackAdapter.invalidateTrackStateCache(replacementVideoId);
-            trackAdapter.invalidateTrackStateCache(originalVideoId);
-            trackAdapter.submitTracks(updatedTracks);
-        }
-
-        android.widget.Toast.makeText(ctx, "Reemplazo deshecho", android.widget.Toast.LENGTH_SHORT).show();
-
-        // 5. Notify MusicPlayerFragment to update its offline state (overrides changed)
-        notifyMusicPlayerOfflineChanged();
-    }
-
-    @Override
-    public void onReplacementConfirmed(
-            @NonNull String playlistId,
-            @NonNull String playlistType,
-            @NonNull String originalVideoId,
-            @NonNull YouTubeMusicService.ReplacementCandidate candidate
-    ) {
-        if (!isAdded()) return;
-
-        Context ctx = requireContext();
-
-        // 1. Delete offline audio for the version being replaced (original or previous replacement)
-        PlaylistOverrideStore.Override previousOverride =
-                PlaylistOverrideStore.INSTANCE.getOverrides(ctx, playlistId).get(originalVideoId);
-        String previousVideoId = previousOverride != null
-                ? previousOverride.getReplacementVideoId()
-                : originalVideoId;
-        if (!TextUtils.isEmpty(previousVideoId)) {
-            OfflineAudioStore.deleteOfflineAudio(ctx, previousVideoId);
-        }
-
-        // 2. Persist the override locally + cloud
-        PlaylistOverrideStore.Override override = new PlaylistOverrideStore.Override(
-                originalVideoId,
-                candidate.videoId,
-                candidate.title,
-                candidate.artist,
-                candidate.duration,
-                candidate.thumbnailUrl,
-                System.currentTimeMillis()
-        );
-        PlaylistOverrideStore.INSTANCE.putOverride(ctx, playlistId, override);
-
-        // 3. Re-render the track list from existing data with the new override applied.
-        //    Do NOT invalidate the cache — that destroys data and the subsequent
-        //    network re-fetch may fail (no token / no connectivity), leaving the list empty.
-        List<PlaylistTrack> updatedTracks = sanitizeTracksForPlaylist(playlistId, loadCachedTracks(playlistId));
-        renderTracks(updatedTracks, playlistId, false);
-
-        // 4. Refresh adapter download-state indicators for old and new tracks
-        if (trackAdapter != null) {
-            trackAdapter.invalidateTrackStateCache(previousVideoId);
-            trackAdapter.invalidateTrackStateCache(candidate.videoId);
-            trackAdapter.submitTracks(updatedTracks);
-        }
-
-        // 5. Auto-download if offline subscription is active
-        if (isCurrentPlaylistOfflineAutoEnabled()) {
-            enqueueSingleTrackForOfflineDownload(candidate.videoId, candidate.title, candidate.artist, candidate.duration);
-        }
-
-        // 6. Sync overrides to cloud
-        if (AuthManager.getInstance(ctx).isSignedIn()) {
-            CloudSyncManager.getInstance(ctx).syncPlaylistOverridesToCloud(
-                    playlistId,
-                    new ArrayList<>(PlaylistOverrideStore.INSTANCE.getOverrides(ctx, playlistId).values())
-            );
-        }
-
-        // 7. Notify MusicPlayerFragment to update its offline state (overrides changed)
-        notifyMusicPlayerOfflineChanged();
-    }
-
-    private void enqueueSingleTrackForOfflineDownload(
-            @NonNull String videoId,
-            @NonNull String title,
-            @NonNull String artist,
-            @NonNull String duration
-    ) {
-        if (!isAdded() || TextUtils.isEmpty(videoId)) return;
-        try {
-            Data inputData = new Data.Builder()
-                    .putStringArray(OfflinePlaylistDownloadWorker.INPUT_VIDEO_IDS, new String[]{videoId})
-                    .putStringArray(OfflinePlaylistDownloadWorker.INPUT_TITLES, new String[]{title})
-                    .putStringArray(OfflinePlaylistDownloadWorker.INPUT_ARTISTS, new String[]{artist})
-                    .putStringArray(OfflinePlaylistDownloadWorker.INPUT_DURATIONS, new String[]{duration})
-                    .putBoolean(OfflinePlaylistDownloadWorker.INPUT_MANUAL_QUEUE, true)
-                    .build();
-
-            SharedPreferences dlPrefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE);
-            boolean allowMobileData = dlPrefs.getBoolean(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false);
-            Constraints dlConstraints = new Constraints.Builder()
-                    .setRequiredNetworkType(allowMobileData ? NetworkType.CONNECTED : NetworkType.UNMETERED)
-                    .build();
-
-            androidx.work.OneTimeWorkRequest request = new androidx.work.OneTimeWorkRequest.Builder(
-                    OfflinePlaylistDownloadWorker.class)
-                    .setInputData(inputData)
-                    .setConstraints(dlConstraints)
-                    .addTag(currentPlaylistOfflineTag())
-                    .build();
-
-            androidx.work.WorkManager.getInstance(requireContext())
-                    .enqueue(request);
-            Log.d("PlaylistDetailFragment", "enqueueSingleTrackForOfflineDownload: queued videoId=" + videoId);
-        } catch (Exception e) {
-            Log.w("PlaylistDetailFragment", "enqueueSingleTrackForOfflineDownload: failed", e);
-        }
     }
 
     private boolean copyUriToOfflineFile(@NonNull Uri uri, @NonNull String trackId) {
@@ -2597,12 +2210,12 @@ public class PlaylistDetailFragment extends Fragment
             }
         };
 
-        miniProgressHandler.postDelayed(pendingTracksTokenRetryRunnable, TRACKS_TOKEN_RETRY_DELAY_MS);
+        mainHandler.postDelayed(pendingTracksTokenRetryRunnable, TRACKS_TOKEN_RETRY_DELAY_MS);
     }
 
     private void cancelPendingTracksTokenRetry() {
         if (pendingTracksTokenRetryRunnable != null) {
-            miniProgressHandler.removeCallbacks(pendingTracksTokenRetryRunnable);
+            mainHandler.removeCallbacks(pendingTracksTokenRetryRunnable);
             pendingTracksTokenRetryRunnable = null;
         }
         pendingTracksTokenRetry = 0;
@@ -2894,8 +2507,7 @@ public class PlaylistDetailFragment extends Fragment
                 for (PlaylistTrack t : snapshot) {
                     if (t == null || TextUtils.isEmpty(t.videoId)) continue;
                     String vid = t.videoId.trim();
-                    if (!OfflineRestrictionStore.isRestricted(offlineCtx, vid)
-                            && OfflineAudioStore.hasOfflineAudio(offlineCtx, vid)) {
+                    if (OfflineAudioStore.hasOfflineAudio(offlineCtx, vid)) {
                         filtered.add(t);
                     }
                 }
@@ -2990,7 +2602,7 @@ public class PlaylistDetailFragment extends Fragment
 
         maybeAutoDownloadForCurrentPlaylist();
         maybeRestoreHiddenPlayerFromSnapshot();
-        updateMiniPlayerUi();
+        syncTrackStateFromPlayer();
         preloadImagesAndReveal();
     }
 
@@ -3001,20 +2613,22 @@ public class PlaylistDetailFragment extends Fragment
         }
 
         // Collect URLs to preload: grid URLs + first 6 track thumbnails
-        List<String> urls = new ArrayList<>();
+        List<String> gridUrls = new ArrayList<>();
         for (String gridUrl : headerGridUrls) {
-            if (!TextUtils.isEmpty(gridUrl)) urls.add(gridUrl.trim());
+            if (!TextUtils.isEmpty(gridUrl)) gridUrls.add(gridUrl.trim());
         }
+        List<String> trackUrls = new ArrayList<>();
         int trackLimit = Math.min(currentTracks.size(), 6);
         for (int i = 0; i < trackLimit; i++) {
             PlaylistTrack t = currentTracks.get(i);
             if (t != null && !TextUtils.isEmpty(t.imageUrl)) {
                 String url = t.imageUrl.trim();
-                if (!url.isEmpty()) urls.add(url);
+                if (!url.isEmpty()) trackUrls.add(url);
             }
         }
 
-        if (urls.isEmpty()) {
+        int totalPreloads = gridUrls.size() + trackUrls.size();
+        if (totalPreloads == 0) {
             revealPlaylistContentIfNeeded(true);
             return;
         }
@@ -3027,41 +2641,59 @@ public class PlaylistDetailFragment extends Fragment
             }
         }, 3000L);
 
-        // Fire all preloads into Glide's cache
         Context ctx = requireContext();
         final java.util.concurrent.atomic.AtomicInteger remaining =
-                new java.util.concurrent.atomic.AtomicInteger(urls.size());
-        for (String url : urls) {
+                new java.util.concurrent.atomic.AtomicInteger(totalPreloads);
+        com.bumptech.glide.request.RequestListener<android.graphics.drawable.Drawable> revealListener =
+                new com.bumptech.glide.request.RequestListener<android.graphics.drawable.Drawable>() {
+            @Override
+            public boolean onLoadFailed(@Nullable com.bumptech.glide.load.engine.GlideException e,
+                    Object model, com.bumptech.glide.request.target.Target<android.graphics.drawable.Drawable> target,
+                    boolean isFirstResource) {
+                if (remaining.decrementAndGet() <= 0) {
+                    uiHandler.post(() -> {
+                        if (isAdded() && awaitingInitialPlaylistRender)
+                            revealPlaylistContentIfNeeded(true);
+                    });
+                }
+                return false;
+            }
+            @Override
+            public boolean onResourceReady(android.graphics.drawable.Drawable resource,
+                    Object model, com.bumptech.glide.request.target.Target<android.graphics.drawable.Drawable> target,
+                    com.bumptech.glide.load.DataSource dataSource, boolean isFirstResource) {
+                if (remaining.decrementAndGet() <= 0) {
+                    uiHandler.post(() -> {
+                        if (isAdded() && awaitingInitialPlaylistRender)
+                            revealPlaylistContentIfNeeded(true);
+                    });
+                }
+                return false;
+            }
+        };
+
+        // Preload grid URLs at 320px (for header)
+        for (String url : gridUrls) {
             Glide.with(ctx)
                     .load(url)
                     .diskCacheStrategy(DiskCacheStrategy.ALL)
                     .override(320, 320)
-                    .listener(new com.bumptech.glide.request.RequestListener<android.graphics.drawable.Drawable>() {
-                        @Override
-                        public boolean onLoadFailed(@Nullable com.bumptech.glide.load.engine.GlideException e,
-                                Object model, com.bumptech.glide.request.target.Target<android.graphics.drawable.Drawable> target,
-                                boolean isFirstResource) {
-                            if (remaining.decrementAndGet() <= 0) {
-                                uiHandler.post(() -> {
-                                    if (isAdded() && awaitingInitialPlaylistRender)
-                                        revealPlaylistContentIfNeeded(true);
-                                });
-                            }
-                            return false;
-                        }
-                        @Override
-                        public boolean onResourceReady(android.graphics.drawable.Drawable resource,
-                                Object model, com.bumptech.glide.request.target.Target<android.graphics.drawable.Drawable> target,
-                                com.bumptech.glide.load.DataSource dataSource, boolean isFirstResource) {
-                            if (remaining.decrementAndGet() <= 0) {
-                                uiHandler.post(() -> {
-                                    if (isAdded() && awaitingInitialPlaylistRender)
-                                        revealPlaylistContentIfNeeded(true);
-                                });
-                            }
-                            return false;
-                        }
-                    })
+                    .listener(revealListener)
+                    .preload();
+        }
+
+        // Preload track thumbnails with SHARED_YT_CROP + same size as loadTrackArt
+        // so the cache key matches and the first scroll doesn't re-decode
+        float density = ctx.getResources().getDisplayMetrics().density;
+        int trackPx = Math.max(100, Math.round(50 * density));
+        for (String url : trackUrls) {
+            Glide.with(ctx)
+                    .load(url)
+                    .transform(SHARED_YT_CROP)
+                    .format(DecodeFormat.PREFER_RGB_565)
+                    .diskCacheStrategy(DiskCacheStrategy.ALL)
+                    .override(trackPx, trackPx)
+                    .listener(revealListener)
                     .preload();
         }
     }
@@ -3243,21 +2875,7 @@ public class PlaylistDetailFragment extends Fragment
         if (!isAdded()) {
             return new PlaybackHistoryStore.Snapshot(new ArrayList<>(), 0, 1, false, 0L);
         }
-
-        long now = System.currentTimeMillis();
-        if (miniSnapshotCache != null && (now - miniSnapshotCacheReadAtMs) < MINI_SNAPSHOT_REFRESH_MS) {
-            return miniSnapshotCache;
-        }
-
-        PlaybackHistoryStore.Snapshot snapshot = PlaybackHistoryStore.load(requireContext());
-        miniSnapshotCache = snapshot;
-        miniSnapshotCacheReadAtMs = now;
-        return snapshot;
-    }
-
-    private void invalidateMiniSnapshotCache() {
-        miniSnapshotCache = null;
-        miniSnapshotCacheReadAtMs = 0L;
+        return PlaybackHistoryStore.load(requireContext());
     }
 
     private int findTrackIndexFromSnapshot(
@@ -3409,39 +3027,12 @@ public class PlaylistDetailFragment extends Fragment
         if (getView() == null) {
             return;
         }
-        updateMiniPlayerUi();
+        syncTrackStateFromPlayer();
     }
 
     private void onTrackSelected(int position) {
         if (position < 0 || position >= currentTracks.size()) {
             return;
-        }
-
-        // Intercept restricted tracks: show replacement sheet instead of playing
-        PlaylistTrack tappedTrack = currentTracks.get(position);
-        if (!TextUtils.isEmpty(tappedTrack.videoId) && isRestrictedTrack(tappedTrack.videoId)) {
-            String playlistType = resolvePlaylistType(currentPlaylistId);
-            boolean offlineSub = isCurrentPlaylistOfflineAutoEnabled();
-            String resolvedId = resolveOriginalVideoId(tappedTrack.videoId);
-            boolean hasOverride = PlaylistOverrideStore.INSTANCE.getOverrides(requireContext(), currentPlaylistId)
-                    .containsKey(resolvedId);
-            RestrictedTrackReplacementSheet.show(
-                    getChildFragmentManager(),
-                    currentPlaylistId,
-                    playlistType,
-                    resolvedId,
-                    tappedTrack.title,
-                    tappedTrack.artist,
-                    tappedTrack.duration,
-                    tappedTrack.imageUrl,
-                    offlineSub,
-                    hasOverride
-            );
-            return;
-        }
-
-        if (sbMiniPlayerProgress != null) {
-            sbMiniPlayerProgress.setProgress(0);
         }
 
         ensurePlaybackQueue();
@@ -3476,7 +3067,7 @@ public class PlaylistDetailFragment extends Fragment
                 
                 // If the selected track is already playing, just open the player
                 if (TextUtils.equals(selectedVideoId, existingPlayer.getLoadedVideoId())) {
-                    openPlayerFromMiniBar();
+                    showSongPlayerWithEnterAnimation(existingPlayer);
                     return;
                 }
 
@@ -3491,7 +3082,7 @@ public class PlaylistDetailFragment extends Fragment
                 if (trackAdapter != null) {
                     trackAdapter.setActiveIndex(position);
                 }
-                updateMiniPlayerUi();
+                syncTrackStateFromPlayer();
             }
             return;
         }
@@ -3649,35 +3240,6 @@ public class PlaylistDetailFragment extends Fragment
         } else {
             btnDownload.setVisibility(View.GONE);
         }
-
-        // Replace track (always available)
-        View btnReplace = view.findViewById(R.id.btnBsReplace);
-        btnReplace.setVisibility(View.VISIBLE);
-        ImageView ivReplace = view.findViewById(R.id.ivBsReplace);
-        TextView tvReplace = view.findViewById(R.id.tvBsReplace);
-        ivReplace.setImageResource(R.drawable.ic_player_repeat);
-        tvReplace.setText("Reemplazar");
-        btnReplace.setOnClickListener(v -> {
-            dialog.dismiss();
-            String playlistType = resolvePlaylistType(currentPlaylistId);
-            boolean offlineSub = isCurrentPlaylistOfflineAutoEnabled();
-            String resolvedId = resolveOriginalVideoId(selectedTrack.videoId);
-            boolean hasOverride = PlaylistOverrideStore.INSTANCE.getOverrides(requireContext(), currentPlaylistId)
-                    .containsKey(resolvedId);
-            RestrictedTrackReplacementSheet.show(
-                    getChildFragmentManager(),
-                    currentPlaylistId,
-                    playlistType,
-                    resolvedId,
-                    selectedTrack.title,
-                    selectedTrack.artist,
-                    selectedTrack.duration,
-                    selectedTrack.imageUrl,
-                    offlineSub,
-                    hasOverride
-            );
-        });
-
 
         View parent = (View) view.getParent();
         if (parent != null) {
@@ -3935,11 +3497,7 @@ public class PlaylistDetailFragment extends Fragment
         if (rootView instanceof ConstraintLayout) {
             ConstraintLayout.LayoutParams clp = new ConstraintLayout.LayoutParams(
                     ConstraintLayout.LayoutParams.MATCH_PARENT, ConstraintLayout.LayoutParams.WRAP_CONTENT);
-            if (llMiniPlayer != null && llMiniPlayer.getVisibility() == View.VISIBLE) {
-                clp.bottomToTop = llMiniPlayer.getId();
-            } else {
-                clp.bottomToBottom = ConstraintLayout.LayoutParams.PARENT_ID;
-            }
+            clp.bottomToBottom = ConstraintLayout.LayoutParams.PARENT_ID;
             clp.bottomMargin = barBottomMargin;
             clp.startToStart = ConstraintLayout.LayoutParams.PARENT_ID;
             clp.endToEnd = ConstraintLayout.LayoutParams.PARENT_ID;
@@ -3948,11 +3506,7 @@ public class PlaylistDetailFragment extends Fragment
             FrameLayout.LayoutParams flp = new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             flp.gravity = android.view.Gravity.BOTTOM;
-            if (llMiniPlayer != null && llMiniPlayer.getVisibility() == View.VISIBLE) {
-                flp.bottomMargin = llMiniPlayer.getHeight() + barBottomMargin;
-            } else {
-                flp.bottomMargin = barBottomMargin;
-            }
+            flp.bottomMargin = barBottomMargin;
             rootView.addView(bar, flp);
         }
 
@@ -4009,11 +3563,7 @@ public class PlaylistDetailFragment extends Fragment
         if (rootView instanceof ConstraintLayout) {
             ConstraintLayout.LayoutParams clp = new ConstraintLayout.LayoutParams(
                     ConstraintLayout.LayoutParams.MATCH_PARENT, ConstraintLayout.LayoutParams.WRAP_CONTENT);
-            if (llMiniPlayer != null && llMiniPlayer.getVisibility() == View.VISIBLE) {
-                clp.bottomToTop = llMiniPlayer.getId();
-            } else {
-                clp.bottomToBottom = ConstraintLayout.LayoutParams.PARENT_ID;
-            }
+            clp.bottomToBottom = ConstraintLayout.LayoutParams.PARENT_ID;
             clp.bottomMargin = barBottomMargin;
             clp.startToStart = ConstraintLayout.LayoutParams.PARENT_ID;
             clp.endToEnd = ConstraintLayout.LayoutParams.PARENT_ID;
@@ -4022,11 +3572,7 @@ public class PlaylistDetailFragment extends Fragment
             FrameLayout.LayoutParams flp = new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             flp.gravity = android.view.Gravity.BOTTOM;
-            if (llMiniPlayer != null && llMiniPlayer.getVisibility() == View.VISIBLE) {
-                flp.bottomMargin = llMiniPlayer.getHeight() + barBottomMargin;
-            } else {
-                flp.bottomMargin = barBottomMargin;
-            }
+            flp.bottomMargin = barBottomMargin;
             rootView.addView(bar, flp);
         }
 
@@ -4046,13 +3592,6 @@ public class PlaylistDetailFragment extends Fragment
         startActivity(Intent.createChooser(intent, "Compartir canción"));
     }
 
-
-    private void dismissTrackActionPopup() {
-        if (trackActionPopupWindow != null) {
-            trackActionPopupWindow.dismiss();
-            trackActionPopupWindow = null;
-        }
-    }
 
     private void queueTrackAsNext(int position) {
         if (!isAdded() || position < 0 || position >= currentTracks.size()) {
@@ -4206,7 +3745,7 @@ public class PlaylistDetailFragment extends Fragment
         boolean keepPlaying = player.externalIsPlaying();
         player.externalReplaceQueue(ids, titles, artists, durations, images, selectedIndex, keepPlaying);
         miniPlaying = keepPlaying;
-        updateMiniPlayerUi();
+        syncTrackStateFromPlayer();
     }
 
     private void downloadTrackFromRow(int position) {
@@ -4217,10 +3756,6 @@ public class PlaylistDetailFragment extends Fragment
         PlaylistTrack track = currentTracks.get(position);
         if (TextUtils.isEmpty(track.videoId)) {
             
-            return;
-        }
-
-        if (isRestrictedTrack(track.videoId)) {
             return;
         }
 
@@ -4319,10 +3854,6 @@ public class PlaylistDetailFragment extends Fragment
             return;
         }
 
-        if (sbMiniPlayerProgress != null) {
-            sbMiniPlayerProgress.setProgress(0);
-        }
-
         if (shuffleModeEnabled) {
             ensurePlaybackQueue();
             if (!playbackQueueTracks.isEmpty()) {
@@ -4338,58 +3869,15 @@ public class PlaylistDetailFragment extends Fragment
 
 
 
-    private void openPlayerFromMiniBar() {
-        if (llMiniPlayer != null) {
-            llMiniPlayer.animate().cancel();
-            float distance = llMiniPlayer.getHeight() > 0 ? llMiniPlayer.getHeight() : 300f;
-            llMiniPlayer.animate().translationY(distance).setDuration(250)
-                .setInterpolator(MATERIAL_EASE)
-                .withEndAction(() -> {
-                    llMiniPlayer.setVisibility(View.GONE);
-                }).start();
-        }
-
-        SongPlayerFragment existingPlayer = findSongPlayerFragment();
-        if (existingPlayer != null && existingPlayer.isAdded()) {
-            existingPlayer.externalSetReturnTargetTag(TAG_PLAYLIST_DETAIL);
-            showSongPlayerWithEnterAnimation(existingPlayer);
-            return;
-        }
-
-        if (currentTrackIndex >= 0 && currentTrackIndex < currentTracks.size()) {
-            openIntegratedPlayerAt(currentTrackIndex, false);
-            return;
-        }
-
-        PlaybackHistoryStore.Snapshot snapshot = loadPlaybackSnapshot();
-        if (openPlayerFromSnapshot(snapshot, snapshot.isPlaying)) {
-            return;
-        }
-
-        boolean persistedPlaying = getPlayerStatePrefs().getBoolean(PREF_LAST_IS_PLAYING, false);
-        if (launchPlayerFromLastTrackPrefs(persistedPlaying, true)) {
-            return;
-        }
-
-        
-    }
 
     private void openIntegratedPlayerAt(int position, boolean startFromBeginning) {
         if (position < 0 || position >= currentTracks.size()) {
             return;
         }
 
-        if (llMiniPlayer != null) {
-            if (sbMiniPlayerProgress != null) {
-                sbMiniPlayerProgress.setProgress(0);
-            }
-            llMiniPlayer.animate().cancel();
-            float distance = llMiniPlayer.getHeight() > 0 ? llMiniPlayer.getHeight() : 300f;
-            llMiniPlayer.animate().translationY(distance).setDuration(250)
-                .setInterpolator(MATERIAL_EASE)
-                .withEndAction(() -> {
-                    llMiniPlayer.setVisibility(View.GONE);
-                }).start();
+        if (getActivity() instanceof MainActivity) {
+            GlobalMiniPlayerController gmp = ((MainActivity) getActivity()).getGlobalMiniPlayer();
+            if (gmp != null) gmp.animateOut();
         }
 
         ensurePlaybackQueue();
@@ -4475,9 +3963,10 @@ public class PlaylistDetailFragment extends Fragment
             return false;
         }
 
-        // Hide mini-player immediately to prevent UI overlap
-        if (llMiniPlayer != null) {
-            llMiniPlayer.setVisibility(View.GONE);
+        // Hide global mini-player immediately to prevent UI overlap
+        if (getActivity() instanceof MainActivity) {
+            GlobalMiniPlayerController gmp = ((MainActivity) getActivity()).getGlobalMiniPlayer();
+            if (gmp != null) gmp.hide();
         }
 
         ArrayList<String> ids = new ArrayList<>();
@@ -4527,7 +4016,7 @@ public class PlaylistDetailFragment extends Fragment
         if (trackAdapter != null) {
             trackAdapter.setActiveIndex(displayIndex);
         }
-        updateMiniPlayerUi();
+        syncTrackStateFromPlayer();
         return true;
     }
 
@@ -4595,7 +4084,7 @@ public class PlaylistDetailFragment extends Fragment
                 .hide(playerFragment)
                 .runOnCommit(() -> {
                     restoringHiddenPlayerFromSnapshot = false;
-                    updateMiniPlayerUi();
+                    syncTrackStateFromPlayer();
                 })
                 .commit();
 
@@ -4606,31 +4095,6 @@ public class PlaylistDetailFragment extends Fragment
         }
     }
 
-    private void toggleMiniPlayback() {
-        SongPlayerFragment songPlayer = findSongPlayerFragment();
-        if (songPlayer != null && songPlayer.isAdded()) {
-            songPlayer.externalTogglePlayback();
-            syncMiniStateFromPlayer(songPlayer.externalGetCurrentIndex(), songPlayer.externalIsPlaying());
-            return;
-        }
-
-        PlaybackHistoryStore.Snapshot snapshot = loadPlaybackSnapshot();
-        if (startHiddenPlayerFromSnapshot(snapshot, true)) {
-            return;
-        }
-
-        if (currentTrackIndex >= 0 && currentTrackIndex < currentTracks.size()) {
-            if (startHiddenIntegratedPlayerAt(currentTrackIndex, false)) {
-                return;
-            }
-        }
-
-        if (launchPlayerFromLastTrackPrefs(true, false)) {
-            return;
-        }
-
-        
-    }
 
     private boolean launchPlayerFromLastTrackPrefs(boolean startPlaying, boolean showPlayer) {
         if (!isAdded()) {
@@ -4680,7 +4144,7 @@ public class PlaylistDetailFragment extends Fragment
                 if (trackAdapter != null) {
                     trackAdapter.setActiveIndex(currentTrackIndex);
                 }
-                updateMiniPlayerUi();
+                syncTrackStateFromPlayer();
             }
             return true;
         }
@@ -4715,7 +4179,7 @@ public class PlaylistDetailFragment extends Fragment
         if (trackAdapter != null) {
             trackAdapter.setActiveIndex(currentTrackIndex);
         }
-        updateMiniPlayerUi();
+        syncTrackStateFromPlayer();
         return true;
     }
 
@@ -4752,7 +4216,7 @@ public class PlaylistDetailFragment extends Fragment
                 if (startPlaying && !existingPlayer.externalIsPlaying()) {
                     existingPlayer.externalTogglePlayback();
                 }
-                updateMiniPlayerUi();
+                syncTrackStateFromPlayer();
             }
             return true;
         }
@@ -4812,7 +4276,7 @@ public class PlaylistDetailFragment extends Fragment
                             replaySnapshotIndex,
                             replayStartPlaying
                     );
-                    updateMiniPlayerUi();
+                    syncTrackStateFromPlayer();
                 })
                 .commit();
 
@@ -4822,7 +4286,7 @@ public class PlaylistDetailFragment extends Fragment
         if (trackAdapter != null) {
             trackAdapter.setActiveIndex(displayIndex);
         }
-        updateMiniPlayerUi();
+        syncTrackStateFromPlayer();
         return true;
     }
 
@@ -4887,43 +4351,25 @@ public class PlaylistDetailFragment extends Fragment
         if (trackAdapter != null) {
             trackAdapter.setActiveIndex(position);
         }
-        updateMiniPlayerUi();
+        syncTrackStateFromPlayer();
         return true;
     }
 
-    private void updateMiniPlayerUi() {
-        if (!isAdded()
-                || getView() == null
-                || llMiniPlayer == null
-                || tvMiniPlayerTitle == null
-                || tvMiniPlayerSubtitle == null
-                || ivMiniPlayerArt == null
-                || btnMiniPlayPause == null) {
+    private void syncTrackStateFromPlayer() {
+        if (!isAdded() || getView() == null) {
             return;
         }
 
-        if (getActivity() instanceof MainActivity) {
-            if (((MainActivity) getActivity()).isSongPlayerVisible()) {
-                llMiniPlayer.setVisibility(View.GONE);
-                return;
-            }
-        }
         SongPlayerFragment songPlayer = findSongPlayerFragment();
         boolean playerAttached = songPlayer != null && songPlayer.isAdded();
-        String playerVideoId = "";
         PlaybackHistoryStore.Snapshot snapshot = loadPlaybackSnapshot();
         PlaybackHistoryStore.QueueTrack snapshotTrack = snapshot.currentTrack();
 
-        int currentSeconds = 0;
-        int totalSeconds = 1;
-
         if (playerAttached) {
             miniPlaying = songPlayer.externalIsPlaying();
-            currentSeconds = songPlayer.externalGetCurrentSeconds();
-            totalSeconds = Math.max(1, songPlayer.externalGetTotalSeconds());
 
             if (!currentTracks.isEmpty()) {
-                playerVideoId = songPlayer.externalGetCurrentVideoId();
+                String playerVideoId = songPlayer.externalGetCurrentVideoId();
                 int mappedIndex = findTrackIndexByVideoId(currentTracks, playerVideoId);
                 if (mappedIndex >= 0) {
                     currentTrackIndex = mappedIndex;
@@ -4943,19 +4389,9 @@ public class PlaylistDetailFragment extends Fragment
                     ? -1
                     : findTrackIndexByVideoId(currentTracks, snapshotTrack.videoId);
             currentTrackIndex = mappedIndex >= 0 ? mappedIndex : -1;
-            currentSeconds = 0;
-            totalSeconds = 1;
             if (trackAdapter != null) {
                 trackAdapter.setActiveIndex(currentTrackIndex);
             }
-        }
-
-        // Update progress bar
-        if (sbMiniPlayerProgress != null) {
-            int clampedCurrent = Math.max(0, Math.min(totalSeconds, currentSeconds));
-            int progress = Math.round((clampedCurrent / (float) Math.max(1, totalSeconds)) * 1000f);
-            int boundedProgress = Math.max(0, Math.min(1000, progress));
-            sbMiniPlayerProgress.setProgress(boundedProgress);
         }
 
         PlaylistTrack currentListTrack = null;
@@ -4963,93 +4399,12 @@ public class PlaylistDetailFragment extends Fragment
             currentListTrack = currentTracks.get(currentTrackIndex);
         }
         if (currentListTrack == null && snapshotTrack == null && !playerAttached) {
-            llMiniPlayer.setVisibility(View.GONE);
-            miniPlaying = false;
-            return;
-        }
-
-        if (llMiniPlayer.getVisibility() != View.VISIBLE) {
-            float distance = llMiniPlayer.getHeight() > 0 ? llMiniPlayer.getHeight() : 300f;
-            llMiniPlayer.setTranslationY(distance);
-            llMiniPlayer.setVisibility(View.VISIBLE);
-            llMiniPlayer.animate().cancel();
-            llMiniPlayer.animate()
-                    .translationY(0f)
-                    .setDuration(250)
-                    .setInterpolator(MATERIAL_EASE)
-                    .withEndAction(null)
-                    .start();
-        }
-
-        String title;
-        String subtitle;
-        String imageUrl;
-
-        if (currentListTrack != null) {
-            title = currentListTrack.title;
-            subtitle = currentListTrack.artist;
-            imageUrl = currentListTrack.imageUrl == null ? "" : currentListTrack.imageUrl.trim();
-        } else if (snapshotTrack != null) {
-            title = TextUtils.isEmpty(snapshotTrack.title) ? "Última reproducción" : snapshotTrack.title;
-            subtitle = snapshotTrack.artist;
-            imageUrl = snapshotTrack.imageUrl == null ? "" : snapshotTrack.imageUrl.trim();
-        } else if (playerAttached) {
-            SharedPreferences prefs = getPlayerStatePrefs();
-            String fallbackTitle = prefs.getString(PREF_LAST_TRACK_TITLE, "");
-            String fallbackArtist = prefs.getString(PREF_LAST_TRACK_ARTIST, "");
-            String fallbackImage = prefs.getString(PREF_LAST_TRACK_IMAGE, "");
-
-            title = TextUtils.isEmpty(fallbackTitle) ? "Reproduciendo" : fallbackTitle;
-            subtitle = fallbackArtist == null ? "" : fallbackArtist;
-            imageUrl = fallbackImage == null ? "" : fallbackImage.trim();
-        } else {
-            title = "Selecciona una canción";
-            subtitle = "";
-            imageUrl = "";
             miniPlaying = false;
         }
-
-        tvMiniPlayerTitle.setText(title);
-        tvMiniPlayerSubtitle.setText(subtitle == null ? "" : subtitle);
-        btnMiniPlayPause.setImageResource(miniPlaying
-                ? R.drawable.ic_mini_pause
-                : R.drawable.ic_mini_play);
 
         if (currentListTrack != null) {
             persistCurrentPlaybackState(currentListTrack, miniPlaying);
         }
-
-        int artTrackIndex = currentListTrack != null ? currentTrackIndex : -2;
-        boolean shouldRefreshArt = artTrackIndex != lastMiniArtTrackIndex
-                || !TextUtils.equals(imageUrl, lastMiniArtUrl);
-        if (!shouldRefreshArt) {
-            return;
-        }
-
-        if (!TextUtils.isEmpty(imageUrl)) {
-            loadArtworkInto(ivMiniPlayerArt, imageUrl);
-        } else {
-            if (playerAttached && !TextUtils.isEmpty(lastMiniArtUrl)) {
-                return;
-            }
-            ivMiniPlayerArt.setImageDrawable(null);
-        }
-        lastMiniArtTrackIndex = artTrackIndex;
-        lastMiniArtUrl = imageUrl;
-    }
-
-    private void updateMiniProgressBarOnly(SongPlayerFragment songPlayer) {
-        if (sbMiniPlayerProgress == null) {
-            return;
-        }
-        if (songPlayer == null || !songPlayer.isAdded()) {
-            return;
-        }
-        int currentSeconds = songPlayer.externalGetCurrentSeconds();
-        int totalSeconds = Math.max(1, songPlayer.externalGetTotalSeconds());
-        int clampedCurrent = Math.max(0, Math.min(totalSeconds, currentSeconds));
-        int progress = Math.round((clampedCurrent / (float) Math.max(1, totalSeconds)) * 1000f);
-        sbMiniPlayerProgress.setProgress(Math.max(0, Math.min(1000, progress)));
     }
 
     @NonNull
@@ -5648,7 +5003,6 @@ public class PlaylistDetailFragment extends Fragment
         private final List<PlaylistTrack> items;
         private final OnTrackTap onTrackTap;
         private final Map<String, Boolean> offlineAvailabilityCache = new HashMap<>();
-        private final Map<String, Boolean> restrictedTrackCache = new HashMap<>();
         private int activeIndex = -1;
         private int submitGeneration = 0;
         private boolean offlineDownloadRunning;
@@ -5657,11 +5011,9 @@ public class PlaylistDetailFragment extends Fragment
         @NonNull
         private final Map<String, Float> downloadingTrackProgressById = new HashMap<>();
         private final Set<Integer> pendingNotifyPositions = new HashSet<>();
-        private boolean notifyCoalesceScheduled = false;
         private boolean isFastScrolling = false;
         // Track which items have pending state lookups to avoid duplicate requests
         private final Set<String> pendingOfflineLookups = new HashSet<>();
-        private final Set<String> pendingRestrictedLookups = new HashSet<>();
         // Cached colors — resolved once to avoid Resources lock on every bind
         private final int colorPrimary;
         private final int colorSurface;
@@ -5681,16 +5033,6 @@ public class PlaylistDetailFragment extends Fragment
             return items.size();
         }
 
-        private void coalescedNotifyItemChanged(int position) {
-            if (position < 0 || position >= getItemCount()) return;
-            pendingNotifyPositions.add(position);
-            // Defer image-related notifications while scrolling to avoid mid-fling relayouts.
-            // Accumulated positions will be flushed when flushDeferredNotifications() is
-            // called from the scroll listener at SCROLL_STATE_IDLE.
-            if (isScrolling) return;
-            flushDeferredNotifications();
-        }
-
         /** Fires a state-only notification immediately, regardless of scroll state.
          *  Used for download status / offline indicators which must always be live. */
         private void immediateNotifyStateChanged(int position) {
@@ -5706,7 +5048,6 @@ public class PlaylistDetailFragment extends Fragment
             if (pendingNotifyPositions.isEmpty()) return;
             final Set<Integer> snapshot = new HashSet<>(pendingNotifyPositions);
             pendingNotifyPositions.clear();
-            notifyCoalesceScheduled = false;
             dispatchWhenIdle(() -> {
                 int size = getItemCount();
                 for (int pos : snapshot) {
@@ -5767,7 +5108,7 @@ public class PlaylistDetailFragment extends Fragment
 
                     diffResult.dispatchUpdatesTo(this);
 
-                    // Trigger offline/restricted state lookup for the initial visible range.
+                    // Trigger offline state lookup for the initial visible range.
                     // Use a one-shot OnLayoutChangeListener: fires exactly after the RV
                     // completes its first layout pass, guaranteeing valid item positions.
                     if (rvPlaylistContent != null) {
@@ -5858,6 +5199,7 @@ public class PlaylistDetailFragment extends Fragment
             }
 
             Set<String> previousIds = new HashSet<>(downloadingTrackIds);
+            boolean wasRunning = offlineDownloadRunning;
             offlineDownloadRunning = running;
             downloadingTrackIds.clear();
             downloadingTrackProgressById.clear();
@@ -5866,8 +5208,27 @@ public class PlaylistDetailFragment extends Fragment
                 downloadingTrackProgressById.putAll(normalizedProgressById);
             }
 
+            // When a download just completed (running flipped true→false), pre-populate the
+            // cache with true for all tracks that were downloading so that the very first
+            // bindTrackState call after notify already sees the correct state — eliminating
+            // the 1-frame flicker where the icon briefly shows as not-downloaded.
+            if (wasRunning && !running) {
+                for (String completedId : previousIds) {
+                    if (!TextUtils.isEmpty(completedId)) {
+                        offlineAvailabilityCache.put(completedId.trim(), true);
+                    }
+                }
+            }
+
             for (String previousTrackId : previousIds) {
-                invalidateTrackStateCache(previousTrackId);
+                if (wasRunning && !running) {
+                    // Cache already set to true above — only clear the debounce timestamp
+                    // so the next scroll-triggered lookup can re-verify, but don't evict
+                    // the cache entry itself (that would cause the flicker we just fixed).
+                    lastOfflineStateLookupTimeByTrack.remove(previousTrackId.trim());
+                } else {
+                    invalidateTrackStateCache(previousTrackId);
+                }
             }
             for (String currentTrackId : downloadingTrackIds) {
                 invalidateTrackStateCache(currentTrackId);
@@ -5878,10 +5239,17 @@ public class PlaylistDetailFragment extends Fragment
             if (progressChanged) {
                 changedIds.addAll(downloadingTrackIds);
             }
+            // Use direct post (no dispatchWhenIdle retry loop) — PAYLOAD_STATE_ONLY binds
+            // don't affect layout so there's no risk of crashing during layout computation.
             for (String trackId : changedIds) {
                 int index = indexOfTrackById(trackId);
                 if (index >= 0 && index < getItemCount()) {
-                    immediateNotifyStateChanged(index);
+                    final int pos = index;
+                    mainHandler.post(() -> {
+                        if (pos >= 0 && pos < getItemCount()) {
+                            notifyItemChanged(pos, PAYLOAD_STATE_ONLY);
+                        }
+                    });
                 }
             }
         }
@@ -5926,9 +5294,7 @@ public class PlaylistDetailFragment extends Fragment
 
         void invalidateTrackStateCache() {
             offlineAvailabilityCache.clear();
-            restrictedTrackCache.clear();
             lastOfflineStateLookupTimeByTrack.clear();
-            lastRestrictedStateLookupTimeByTrack.clear();
         }
 
         void invalidateTrackStateCache(@Nullable String trackId) {
@@ -5937,10 +5303,8 @@ public class PlaylistDetailFragment extends Fragment
             }
             String normalized = trackId.trim();
             offlineAvailabilityCache.remove(normalized);
-            restrictedTrackCache.remove(normalized);
             // Clear debounce timestamp so re-lookup is not blocked after invalidation
             lastOfflineStateLookupTimeByTrack.remove(normalized);
-            lastRestrictedStateLookupTimeByTrack.remove(normalized);
         }
 
         /**
@@ -5958,9 +5322,7 @@ public class PlaylistDetailFragment extends Fragment
                 if (track != null && !TextUtils.isEmpty(track.videoId)) {
                     String normalized = track.videoId.trim();
                     offlineAvailabilityCache.remove(normalized);
-                    restrictedTrackCache.remove(normalized);
                     lastOfflineStateLookupTimeByTrack.remove(normalized);
-                    lastRestrictedStateLookupTimeByTrack.remove(normalized);
                 }
             }
         }
@@ -6020,57 +5382,8 @@ public class PlaylistDetailFragment extends Fragment
             });
         }
 
-        private boolean isRestricted(@NonNull Context context, @Nullable String trackId, int position) {
-            if (TextUtils.isEmpty(trackId)) {
-                return false;
-            }
-            String normalized = trackId.trim();
-            Boolean cached = restrictedTrackCache.get(normalized);
-            // Solo devolver valor cacheado; NO iniciar lookup aquí
-            // Los lookups se inician desde loadStateForVisibleRange() en el scroll listener
-            return cached != null ? cached : false;
-        }
-
         /**
-         * Inicia lookup de estado restringido para items visibles.
-         * Llamado desde scroll listener para cargar estado solo de items en pantalla.
-         */
-        void triggerRestrictedStateLookup(int position, @NonNull PlaylistTrack track) {
-            if (position < 0 || position >= items.size()) return;
-            String normalized = track.videoId == null ? "" : track.videoId.trim();
-            if (normalized.isEmpty()) return;
-            
-            Boolean cached = restrictedTrackCache.get(normalized);
-            if (cached != null) return; // Ya está en cache
-            if (pendingRestrictedLookups.contains(normalized)) return; // Ya hay lookup en progreso
-            
-            long now = System.currentTimeMillis();
-            Long lastLookup = lastRestrictedStateLookupTimeByTrack.get(normalized);
-            if (lastLookup != null && now - lastLookup < OFFLINE_STATE_LOOKUP_DEBOUNCE_MS) return;
-            
-            lastRestrictedStateLookupTimeByTrack.put(normalized, now);
-            pendingRestrictedLookups.add(normalized);
-            
-            Context context = requireContext();
-            trackStateLookupExecutor.execute(() -> {
-                boolean restricted = OfflineRestrictionStore.isRestricted(context, normalized);
-                mainHandler.post(() -> {
-                    pendingRestrictedLookups.remove(normalized);
-                    Boolean current = restrictedTrackCache.get(normalized);
-                    if (current == null || current != restricted) {
-                        restrictedTrackCache.put(normalized, restricted);
-                        // Only notify if this position still shows the same track
-                        if (position >= 0 && position < items.size()
-                                && TextUtils.equals(items.get(position).videoId, track.videoId)) {
-                            immediateNotifyStateChanged(position);
-                        }
-                    }
-                });
-            });
-        }
-
-        /**
-         * Carga el estado (offline y restringido) solo para items visibles en pantalla.
+         * Carga el estado offline solo para items visibles en pantalla.
          * Llamado desde el scroll listener del RecyclerView.
          */
         void loadStateForVisibleRange(int firstVisible, int lastVisible) {
@@ -6081,7 +5394,6 @@ public class PlaylistDetailFragment extends Fragment
                 PlaylistTrack track = items.get(i);
                 if (track != null && !TextUtils.isEmpty(track.videoId)) {
                     triggerOfflineStateLookup(i, track);
-                    triggerRestrictedStateLookup(i, track);
                 }
             }
         }
@@ -6110,13 +5422,16 @@ public class PlaylistDetailFragment extends Fragment
             scheduleWaveImageLoad(order, 0);
         }
 
-        /** Loads artwork for all items in {@code order} in a single main-thread post.
-         *  Uses Priority.LOW so image decoding does not compete with RecyclerView layout. */
+        /** Loads artwork in batches of WAVE_BATCH_SIZE per frame so decode work is
+         *  spread across multiple frames instead of blocking a single one. */
+        private static final int WAVE_BATCH_SIZE = 4;
         private void scheduleWaveImageLoad(int[] order, int index) {
-            if (order.length == 0 || rvPlaylistContent == null) return;
+            if (order.length == 0 || rvPlaylistContent == null || index >= order.length) return;
             mainHandler.post(() -> {
                 if (rvPlaylistContent == null) return;
-                for (int adapterIdx : order) {
+                int end = Math.min(index + WAVE_BATCH_SIZE, order.length);
+                for (int i = index; i < end; i++) {
+                    int adapterIdx = order[i];
                     if (adapterIdx < 0 || adapterIdx >= items.size()) continue;
                     RecyclerView.ViewHolder vh = rvPlaylistContent.findViewHolderForAdapterPosition(adapterIdx + 1);
                     if (vh instanceof TrackViewHolder) {
@@ -6125,6 +5440,9 @@ public class PlaylistDetailFragment extends Fragment
                             loadTrackArt(((TrackViewHolder) vh).ivTrackArt, track.imageUrl, com.bumptech.glide.Priority.HIGH);
                         }
                     }
+                }
+                if (end < order.length) {
+                    scheduleWaveImageLoad(order, end);
                 }
             });
         }
@@ -6145,22 +5463,19 @@ public class PlaylistDetailFragment extends Fragment
         }
 
         @Override
-        public void onViewDetachedFromWindow(@NonNull TrackViewHolder holder) {
-            super.onViewDetachedFromWindow(holder);
-        }
-
-        @Override
         public void onViewRecycled(@NonNull TrackViewHolder holder) {
             super.onViewRecycled(holder);
+            // Cancel any in-flight Glide request so it can't land on a rebound holder
+            // showing a different track — this is the root cause of wrong-image-on-wrong-row.
+            Glide.with(holder.ivTrackArt.getContext()).clear(holder.ivTrackArt);
+            holder.ivTrackArt.setImageDrawable(null);
             int pos = holder.getAdapterPosition();
             if (pos >= 0 && pos < items.size()) {
                 String videoId = items.get(pos).videoId;
                 if (!TextUtils.isEmpty(videoId)) {
                     String normalized = videoId.trim();
                     pendingOfflineLookups.remove(normalized);
-                    pendingRestrictedLookups.remove(normalized);
                     lastOfflineStateLookupTimeByTrack.remove(normalized);
-                    lastRestrictedStateLookupTimeByTrack.remove(normalized);
                 }
             }
             if (holder.vOfflineProgressFill != null) {
@@ -6187,25 +5502,17 @@ public class PlaylistDetailFragment extends Fragment
         private void bindTrackState(@NonNull TrackViewHolder holder, int position, @NonNull PlaylistTrack track) {
             Context context = holder.itemView.getContext();
             boolean isOfflineAvailable = isOfflineAvailable(context, track.videoId, track.duration, position);
-            boolean isRestrictedTrack = isRestricted(context, track.videoId, position);
             boolean isCurrentlyDownloading = offlineDownloadRunning
                     && !TextUtils.isEmpty(track.videoId)
                     && downloadingTrackIds.contains(track.videoId)
                     && !isOfflineAvailable;
 
-            String subtitle = !isOfflineAvailable && isRestrictedTrack
-                    ? (track.normalizedSubtitle.isEmpty() ? "Restringida" : track.normalizedSubtitle + " \u2022 Restringida")
-                    : track.normalizedSubtitle;
-            holder.tvTrackSubtitle.setText(subtitle);
+            holder.tvTrackSubtitle.setText(track.normalizedSubtitle);
 
-            boolean showOfflineState = isOfflineAvailable || isCurrentlyDownloading || isRestrictedTrack;
+            boolean showOfflineState = isOfflineAvailable || isCurrentlyDownloading;
             holder.ivOfflineState.setVisibility(showOfflineState ? View.VISIBLE : View.INVISIBLE);
 
-            if (isRestrictedTrack) {
-                holder.ivOfflineState.setImageResource(R.drawable.ic_restricted_small);
-                holder.ivOfflineState.setBackgroundResource(R.drawable.bg_offline_state_filled_alert);
-                holder.ivOfflineState.setColorFilter(ContextCompat.getColor(context, android.R.color.white));
-            } else if (isOfflineAvailable) {
+            if (isOfflineAvailable) {
                 holder.ivOfflineState.setImageResource(R.drawable.ic_check_small);
                 holder.ivOfflineState.setBackgroundResource(R.drawable.bg_offline_state_filled_primary);
                 holder.ivOfflineState.setColorFilter(colorSurface);
@@ -6245,7 +5552,7 @@ public class PlaylistDetailFragment extends Fragment
         @Override
         public void onBindViewHolder(@NonNull TrackViewHolder holder, int position, @NonNull List<Object> payloads) {
             if (!payloads.isEmpty() && payloads.contains(PAYLOAD_STATE_ONLY)) {
-                // State-only partial update — only refresh offline/restricted indicators
+                // State-only partial update — only refresh offline indicators
                 // WITHOUT reloading the image, re-creating click listeners, or re-resolving colors.
                 bindTrackState(holder, position, items.get(position));
                 return;
@@ -6263,8 +5570,11 @@ public class PlaylistDetailFragment extends Fragment
             // Glide requests are paused by the scroll listener during flings and resumed
             // at idle — Glide will then automatically complete pending loads for visible items.
             if (isFastScrolling) {
-                // During fling, keep existing image to avoid blank flicker.
-                // reloadImagesForRange will reload at SCROLL_STATE_IDLE.
+                // During drag, clear the stale image from the recycled holder immediately
+                // so the wrong track's art doesn't show. reloadImagesForRange will load
+                // the correct image at SCROLL_STATE_IDLE.
+                Glide.with(context).clear(holder.ivTrackArt);
+                holder.ivTrackArt.setImageDrawable(null);
             } else {
                 loadTrackArt(holder.ivTrackArt, track.imageUrl, com.bumptech.glide.Priority.HIGH);
             }
@@ -6273,7 +5583,6 @@ public class PlaylistDetailFragment extends Fragment
             // don't have to wait for the scroll listener / layout listener.
             if (!TextUtils.isEmpty(track.videoId)) {
                 triggerOfflineStateLookup(position, track);
-                triggerRestrictedStateLookup(position, track);
             }
 
             bindTrackState(holder, position, track);

@@ -70,6 +70,25 @@
             android:visibility="gone"
             app:tint="@android:color/white" />
 
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnSignInHeader"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:backgroundTint="@color/white"
+            android:fontFamily="@font/inter_variable"
+            android:text="Iniciar sesión"
+            android:textAllCaps="false"
+            android:textColor="#1F2B42"
+            android:textSize="13sp"
+            android:visibility="gone"
+            app:cornerRadius="18dp"
+            app:icon="@drawable/ic_google_logo"
+            app:iconGravity="textStart"
+            app:iconPadding="8dp"
+            app:iconSize="18dp"
+            app:iconTint="@null"
+            app:rippleColor="#2200419E" />
+
         <com.google.android.material.imageview.ShapeableImageView
             android:id="@+id/btnProfilePhoto"
             android:layout_width="34dp"
@@ -114,6 +133,8 @@
             android:indeterminate="true"
             android:indeterminateTint="@android:color/white" />
     </FrameLayout>
+
+    <include layout="@layout/include_global_mini_player" />
 
     <com.google.android.material.bottomnavigation.BottomNavigationView
         android:id="@+id/bottomNavigation"
@@ -167,191 +188,5 @@
             android:indeterminate="true"
             android:indeterminateTint="@android:color/white" />
     </FrameLayout>
-
-    <androidx.constraintlayout.widget.ConstraintLayout
-        android:id="@+id/loginGateContainer"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:background="@drawable/bg_login_depth"
-        android:clickable="true"
-        android:focusable="true"
-        android:paddingHorizontal="0dp"
-        android:paddingVertical="0dp"
-        android:visibility="gone"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent">
-
-        <View
-            android:layout_width="220dp"
-            android:layout_height="220dp"
-            android:alpha="0.62"
-            android:background="@drawable/bg_login_glow_primary"
-            android:translationX="-96dp"
-            android:translationY="-72dp"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toTopOf="parent" />
-
-        <View
-            android:layout_width="220dp"
-            android:layout_height="220dp"
-            android:alpha="0.48"
-            android:background="@drawable/bg_login_glow_secondary"
-            android:translationX="96dp"
-            android:translationY="72dp"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintEnd_toEndOf="parent" />
-
-        <LinearLayout
-            android:id="@+id/loginMainContent"
-            android:layout_width="0dp"
-            android:layout_height="0dp"
-            android:gravity="center"
-            android:orientation="vertical"
-            android:paddingHorizontal="24dp"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toTopOf="parent">
-
-            <LinearLayout
-                android:layout_width="72dp"
-                android:layout_height="72dp"
-                android:background="@drawable/bg_login_logo_orb"
-                android:elevation="4dp"
-                android:gravity="center"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <ImageView
-                    android:layout_width="36dp"
-                    android:layout_height="36dp"
-                    android:src="@drawable/ic_sparkles"
-                    app:tint="@color/stitch_blue" />
-            </LinearLayout>
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="18dp"
-                android:fontFamily="@font/manrope_variable"
-                android:letterSpacing="0.18"
-                android:text="SLEEPIFY"
-                android:textAllCaps="true"
-                android:textColor="@color/stitch_blue"
-                android:textSize="34sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/tvLoginTagline"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:fontFamily="@font/manrope_variable"
-                android:gravity="center"
-                android:lineSpacingExtra="2dp"
-                android:maxWidth="320dp"
-                android:text="Agenda inteligente, musica, ecualizador adaptativo y optimizacion de apps en un solo lugar."
-                android:textColor="@color/text_secondary"
-                android:textSize="13sp" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnLoginGoogle"
-                android:layout_width="match_parent"
-                android:layout_height="56dp"
-                android:layout_marginTop="26dp"
-                android:backgroundTint="@color/white"
-                android:fontFamily="@font/inter_variable"
-                android:text="Sign in with Google"
-                android:textAllCaps="false"
-                android:textColor="#1F2B42"
-                android:textSize="16sp"
-                app:cornerRadius="28dp"
-                app:icon="@drawable/ic_google_logo"
-                app:iconGravity="textStart"
-                app:iconPadding="14dp"
-                app:iconTint="@null"
-                app:rippleColor="#2200419E" />
-
-            <TextView
-                android:id="@+id/tvLoginStatus"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:fontFamily="@font/inter_variable"
-                android:gravity="center"
-                android:text="Inicia sesion para cargar tu agenda."
-                android:textColor="@color/text_secondary"
-                android:textSize="13sp" />
-
-            <View
-                android:layout_width="48dp"
-                android:layout_height="1dp"
-                android:layout_marginTop="24dp"
-                android:background="#33434653" />
-
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:gravity="center"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:fontFamily="@font/inter_variable"
-                    android:text="Security"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="12sp" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="16dp"
-                    android:fontFamily="@font/inter_variable"
-                    android:text="Privacy"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="12sp" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="16dp"
-                    android:fontFamily="@font/inter_variable"
-                    android:text="Architecture"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="12sp" />
-            </LinearLayout>
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:alpha="0.22"
-            android:gravity="end"
-            android:orientation="vertical"
-            android:layout_marginEnd="10dp"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintTop_toTopOf="parent">
-
-            <View
-                android:layout_width="72dp"
-                android:layout_height="72dp"
-                android:background="@drawable/bg_login_corner_line" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:letterSpacing="0.18"
-                android:text="V.2.0.4"
-                android:textAllCaps="true"
-                android:textColor="@color/text_secondary"
-                android:textSize="10sp" />
-        </LinearLayout>
-
-    </androidx.constraintlayout.widget.ConstraintLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

@@ -46,7 +46,6 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import android.graphics.Typeface
-import android.view.animation.PathInterpolator
 import androidx.core.content.res.ResourcesCompat
 import java.text.Normalizer
 import java.util.Locale
@@ -114,12 +113,6 @@ class SearchFragment : Fragment() {
     private lateinit var tvFeaturedTitle: TextView
     private lateinit var tvFeaturedSubtitle: TextView
     private lateinit var ivFeaturedOfflineIndicator: ImageView
-    private lateinit var llMiniPlayer: LinearLayout
-    private lateinit var ivMiniPlayerArt: ImageView
-    private lateinit var tvMiniPlayerTitle: TextView
-    private lateinit var tvMiniPlayerSubtitle: TextView
-    private lateinit var btnMiniPlayPause: android.widget.ImageButton
-    private lateinit var sbMiniPlayerProgress: android.widget.SeekBar
     private var adapter: SearchResultsAdapter? = null
     private var featuredTrack: YouTubeMusicService.TrackResult? = null
     
@@ -132,11 +125,6 @@ class SearchFragment : Fragment() {
 
     private val searchHandler = Handler(Looper.getMainLooper())
     private var searchRunnable: Runnable? = null
-    private val miniProgressHandler = Handler(Looper.getMainLooper())
-    private var miniProgressTicker: Runnable? = null
-
-    private var lastMiniArtUrl = ""
-    private var miniPlaying = false
 
     private var autoPlayOnFirstResult = false
     private var backPressedCallback: OnBackPressedCallback? = null
@@ -178,16 +166,6 @@ class SearchFragment : Fragment() {
         tvFeaturedTitle = root.findViewById(R.id.tvFeaturedTitle)
         tvFeaturedSubtitle = root.findViewById(R.id.tvFeaturedSubtitle)
         ivFeaturedOfflineIndicator = root.findViewById(R.id.ivFeaturedOfflineIndicator)
-        llMiniPlayer = root.findViewById(R.id.llMiniPlayer)
-        ivMiniPlayerArt = root.findViewById(R.id.ivMiniPlayerArt)
-        tvMiniPlayerTitle = root.findViewById(R.id.tvMiniPlayerTitle)
-        tvMiniPlayerSubtitle = root.findViewById(R.id.tvMiniPlayerSubtitle)
-        btnMiniPlayPause = root.findViewById(R.id.btnMiniPlayPause)
-        sbMiniPlayerProgress = root.findViewById(R.id.sbMiniPlayerProgress)
-
-        llMiniPlayer.setOnClickListener { openPlayerFromMiniBar() }
-        btnMiniPlayPause.setOnClickListener { toggleMiniPlayback() }
-
         ivSearchClear.setOnClickListener {
             etSearchQuery.setText("")
             showSuggestionsMode()
@@ -1189,9 +1167,6 @@ class SearchFragment : Fragment() {
             btnBsDownload.visibility = View.GONE
         }
 
-        // Reemplazar — not applicable in search
-        view.findViewById<View>(R.id.btnBsReplace).visibility = View.GONE
-
         val parent = view.parent as? View
         parent?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
 
@@ -1678,6 +1653,12 @@ class SearchFragment : Fragment() {
 
         val result = mutableListOf<SuggestionItem>()
 
+        // Always show the raw query as the first row so the user can always
+        // trigger an exact search, regardless of what suggestions follow.
+        if (normDraft.isNotEmpty()) {
+            result.add(SuggestionItem.Suggestion(draft.trim()))
+        }
+
         // Show recent images carousel only when bar is empty (no query typed)
         if (normDraft.isEmpty()) {
             val itemsWithImages = recentSearchData.filter { it.thumbnail.isNotEmpty() }.take(5)
@@ -1710,6 +1691,18 @@ class SearchFragment : Fragment() {
             if (trackMatches.isNotEmpty()) {
                 result.add(SuggestionItem.Header("En tu biblioteca"))
                 trackMatches.forEach { result.add(SuggestionItem.Track(it)) }
+            }
+
+            // Add artist suggestions from local library
+            val matchingArtists = localTrackIndex
+                .map { it.artist.trim() }
+                .filter { it.isNotEmpty() && normalizeForFilter(it).contains(normDraft) }
+                .distinct()
+                .sorted()
+                .take(4)
+            if (matchingArtists.isNotEmpty()) {
+                result.add(SuggestionItem.Header("Artistas"))
+                matchingArtists.forEach { result.add(SuggestionItem.Suggestion(it)) }
             }
         }
 
@@ -1968,9 +1961,6 @@ class SearchFragment : Fragment() {
         etSearchQuery.setText("")
         showSuggestionsMode()
         loadLocalTrackIndex()
-        lastMiniArtUrl = "" // Resetear para forzar recarga de imagen
-        startMiniProgressTicker()
-        updateMiniPlayerUi()
         // Show overlay only on first creation; skip on re-entry to avoid delay
         if (!hasBeenVisible) {
             showModuleLoadingOverlay()
@@ -1982,14 +1972,13 @@ class SearchFragment : Fragment() {
     }
 
     override fun onPause() {
-        stopMiniProgressTicker()
         super.onPause()
     }
 
     override fun onHiddenChanged(hidden: Boolean) {
         super.onHiddenChanged(hidden)
         if (hidden) {
-            stopMiniProgressTicker()
+            // no-op
         } else {
             // Re-enable back pressed callback when fragment becomes visible again
             backPressedCallback?.isEnabled = true
@@ -2009,166 +1998,8 @@ class SearchFragment : Fragment() {
             } else {
                 moduleLoadingOverlay.visibility = View.GONE
             }
-            lastMiniArtUrl = "" // Resetear para forzar recarga de imagen
-            // Animate mini player slide-up if not already visible and in place
-            // (mirrors MusicPlayerFragment / PlaylistDetailFragment onHiddenChanged logic)
-            if (llMiniPlayer.visibility == View.VISIBLE && llMiniPlayer.translationY == 0f) {
-                // Already visible and in position — no animation needed
-            } else {
-                val distance = if (llMiniPlayer.height > 0) llMiniPlayer.height.toFloat() else 300f
-                llMiniPlayer.translationY = distance
-                llMiniPlayer.visibility = View.VISIBLE
-                llMiniPlayer.animate().cancel()
-                llMiniPlayer.animate().translationY(0f).setDuration(280).start()
-            }
-            startMiniProgressTicker()
-            updateMiniPlayerUi()
         }
     }
-
-    private fun startMiniProgressTicker() {
-        if (miniProgressTicker == null) {
-            miniProgressTicker = object : Runnable {
-                override fun run() {
-                    if (!isAdded || isHidden) return
-                    val player = (requireActivity() as? MainActivity)?.findSongPlayerFragment()
-                    if (player == null || !player.isVisible) {
-                        updateMiniPlayerUi()
-                    }
-                    miniProgressHandler.postDelayed(this, 200L)
-                }
-            }
-        }
-        miniProgressHandler.removeCallbacks(miniProgressTicker!!)
-        miniProgressHandler.post(miniProgressTicker!!)
-    }
-
-    private fun stopMiniProgressTicker() {
-        miniProgressTicker?.let { miniProgressHandler.removeCallbacks(it) }
-    }
-
-    private fun updateMiniPlayerUi() {
-        if (!isAdded || view == null) return
-        
-        val mainActivity = requireActivity() as? MainActivity ?: return
-
-        if (mainActivity.isSongPlayerVisible()) {
-            llMiniPlayer.visibility = View.GONE
-            return
-        }
-        val songPlayer = mainActivity.findSongPlayerFragment()
-        val playerAttached = songPlayer != null && songPlayer.isAdded
-        
-        val snapshot = PlaybackHistoryStore.load(requireContext())
-        val snapshotTrack = snapshot.currentTrack()
-        
-        var currentSeconds = 0
-        var totalSeconds = 1
-        
-        if (playerAttached) {
-            miniPlaying = songPlayer.externalIsPlaying()
-            currentSeconds = songPlayer.externalGetCurrentSeconds()
-            totalSeconds = Math.max(1, songPlayer.externalGetTotalSeconds())
-        } else {
-            miniPlaying = snapshot.isPlaying
-            currentSeconds = 0
-            totalSeconds = 1
-        }
-        
-        // Update progress bar
-        val progress = (currentSeconds.toFloat() / totalSeconds.toFloat() * 1000f).toInt()
-        sbMiniPlayerProgress.progress = progress.coerceIn(0, 1000)
-        
-        if (snapshotTrack == null && !playerAttached) {
-            llMiniPlayer.visibility = View.GONE
-            miniPlaying = false
-            return
-        }
-
-        if (llMiniPlayer.visibility != View.VISIBLE) {
-            val distance = if (llMiniPlayer.height > 0) llMiniPlayer.height.toFloat() else 300f
-            llMiniPlayer.translationY = distance
-            llMiniPlayer.visibility = View.VISIBLE
-            llMiniPlayer.animate().cancel()
-            llMiniPlayer.animate()
-                .translationY(0f)
-                .setDuration(250)
-                .setInterpolator(PathInterpolator(0.4f, 0f, 0.2f, 1f))
-                .withEndAction(null)
-                .start()
-        }
-
-        val displayTitle: String
-        val displaySubtitle: String
-        val displayImageUrl: String
-
-        if (playerAttached) {
-            displayTitle = songPlayer!!.externalGetCurrentTitle() ?: "Reproduciendo"
-            displaySubtitle = songPlayer.externalGetCurrentArtist() ?: ""
-            displayImageUrl = (songPlayer.externalGetCurrentImageUrl() ?: "").trim()
-        } else if (snapshotTrack != null) {
-            displayTitle = if (snapshotTrack.title.isEmpty()) "Última reproducción" else snapshotTrack.title
-            displaySubtitle = snapshotTrack.artist
-            displayImageUrl = snapshotTrack.imageUrl.trim()
-        } else {
-            displayTitle = "Selecciona una canción"
-            displaySubtitle = ""
-            displayImageUrl = ""
-            miniPlaying = false
-        }
-
-        tvMiniPlayerTitle.text = displayTitle
-        tvMiniPlayerSubtitle.text = displaySubtitle
-        btnMiniPlayPause.setImageResource(if (miniPlaying) R.drawable.ic_mini_pause else R.drawable.ic_mini_play)
-
-        if (displayImageUrl != lastMiniArtUrl) {
-            lastMiniArtUrl = displayImageUrl
-            if (displayImageUrl.isNotEmpty()) {
-                loadArtworkInto(ivMiniPlayerArt, displayImageUrl, null)
-            } else {
-                ivMiniPlayerArt.setImageDrawable(null)
-            }
-        }
-    }
-
-    private fun toggleMiniPlayback() {
-        val mainActivity = requireActivity() as? MainActivity ?: return
-        val player = mainActivity.findSongPlayerFragment()
-        if (player != null && player.isAdded) {
-            player.externalTogglePlayback()
-            updateMiniPlayerUi()
-        } else {
-            mainActivity.sendBroadcast(Intent(MainActivity.ACTION_TOGGLE_CURRENT_PLAYBACK))
-            miniPlaying = !miniPlaying
-            btnMiniPlayPause.setImageResource(if (miniPlaying) R.drawable.ic_mini_pause else R.drawable.ic_mini_play)
-        }
-    }
-
-    private fun openPlayerFromMiniBar() {
-        llMiniPlayer.animate().cancel()
-        val distance = if (llMiniPlayer.height > 0) llMiniPlayer.height.toFloat() else 300f
-        llMiniPlayer.animate()
-            .translationY(distance)
-            .setDuration(250)
-            .setInterpolator(PathInterpolator(0.4f, 0f, 0.2f, 1f))
-            .withEndAction {
-                llMiniPlayer.visibility = View.GONE
-            }
-            .start()
-
-        val mainActivity = requireActivity() as? MainActivity ?: return
-        val player = mainActivity.findSongPlayerFragment() ?: return
-        if (!player.isAdded) return
-
-        player.externalSetReturnTargetTag(MainActivity.TAG_MODULE_SEARCH)
-        parentFragmentManager.beginTransaction()
-            .setReorderingAllowed(true)
-            .show(player)
-            .setMaxLifecycle(player, androidx.lifecycle.Lifecycle.State.RESUMED)
-            .runOnCommit { player.externalAnimateEnterSlide() }
-            .commit()
-    }
-
 
     sealed class SuggestionItem {
         data class Header(val label: String) : SuggestionItem()

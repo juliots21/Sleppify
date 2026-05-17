@@ -1,7 +1,6 @@
 package com.example.sleppify;
 
 import com.example.sleppify.BuildConfig;
-import android.Manifest;
 import android.app.Activity;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -10,12 +9,8 @@ import android.content.res.ColorStateList;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
-import android.graphics.Canvas;
 import android.graphics.Color;
-import android.graphics.RenderEffect;
-import android.graphics.Shader;
 import android.graphics.drawable.Drawable;
 import android.media.AudioAttributes;
 import android.media.AudioDeviceCallback;
@@ -39,7 +34,6 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
-import android.view.ViewParent;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.SeekBar;
@@ -59,19 +53,15 @@ import androidx.annotation.Nullable;
 import androidx.activity.OnBackPressedCallback;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
-import androidx.constraintlayout.widget.ConstraintLayout;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
-import androidx.core.view.ViewCompat;
 import androidx.core.widget.NestedScrollView;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentManager;
 import androidx.palette.graphics.Palette;
 import androidx.recyclerview.widget.ItemTouchHelper;
 import androidx.recyclerview.widget.LinearLayoutManager;
-import androidx.recyclerview.widget.ListAdapter;
-import androidx.recyclerview.widget.DiffUtil;
 import androidx.recyclerview.widget.RecyclerView;
 
 import android.support.v4.media.MediaMetadataCompat;
@@ -134,13 +124,8 @@ public class SongPlayerFragment extends Fragment {
     private static final int REPEAT_MODE_OFF = 0;
     private static final int REPEAT_MODE_ALL = 1;
     private static final int REPEAT_MODE_ONE = 2;
-    private static final int ENDED_FALLBACK_THRESHOLD_SECONDS = 2;
     private static final long AUTOPLAY_RECOVERY_DELAY_MS = 1400L;
     private static final long TRACK_ERROR_RETRY_DELAY_MS = 750L;
-    private static final int MAX_TRACK_ERROR_RETRY = 1;
-    private static final int MAX_PLAYER_ENGINE_RECOVERY_RETRY = 4;
-    private static final int COVER_TAPS_TO_UNLOCK_VIDEO_CONTROLS = 5;
-    private static final long COVER_TAP_RESET_WINDOW_MS = 2000L;
     private static final int CONNECT_TIMEOUT_MS = 8000;
     private static final int READ_TIMEOUT_MS = 15000;
     private static final long SOURCE_PREPARE_TIMEOUT_MS = 15000L;
@@ -159,13 +144,6 @@ public class SongPlayerFragment extends Fragment {
     private static final int OFFLINE_CROSSFADE_FIRST_STEP_MS = 500;
     private static final int OFFLINE_CROSSFADE_STEP_MS = 40;
     private static final int PLAYER_HERO_DEFAULT_HEIGHT_DP = 370;
-    private static final int PLAYER_HERO_MIN_HEIGHT_DP = 260;
-    private static final int PLAYER_HERO_MAX_HEIGHT_DP = 560;
-    private static final long PLAYER_BACKDROP_FADE_IN_DURATION_MS = 500L;
-    private static final long PLAYER_BACKDROP_DEFER_LOAD_MS = 110L;
-    private static final int NEXT_UP_FIRST_BATCH_SIZE = 14;
-    private static final int NEXT_UP_BATCH_SIZE = 24;
-    private static final long NEXT_UP_BATCH_DELAY_MS = 32L;
 
     private final List<PlayerTrack> tracks = new ArrayList<>();
     private static final int MAX_NEXT_UP = 50;
@@ -215,7 +193,6 @@ public class SongPlayerFragment extends Fragment {
     private NextUpAdapter nextUpAdapter;
     @Nullable
     private ItemTouchHelper nextUpItemTouchHelper;
-    private RecyclerView rvQueueSheet; // For BottomSheet
 
     @Nullable
     private OnBackPressedCallback backPressedCallback;
@@ -252,10 +229,8 @@ public class SongPlayerFragment extends Fragment {
     private int swipeDismissMinDistancePx = 120;
     private int cachedCrossfadeDurationMs = -1;
     private int consecutiveStreamFailures = 0;
-    private long lastBackgroundResumeAttemptMs = 0L;
     @Nullable
     private ActivityResultLauncher<String> notificationPermissionLauncher;
-    private boolean notificationPermissionRequested;
     private boolean shuffleEnabled = false;
     private int repeatMode = REPEAT_MODE_ALL;
     private boolean collapsingToMiniMode;
@@ -337,8 +312,6 @@ public class SongPlayerFragment extends Fragment {
     private String lastErroredVideoId = "";
     private int sameTrackErrorCount = 0;
     private int playerEngineRecoveryAttempts = 0;
-    private int coverTapCount = 0;
-    private long lastCoverTapAtMs = 0L;
     private final Set<String> audiusFallbackAttemptedVideoIds = new HashSet<>();
     @NonNull
     private String pendingSocialStatsVideoId = "";
@@ -587,8 +560,6 @@ public class SongPlayerFragment extends Fragment {
             btnPlayerMore.setOnClickListener(v -> showPlayerOptionsSheet());
         }
 
-        // Setup horizontal swipe on cover for prev/next track
-        setupCoverTrackSwipe();
         // Apply status-bar inset to the internal nav bar so buttons sit below the status bar
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(view, (v, insets) -> {
             int statusBarHeight = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars()).top;
@@ -605,21 +576,10 @@ public class SongPlayerFragment extends Fragment {
         tvDeviceName = view.findViewById(R.id.tvDeviceName);
         ivDeviceIcon = view.findViewById(R.id.ivDeviceIcon);
 
-        // ✅ DEFERRED PHASE 1: Setup (happens while animation is starting)
+        // ✅ PHASE 1: Lightweight UI wiring only — runs during first frame, no heavy I/O
         view.post(() -> {
             if (!isAdded()) return;
 
-            playerStatePrefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
-            settingsPrefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Activity.MODE_PRIVATE);
-            invalidateCrossfadeDurationCache();
-            loadBackdropColorCache();
-            loadPlaybackModesFromSettings();
-            setupSocialActions();
-            updatePlayerSurfaceForSource();
-
-            hydrateTracksFromArgs();
-            setupMediaSession();
-            setupAudioDeviceCallback();
             setupSwipeToDismiss(view);
             setupBackPressToMiniMode();
             resetPlayerScrollToTop();
@@ -629,7 +589,6 @@ public class SongPlayerFragment extends Fragment {
             btnShuffle.setOnClickListener(v -> toggleShuffleMode());
             btnRepeat.setOnClickListener(v -> cycleRepeatMode());
             btnPlayPause.setOnClickListener(v -> togglePlayback());
-            updatePlaybackModeButtons();
 
             sbPlaybackProgress.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
                 @Override
@@ -660,16 +619,29 @@ public class SongPlayerFragment extends Fragment {
                     }
                 }
             });
-
-            // ✅ DEFERRED PHASE 2: Bind and playback (after animation is visible)
-            // Defer by 400ms to ensure animation is in progress and won't stutter
-            view.postDelayed(() -> {
-                if (!isAdded()) return;
-                currentIndex = Math.max(0, Math.min(currentIndex, tracks.size() - 1));
-                bindCurrentTrack(true);
-                playCurrentTrack();
-            }, 400L);
         });
+
+        // ✅ PHASE 2: Heavy initialization — deferred until after entry animation (280ms) finishes
+        // SharedPreferences reads, track hydration, MediaSession, and playback start here
+        view.postDelayed(() -> {
+            if (!isAdded()) return;
+
+            playerStatePrefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
+            settingsPrefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Activity.MODE_PRIVATE);
+            invalidateCrossfadeDurationCache();
+            loadBackdropColorCache();
+            loadPlaybackModesFromSettings();
+            setupSocialActions();
+            setupAudioDeviceCallback();
+            updatePlaybackModeButtons();
+
+            hydrateTracksFromArgs();
+            setupMediaSession();
+
+            currentIndex = Math.max(0, Math.min(currentIndex, tracks.size() - 1));
+            bindCurrentTrack(true);
+            playCurrentTrack();
+        }, 320L);
     }
 
     @Override
@@ -821,7 +793,6 @@ public class SongPlayerFragment extends Fragment {
         cancelPendingSocialStatsFetch();
         cancelPendingStreamResolver();
         clearPlayerCoverRequest();
-        clearPlayerBackdropRequest();
         resetPlayerHeroContainerHeight();
         stopLocalProgressTicker();
         
@@ -1062,48 +1033,6 @@ public class SongPlayerFragment extends Fragment {
         syncMiniStateWithPlaylist();
     }
 
-    private boolean shouldSkipRestrictedTrack(@NonNull String videoId, boolean hasOfflineLocal) {
-        if (!isAdded() || TextUtils.isEmpty(videoId) || hasOfflineLocal) {
-            return false;
-        }
-        return OfflineRestrictionStore.isRestricted(requireContext(), videoId);
-    }
-
-    private boolean skipRestrictedTrackInQueue() {
-        if (tracks.size() <= 1) {
-            markPlaybackUnavailable("Esta canción está restringida.");
-            return false;
-        }
-
-        int startIndex = currentIndex;
-        for (int step = 1; step < tracks.size(); step++) {
-            int candidateIndex = (startIndex + step) % tracks.size();
-            PlayerTrack candidate = tracks.get(candidateIndex);
-            if (candidate == null || TextUtils.isEmpty(candidate.videoId)) {
-                continue;
-            }
-
-            boolean hasOfflineLocal = OfflineAudioStore.hasValidatedOfflineAudio(
-                    requireContext(),
-                    candidate.videoId,
-                    candidate.duration
-            );
-            if (shouldSkipRestrictedTrack(candidate.videoId, hasOfflineLocal)) {
-                continue;
-            }
-
-            currentIndex = candidateIndex;
-            currentSeconds = 0;
-            isPlaying = true;
-            bindCurrentTrack(true);
-            playCurrentTrack();
-            syncMiniStateWithPlaylist();
-            return true;
-        }
-
-        markPlaybackUnavailable("No hay canciones reproducibles en la cola.");
-        return false;
-    }
 
     private void handleTrackEnded() {
         if (TextUtils.isEmpty(loadedVideoId)) {
@@ -1174,12 +1103,6 @@ public class SongPlayerFragment extends Fragment {
         autoplayRecoveryVideoId = "";
     }
 
-    private void markTrackAsRestricted(@Nullable String videoId) {
-        if (!isAdded() || TextUtils.isEmpty(videoId)) {
-            return;
-        }
-        OfflineRestrictionStore.markRestricted(requireContext(), videoId);
-    }
 
     private void schedulePlaybackRetry(@NonNull String videoId) {
         cancelPlaybackErrorRetry();
@@ -1221,12 +1144,6 @@ public class SongPlayerFragment extends Fragment {
         lastErroredVideoId = "";
         sameTrackErrorCount = 0;
         lastReresolveVideoId = null;
-        if (!TextUtils.isEmpty(loadedVideoId)) {
-            Context ctx = getContext();
-            if (ctx != null) {
-                RestrictionHeuristics.processSuccess(ctx, loadedVideoId);
-            }
-        }
     }
 
     private void stopPlaybackAfterErrors(@NonNull String message) {
@@ -1239,15 +1156,6 @@ public class SongPlayerFragment extends Fragment {
         updateMediaSessionState();
         persistPlaybackSnapshot(false);
         
-        if (isNetworkAvailable() && !TextUtils.isEmpty(loadedVideoId)) {
-            Context ctx = getContext();
-            if (ctx != null) {
-                boolean marked = RestrictionHeuristics.processFailure(ctx, loadedVideoId, false, false);
-                if (marked && isAdded()) {
-                    Log.w(TAG, "Track marked restricted after player errors: " + loadedVideoId);
-                }
-            }
-        }
     }
 
     private void togglePlayback() {
@@ -1498,11 +1406,6 @@ public class SongPlayerFragment extends Fragment {
         // OfflineAudioStore.hasOfflineAudio is a simple SharedPrefs/file existence check.
         boolean hasOfflineLocal = OfflineAudioStore.hasOfflineAudio(requireContext(), track.videoId);
         if (hasOfflineLocal) {
-            if (shouldSkipRestrictedTrack(track.videoId, true)) {
-                Log.d(TAG, "playCurrentTrack: restricted track skipped in queue. videoId=" + track.videoId);
-                skipRestrictedTrackInQueue();
-                return;
-            }
             Log.d(TAG, "playCurrentTrack: prioritizing local offline audio. videoId=" + track.videoId);
             List<String> directSources = buildDirectSourceCandidates(track);
             attemptPlaybackFromSources(track, directSources, 0, requestToken, 0);
@@ -1510,11 +1413,6 @@ public class SongPlayerFragment extends Fragment {
         }
 
         // Not offline — check prefetch (main-thread fields), then resolve online via executor.
-        if (shouldSkipRestrictedTrack(track.videoId, false)) {
-            Log.d(TAG, "playCurrentTrack: restricted track skipped in queue. videoId=" + track.videoId);
-            skipRestrictedTrackInQueue();
-            return;
-        }
         if (TextUtils.equals(track.videoId, prefetchedNextVideoId) && !TextUtils.isEmpty(prefetchedNextUrl)) {
             Log.d(TAG, "playCurrentTrack: using prefetched stream for videoId=" + track.videoId);
             String url = prefetchedNextUrl;
@@ -2219,17 +2117,6 @@ public class SongPlayerFragment extends Fragment {
                 .trim();
     }
 
-    private void ensureProgressUiBeforeVideoLoad(@NonNull PlayerTrack track) {
-        totalSeconds = Math.max(totalSeconds, Math.max(1, parseDurationSeconds(track.duration)));
-        currentSeconds = Math.max(0, Math.min(currentSeconds, Math.max(0, totalSeconds - 1)));
-
-        tvCurrentTime.setText(formatSeconds(currentSeconds));
-        tvTotalTime.setText(TextUtils.isEmpty(track.duration) ? formatSeconds(totalSeconds) : track.duration);
-
-        int progress = Math.round((Math.max(0, currentSeconds) / (float) Math.max(1, totalSeconds)) * 1000f);
-        sbPlaybackProgress.setProgress(Math.max(0, Math.min(1000, progress)));
-    }
-
     private boolean isHttpStreamSource(@NonNull String source) {
         return source.startsWith("https://") || source.startsWith("http://");
     }
@@ -2462,63 +2349,6 @@ public class SongPlayerFragment extends Fragment {
 
     private void invalidateCrossfadeDurationCache() {
         cachedCrossfadeDurationMs = -1;
-    }
-
-    private void handleManualTrackChangeCrossfade() {
-        if (!isAdded() || localExoMediaPlayer == null || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) {
-            playCurrentTrack();
-            return;
-        }
-
-        int crossfadeDurationMs = getOfflineCrossfadeDurationMs();
-        if (crossfadeDurationMs <= 0) {
-            playCurrentTrack();
-            return;
-        }
-
-        ExoMediaPlayer outgoing = localExoMediaPlayer;
-        int nextIndex = currentIndex;
-        if (nextIndex < 0 || nextIndex >= tracks.size()) {
-            playCurrentTrack();
-            return;
-        }
-
-        PlayerTrack nextTrack = tracks.get(nextIndex);
-        if (nextTrack == null || TextUtils.isEmpty(nextTrack.videoId)) {
-            playCurrentTrack();
-            return;
-        }
-
-        String nextUrl = null;
-        boolean nextIsNetwork = false;
-
-        // Try offline first
-        if (isAdded() && OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), nextTrack.videoId, nextTrack.duration)) {
-            File nextFile = OfflineAudioStore.getExistingOfflineAudioFile(requireContext(), nextTrack.videoId);
-            if (nextFile != null && nextFile.isFile() && nextFile.length() > 0L) {
-                nextUrl = nextFile.getAbsolutePath();
-            }
-        }
-
-        // Try resolving URL for online playback
-        if (nextUrl == null && isNetworkAvailable()) {
-            String resolved = InnertubeResolver.resolveStreamUrl(requireContext(), nextTrack.videoId);
-            if (!TextUtils.isEmpty(resolved)) {
-                nextUrl = resolved;
-                nextIsNetwork = true;
-            }
-        }
-
-        if (nextUrl == null) {
-            playCurrentTrack();
-            return;
-        }
-
-        executeManualCrossfade(outgoing, nextIndex, nextUrl, nextIsNetwork, crossfadeDurationMs);
-    }
-
-    private void executeManualCrossfade(ExoMediaPlayer outgoing, int nextIndex, String nextUrl, boolean nextIsNetwork, int crossfadeDurationMs) {
-        executeCrossfade(outgoing, nextIndex, nextUrl, nextIsNetwork, crossfadeDurationMs);
     }
 
     private void startOfflineCrossfadeTransition(int crossfadeDurationMs) {
@@ -2770,10 +2600,6 @@ public class SongPlayerFragment extends Fragment {
         localProgressHandler.removeCallbacks(localProgressTicker);
     }
 
-    private void clearPlayerBackdropRequest() {
-        // Backdrop now uses solid background color - no Glide request to clear
-    }
-
     private void loadNotificationArtworkOnly(@NonNull PlayerTrack track) {
         if (!isAdded() && getContext() == null) return;
         String videoId = track.videoId == null ? "" : track.videoId.trim();
@@ -2974,7 +2800,6 @@ public class SongPlayerFragment extends Fragment {
         String preferredImageUrl = resolveLowResBackdropUrl(requestVideoId, fallbackImageUrl);
 
         activeBackdropVideoId = requestVideoId;
-        clearPlayerBackdropRequest();
 
         if (TextUtils.isEmpty(preferredImageUrl)) {
             if (bootstrapArtwork) fadeOutBackdropToBlack();
@@ -4238,17 +4063,12 @@ public class SongPlayerFragment extends Fragment {
         backPressedCallback.setEnabled(!hidden && isResumed());
     }
 
-    private void applyPlayerBackdropBlur() {
-        // Ya no es necesario - el fondo sólido no necesita blur
-    }
-
     private void updatePlayerSurfaceForSource() {
         if (ivPlayerCover == null) {
             return;
         }
         ivPlayerCover.setVisibility(View.VISIBLE);
         ivPlayerCover.setClickable(true);
-        applyPlayerBackdropBlur();
     }
 
     private boolean collapseToMiniMode(boolean animate) {
@@ -4933,19 +4753,6 @@ public class SongPlayerFragment extends Fragment {
         @NonNull
         static SocialStats unavailable() {
             return new SocialStats("0", "", "0", true);
-        }
-    }
-
-    // ✅ DiffUtil.ItemCallback for efficient list updates
-    private static final class PlayerTrackDiffCallback extends DiffUtil.ItemCallback<PlayerTrack> {
-        @Override
-        public boolean areItemsTheSame(@NonNull PlayerTrack oldItem, @NonNull PlayerTrack newItem) {
-            return TextUtils.equals(oldItem.videoId, newItem.videoId);
-        }
-
-        @Override
-        public boolean areContentsTheSame(@NonNull PlayerTrack oldItem, @NonNull PlayerTrack newItem) {
-            return oldItem.equals(newItem);
         }
     }
 
@@ -5805,56 +5612,6 @@ public class SongPlayerFragment extends Fragment {
         return false;
     }
 
-    private void attachSwipeDismissListener(@Nullable View view, @NonNull View.OnTouchListener listener) {
-        if (view == null) return;
-        view.setOnTouchListener(listener);
-    }
-
-    private void setupCoverTrackSwipe() {
-        if (ivPlayerCover == null) return;
-        final float[] downX = {0f};
-        final float[] downY = {0f};
-        final boolean[] swipeHandled = {false};
-        final float SWIPE_MIN_DP = 50f;
-
-        ivPlayerCover.setOnTouchListener((v, event) -> {
-            float density = v.getContext().getResources().getDisplayMetrics().density;
-            float thresholdPx = SWIPE_MIN_DP * density;
-
-            switch (event.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN:
-                    downX[0] = event.getRawX();
-                    downY[0] = event.getRawY();
-                    swipeHandled[0] = false;
-                    return true;
-
-                case MotionEvent.ACTION_MOVE:
-                    if (!swipeHandled[0]) {
-                        float dx = event.getRawX() - downX[0];
-                        float dy = event.getRawY() - downY[0];
-                        if (Math.abs(dx) > thresholdPx && Math.abs(dx) > Math.abs(dy)) {
-                            swipeHandled[0] = true;
-                            if (dx > 0) {
-                                moveTrack(-1); // Right → previous
-                            } else {
-                                moveTrack(1);  // Left → next
-                            }
-                            return true;
-                        }
-                    }
-                    return true;
-
-                case MotionEvent.ACTION_UP:
-                case MotionEvent.ACTION_CANCEL:
-                    if (!swipeHandled[0]) {
-                        // Short tap — let the view handle it normally
-                        v.performClick();
-                    }
-                    return true;
-            }
-            return false;
-        });
-    }
 
     private void releaseLocalExoMediaPlayer() {
         cancelOfflineCrossfade();
@@ -5936,10 +5693,6 @@ public class SongPlayerFragment extends Fragment {
         };
 
         deferredBackdropLoadRunnable.run();
-    }
-
-    private void revealBackdropWithFade() {
-        // Replaced by revealBackdropWithFadeToColor
     }
 
     /**

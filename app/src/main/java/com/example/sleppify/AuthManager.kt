@@ -99,7 +99,7 @@ class AuthManager private constructor(context: Context) {
         val googleIdOption = GetGoogleIdOption.Builder()
             .setFilterByAuthorizedAccounts(false)
             .setServerClientId(serverClientId)
-            .setAutoSelectEnabled(true)
+            .setAutoSelectEnabled(false)
             .build()
 
         val request = GetCredentialRequest.Builder()
