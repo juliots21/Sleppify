@@ -36,7 +36,6 @@ class OfflinePlaylistDownloadWorker(
         val appContext = applicationContext
         val ids = inputData.getStringArray(INPUT_VIDEO_IDS)
         if (ids == null || ids.isEmpty()) {
-            Log.d(TAG, "doWork: no IDs received")
             return Result.failure(
                 Data.Builder()
                     .putInt(OUTPUT_TOTAL, 0)
@@ -68,11 +67,6 @@ class OfflinePlaylistDownloadWorker(
         val activeTrackIds = Collections.synchronizedSet(HashSet<String>())
         val activeTrackProgressFractions = Collections.synchronizedMap(HashMap<String, Float>())
 
-        Log.d(
-            TAG,
-            "doWork:start total=$total pending=$pendingTotal alreadyOffline=$alreadyOfflineCount" +
-                    " manualQueue=$manualQueue maxParallel=$maxParallelDownloads"
-        )
         val initialSnapshot = snapshotActiveProgress(activeTrackIds, activeTrackProgressFractions)
         publishProgress(playlistTitle, done, total, downloaded, "", initialSnapshot.trackIds, initialSnapshot.fractions)
 
@@ -88,9 +82,10 @@ class OfflinePlaylistDownloadWorker(
             }
 
             val trackIndex = i
+            val serverIndex = trackIndex % SleppifyDownloaderResolver.SERVER_COUNT
             completionService.submit {
                 processSingleTrackDownload(
-                    appContext, userInitiated, trackIndex, ids, titles, artists, durations,
+                    appContext, userInitiated, trackIndex, serverIndex, ids, titles, artists, durations,
                     activeTrackIds, activeTrackProgressFractions
                 )
             }
@@ -171,8 +166,6 @@ class OfflinePlaylistDownloadWorker(
             else -> OUTPUT_REASON_NONE
         }
 
-        Log.d(TAG, "doWork:end downloaded=$downloaded/$total reason=$reason")
-
         if (OUTPUT_REASON_NO_NETWORK == reason) {
             Log.w(TAG, "doWork:network_unavailable retrying")
             return Result.retry()
@@ -214,6 +207,7 @@ class OfflinePlaylistDownloadWorker(
         context: Context,
         userInitiated: Boolean,
         trackIndex: Int,
+        serverIndex: Int,
         ids: Array<String?>,
         titles: Array<String?>?,
         artists: Array<String?>?,
@@ -235,7 +229,6 @@ class OfflinePlaylistDownloadWorker(
         val networkIssueTracker = NetworkIssueTracker()
 
         if (downloaded) {
-            Log.d(TAG, "track:already_offline id=$id")
             return TrackDownloadResult.downloaded(id, title, false)
         }
 
@@ -261,10 +254,8 @@ class OfflinePlaylistDownloadWorker(
                 return TrackDownloadResult.failed(id, title, true)
             }
 
-            downloaded = downloadTrack(context, id, networkIssueTracker, progressReporter)
+            downloaded = downloadTrack(context, id, serverIndex, networkIssueTracker, progressReporter)
             noNetworkEncountered = noNetworkEncountered || networkIssueTracker.hasIssue()
-            Log.d(TAG, "track:download_result id=$id ok=$downloaded")
-
             if (!downloaded) {
                 InnertubeResolver.invalidate(id)
             }
@@ -291,7 +282,6 @@ class OfflinePlaylistDownloadWorker(
             OfflineAudioStore.markOfflineAudioState(id, true)
             // Notify UI that a track was downloaded (so playlist offline state can be recalculated)
             PlaybackEventBus.notifyPlaybackSnapshotUpdated()
-            Log.d(TAG, "track:success id=$id")
             return TrackDownloadResult.downloaded(id, title, noNetworkEncountered)
         } finally {
             if (addedToActive) activeTrackIds.remove(id)
@@ -367,29 +357,48 @@ class OfflinePlaylistDownloadWorker(
     private fun downloadTrack(
         context: Context,
         videoId: String,
+        primaryServer: Int,
         networkIssueTracker: NetworkIssueTracker,
         progressReporter: ProgressReporter?
     ): Boolean {
         val startMs = System.currentTimeMillis()
         progressReporter?.onProgress(0.05f)
 
-        // Primary: SleppifyDownloaderResolver (server proxy)
         val target = OfflineAudioStore.getOfflineAudioFileForFormat(context, videoId, false)
-        var ok = try {
-            val proxyOk = SleppifyDownloaderResolver.downloadViaProxy(videoId, target) { bytesReceived ->
-                val fraction = (bytesReceived.toFloat() / 4_000_000L).coerceIn(0.05f, 0.90f)
-                progressReporter?.onProgress(fraction)
+        val otherServer = (primaryServer + 1) % SleppifyDownloaderResolver.SERVER_COUNT
+
+        // Attempt order: primary → backoff → primary (resume) → other → backoff → other (resume)
+        val attemptSequence = intArrayOf(primaryServer, primaryServer, otherServer, otherServer)
+        val backoffMs = longArrayOf(0L, 1500L, 0L, 2000L)
+
+        var ok = false
+        for (attempt in attemptSequence.indices) {
+            if (isStopped) break
+            if (networkIssueTracker.hasIssue()) break
+
+            val server = attemptSequence[attempt]
+            val delay = backoffMs[attempt]
+            if (delay > 0L) SystemClock.sleep(delay)
+
+            ok = try {
+                val proxyOk = SleppifyDownloaderResolver.downloadViaProxy(videoId, target, server) { bytesReceived ->
+                    val fraction = (bytesReceived.toFloat() / 4_000_000L).coerceIn(0.05f, 0.90f)
+                    progressReporter?.onProgress(fraction)
+                }
+                proxyOk
+            } catch (e: Exception) {
+                if (isLikelyNetworkException(e)) networkIssueTracker.markIssue()
+                Log.w(TAG, "SleppifyDL:s$server attempt=$attempt exception id=$videoId msg=${e.message}")
+                false
             }
-            Log.d(TAG, "SleppifyDL:proxy_${if (proxyOk) "ok" else "fail"} id=$videoId elapsed=${System.currentTimeMillis() - startMs}ms")
-            proxyOk
-        } catch (e: Exception) {
-            if (isLikelyNetworkException(e)) networkIssueTracker.markIssue()
-            Log.w(TAG, "SleppifyDL:proxy_exception id=$videoId msg=${e.message}")
-            false
+
+            if (ok) break
         }
 
-        // Fallback: download directly via InnerTube stream URL
-        if (!ok && !networkIssueTracker.hasIssue()) {
+        // Final fallback: download directly via InnerTube stream URL
+        if (!ok && !networkIssueTracker.hasIssue() && !isStopped) {
+            // Delete any partial proxy file before InnerTube attempt (different format possible)
+            if (target.isFile) target.delete()
             ok = try {
                 downloadTrackFromInnertube(context, videoId, target, progressReporter)
             } catch (e: Exception) {
@@ -454,7 +463,6 @@ class OfflinePlaylistDownloadWorker(
                 return false
             }
 
-            Log.d(TAG, "Innertube:ok id=$videoId bytes=$totalBytes elapsed=${elapsed}ms")
             true
         } catch (e: Exception) {
             target.delete()
@@ -683,8 +691,8 @@ class OfflinePlaylistDownloadWorker(
 
         private const val CONSECUTIVE_FAIL_ABORT_THRESHOLD = 5
         private const val CONSECUTIVE_FAIL_PAUSE_MS = 3000L
-        private const val MAX_PARALLEL_DOWNLOADS_AUTO = 1
-        private const val MAX_PARALLEL_DOWNLOADS_MANUAL = 1
+        private const val MAX_PARALLEL_DOWNLOADS_AUTO = 2
+        private const val MAX_PARALLEL_DOWNLOADS_MANUAL = 2
         private const val MIN_VALID_AUDIO_FILE_BYTES = 24L * 1024L
         private const val DOWNLOAD_DURATION_MIN_SAFE_SECONDS = 6
         private const val DOWNLOAD_DURATION_MATCH_RATIO = 0.88f

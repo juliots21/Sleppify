@@ -1236,7 +1236,6 @@ class CloudSyncManager private constructor(context: Context) {
         firestore.collection(USERS_COLLECTION).document(uid)
             .collection(COLLECTION_PLAYLISTS).document(playlistName)
             .set(data, SetOptions.merge())
-            .addOnSuccessListener { Log.d(TAG, "Playlist $playlistName synced to cloud") }
             .addOnFailureListener { e -> Log.e(TAG, "Error syncing playlist $playlistName", e) }
     }
 
@@ -1257,7 +1256,6 @@ class CloudSyncManager private constructor(context: Context) {
         firestore.collection(USERS_COLLECTION).document(uid)
             .collection(COLLECTION_PLAYLIST_OVERRIDES).document(sanitizePlaylistDocId(playlistId))
             .set(data, SetOptions.merge())
-            .addOnSuccessListener { Log.d(TAG, "Overrides synced for playlist $playlistId") }
             .addOnFailureListener { e -> Log.e(TAG, "Error syncing overrides for playlist $playlistId", e) }
     }
 
@@ -1311,7 +1309,6 @@ class CloudSyncManager private constructor(context: Context) {
         firestore.collection(USERS_COLLECTION).document(uid)
             .collection(APP_SCOPE_COLLECTION).document(DOC_PLAY_COUNTS)
             .set(data, SetOptions.merge())
-            .addOnSuccessListener { Log.d(TAG, "Play counts synced to cloud") }
             .addOnFailureListener { e -> Log.e(TAG, "Error syncing play counts", e) }
     }
 
@@ -1326,7 +1323,6 @@ class CloudSyncManager private constructor(context: Context) {
                 try {
                     val arr = org.json.JSONArray(raw)
                     PlayCountStore.importFromJson(context, arr)
-                    Log.d(TAG, "Play counts restored from cloud: ${arr.length()} entries")
                 } catch (e: Exception) {
                     Log.e(TAG, "Error parsing cloud play counts", e)
                 }
@@ -1342,7 +1338,6 @@ class CloudSyncManager private constructor(context: Context) {
             .collection(COLLECTION_PLAYLISTS)
             .document(playlistName)
             .delete()
-            .addOnSuccessListener { Log.d(TAG, "Deleted cloud playlist: $playlistName") }
             .addOnFailureListener { e -> Log.e(TAG, "Error deleting cloud playlist: $playlistName", e) }
     }
 

@@ -57,7 +57,6 @@ class AudioEffectsService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
-        Log.d(TAG, "onStartCommand action=$action")
 
         when (action) {
             ACTION_APPLY -> {
@@ -104,7 +103,6 @@ class AudioEffectsService : Service() {
                 startForeground(FOREGROUND_NOTIFICATION_ID, notification)
             }
             isForegroundStarted = true
-            Log.d(TAG, "foreground:entered")
         } catch (e: Exception) {
             Log.w(TAG, "foreground:enter_failed", e)
         }
@@ -123,7 +121,6 @@ class AudioEffectsService : Service() {
         } catch (e: Exception) {
             Log.w(TAG, "foreground:exit_error", e)
         }
-        Log.d(TAG, "foreground:exited")
     }
 
     private fun buildForegroundNotification(): Notification {
@@ -205,12 +202,10 @@ class AudioEffectsService : Service() {
                     dynamicsProcessing = createDynamicsProcessingEngine(targetSession)
                     currentAudioSessionId = targetSession
                     isEngineActive = true
-                    Log.d(TAG, "engine:created session=$targetSession")
                 }
 
                 applyParametersFromPrefs(prefs)
                 dynamicsProcessing?.enabled = true
-                Log.d(TAG, "engine:applied session=$targetSession enabled=true")
 
             } catch (e: Exception) {
                 Log.e(TAG, "engine:error session=$targetSession", e)
@@ -224,7 +219,6 @@ class AudioEffectsService : Service() {
                         isEngineActive = true
                         applyParametersFromPrefs(prefs)
                         dynamicsProcessing?.enabled = true
-                        Log.d(TAG, "engine:fallback_to_global success")
                     } catch (fallbackError: Exception) {
                         Log.e(TAG, "engine:fallback_failed", fallbackError)
                         releaseEngine()
@@ -372,7 +366,6 @@ class AudioEffectsService : Service() {
         }
 
 
-        Log.d(TAG, "params:applied bands=9 bassDb=$bassDb")
     }
 
     private fun syncAndRefresh() {
@@ -382,7 +375,6 @@ class AudioEffectsService : Service() {
         
         val changed = AudioDeviceProfileStore.syncActiveProfileForOutput(prefs, selected)
         if (changed) {
-            Log.d(TAG, "device_change: profile synced for ${selected?.productName}")
             if (prefs.getBoolean(KEY_ENABLED, false)) {
                 applyEffects(currentAudioSessionId)
             }
@@ -399,7 +391,6 @@ class AudioEffectsService : Service() {
         dynamicsProcessing = null
         isEngineActive = false
         currentAudioSessionId = GLOBAL_SESSION_ID
-        Log.d(TAG, "engine:released")
     }
 
     // ───────────────────────────────────────────────────────────────────

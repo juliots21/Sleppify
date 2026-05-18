@@ -92,7 +92,6 @@ class ExoMediaPlayer {
                     if (other.exoPlayer !== current.exoPlayer) {
                         // Allow overlap if one of them is a crossfade component
                         if (!current.isCrossfadeComponent && !other.isCrossfadeComponent) {
-                            Log.d(TAG, "stopOthers: pausing competing player instance")
                             try {
                                 other.pause()
                             } catch (e: Exception) {
@@ -270,7 +269,6 @@ class ExoMediaPlayer {
             pendingHeaders?.let { headers ->
                 if (headers.isNotEmpty()) {
                     httpFactory.setDefaultRequestProperties(headers)
-                    Log.d(TAG, "prepareAsync: setting ${headers.size} headers on DefaultHttpDataSource: ${headers.keys}")
                 }
             }
             // Wrap with CacheDataSource for disk caching of streamed audio

@@ -1673,12 +1673,6 @@ public class PlaylistDetailFragment extends Fragment
             .putBoolean(OfflinePlaylistDownloadWorker.INPUT_MANUAL_QUEUE, false)
                 .build();
 
-        Log.d(TAG_OFFLINE_DOWNLOAD,
-            "enqueue uniqueName=" + uniqueName
-                + " playlistId=" + currentPlaylistId
-                + " tracksPending=" + ids.size()
-                + " skippedAlreadyOffline=" + skippedAlreadyOffline);
-
         SharedPreferences prefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE);
         boolean allowMobileData = prefs.getBoolean(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false);
         Constraints constraints = new Constraints.Builder()
@@ -1997,17 +1991,6 @@ public class PlaylistDetailFragment extends Fragment
                     currentId = activeIds[0];
                 }
 
-                Log.d(TAG_OFFLINE_DOWNLOAD,
-                        "state=RUNNING"
-                                + " runningCount=" + runningInfos.size()
-                                + " done=" + done
-                                + " total=" + total
-                                + " downloaded=" + downloaded
-                                + " dlPlaylistTitle=" + dlPlaylistTitle
-                                + " currentId=" + currentId
-                                + " activeIds=" + activeIds.length
-                                + " queued=" + queuedCount);
-
                 String effectivePlaylistTitle = dlPlaylistTitle == null ? "" : dlPlaylistTitle.trim();
                 if (TextUtils.isEmpty(effectivePlaylistTitle)) {
                     effectivePlaylistTitle = currentPlaylistTitle == null ? "" : currentPlaylistTitle.trim();
@@ -2091,9 +2074,6 @@ public class PlaylistDetailFragment extends Fragment
                 int downloadedOut = output.getInt(OfflinePlaylistDownloadWorker.OUTPUT_DOWNLOADED, 0);
                 int totalOut = output.getInt(OfflinePlaylistDownloadWorker.OUTPUT_TOTAL, currentTracks.size());
                 String reason = output.getString(OfflinePlaylistDownloadWorker.OUTPUT_REASON);
-
-                Log.d(TAG_OFFLINE_DOWNLOAD,
-                        "succeeded downloaded=" + downloadedOut + "/" + totalOut + " reason=" + reason);
 
                 if (!offlineObserverNotifyTerminalToasts) {
                     stopObservingOfflineDownload();

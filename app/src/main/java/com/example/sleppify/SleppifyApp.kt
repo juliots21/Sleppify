@@ -15,7 +15,6 @@ class SleppifyApp : Application() {
         
         try {
             com.google.android.gms.security.ProviderInstaller.installIfNeeded(this)
-            Log.d("SleppifyApp", "ProviderInstaller succeeded")
         } catch (e: Exception) {
             Log.w("SleppifyApp", "ProviderInstaller failed", e)
         }
@@ -38,7 +37,6 @@ class SleppifyApp : Application() {
         Executors.newSingleThreadExecutor().execute {
             try {
                 org.schabi.newpipe.extractor.NewPipe.init(NewPipeHttpDownloader.getInstance())
-                Log.d("SleppifyApp", "NewPipeExtractor pre-initialized successfully")
             } catch (e: Exception) {
                 Log.w("SleppifyApp", "NewPipeExtractor pre-init failed (will retry lazily)", e)
             }

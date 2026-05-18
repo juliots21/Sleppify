@@ -2175,8 +2175,8 @@ class SearchFragment : Fragment() {
                 is SuggestionItem.Autocomplete -> {
                     (h as RowViewHolder).apply {
                         text.text = item.query
-                        icon.setImageResource(R.drawable.ic_arrow_outward)
-                        icon.setColorFilter(ContextCompat.getColor(itemView.context, R.color.text_secondary))
+                        icon.setImageResource(R.drawable.ic_search)
+                        icon.setColorFilter(android.graphics.Color.WHITE)
                         icon.scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
                         icon.setPadding(12, 12, 12, 12)
                         itemView.setOnClickListener { onClick(item.query) }

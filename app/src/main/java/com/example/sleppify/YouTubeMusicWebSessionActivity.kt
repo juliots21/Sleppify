@@ -69,7 +69,6 @@ class YouTubeMusicWebSessionActivity : AppCompatActivity() {
 
             override fun onPageFinished(view: WebView, url: String?) {
                 super.onPageFinished(view, url)
-                Log.d(TAG_STREAMING_WEB, "page_finished url=" + (url ?: ""))
                 attemptAutoLoginClick()
                 refreshSessionState()
             }

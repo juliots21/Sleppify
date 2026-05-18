@@ -327,21 +327,6 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
             @Override
             public void onSuccess(YouTubeMusicService.HomeBrowseResult result) {
                 if (!isAdded()) return;
-                Log.d(TAG_PRINCIPAL, "HomeBrowse: genericMixes=" + result.genericMixes.size()
-                        + " personalMixes=" + result.personalMixes.size()
-                        + " allSections=" + result.allSections.size());
-                for (YouTubeMusicService.HomeSection sec : result.allSections) {
-                    Log.d(TAG_PRINCIPAL, "  Section: \"" + sec.title + "\" items=" + sec.items.size());
-                    for (YouTubeMusicService.MixResult item : sec.items) {
-                        Log.d(TAG_PRINCIPAL, "    Item: \"" + item.title + "\" playlistId=" + item.playlistId);
-                    }
-                }
-                for (YouTubeMusicService.MixResult gm : result.genericMixes) {
-                    Log.d(TAG_PRINCIPAL, "  GenericMix: \"" + gm.title + "\" id=" + gm.playlistId);
-                }
-                for (YouTubeMusicService.MixResult pm : result.personalMixes) {
-                    Log.d(TAG_PRINCIPAL, "  PersonalMix: \"" + pm.title + "\" id=" + pm.playlistId);
-                }
                 mixResults.clear();
                 mixResults.addAll(result.genericMixes);
                 cacheMixes(result.genericMixes);

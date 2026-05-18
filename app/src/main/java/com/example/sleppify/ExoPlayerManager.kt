@@ -86,7 +86,6 @@ object ExoPlayerManager {
                             .setHandleAudioBecomingNoisy(true)
                             .build()
                         initialized = true
-                        Log.d(TAG, "ExoPlayer compartido inicializado con AudioFocus y Noisy handling")
                     } catch (e: Exception) {
                         Log.e(TAG, "Falló la inicialización del ExoPlayer compartido", e)
                     }
@@ -125,7 +124,6 @@ object ExoPlayerManager {
             sharedExoPlayer = null
             initialized = false
             initialize(context)
-            Log.d(TAG, "ExoPlayer compartido reinicializado")
         }
     }
 
@@ -142,7 +140,6 @@ object ExoPlayerManager {
             sharedExoPlayer?.release()
             sharedExoPlayer = null
             initialized = false
-            Log.d(TAG, "ExoPlayer compartido liberado")
         }
     }
 }

@@ -725,7 +725,6 @@ public class SongPlayerFragment extends Fragment {
 
         if (localExoMediaPlayer != null) {
             if (localSourcePreparing && bootstrapWindow) {
-                Log.d(TAG, "ensureActivePlaybackIfExpected: waiting local prepare. reason=" + reason);
                 return;
             }
 
@@ -743,10 +742,8 @@ public class SongPlayerFragment extends Fragment {
             try {
                 localExoMediaPlayer.start();
                 startLocalProgressTicker();
-                Log.d(TAG, "ensureActivePlaybackIfExpected: restarted local playback. reason=" + reason);
             } catch (Exception e) {
                 if (localSourcePreparing || bootstrapWindow) {
-                    Log.d(TAG, "ensureActivePlaybackIfExpected: local source still bootstrapping. reason=" + reason);
                     return;
                 }
                 Log.w(TAG, "ensureActivePlaybackIfExpected: local restart failed, reloading track. reason=" + reason, e);
@@ -757,12 +754,9 @@ public class SongPlayerFragment extends Fragment {
 
         if (!hasPendingStreamResolution()) {
             if (bootstrapWindow || localSourcePreparing) {
-                Log.d(TAG, "ensureActivePlaybackIfExpected: skip replay during bootstrap. reason=" + reason);
                 return;
             }
             playCurrentTrack();
-        } else {
-            Log.d(TAG, "ensureActivePlaybackIfExpected: resolver already running. reason=" + reason);
         }
     }
 
@@ -1358,7 +1352,6 @@ public class SongPlayerFragment extends Fragment {
         isRestoringPosition = false;
 
         long requestToken = ++activePlaybackRequestToken;
-        Log.d(TAG, "playCurrentTrack: starting for videoId=" + track.videoId + " newToken=" + requestToken);
 
         PlaybackHistoryStore.Snapshot snapshot = PlaybackHistoryStore.load(requireContext());
         androidx.media3.exoplayer.ExoPlayer sharedExoPlayer = ExoPlayerManager.INSTANCE.getSharedExoPlayer();
@@ -1369,7 +1362,6 @@ public class SongPlayerFragment extends Fragment {
                 && snapshot.currentTrack().videoId.equals(track.videoId);
 
         if (isSharedPlayerActive && localExoMediaPlayer == null) {
-            Log.d(TAG, "playCurrentTrack: Attaching seamlessly to active playback for " + track.videoId);
             bindCurrentTrackInternal(true, false); // Keep current time and UI intact
             usingOfflineSource = true;
             localSourcePreparing = false;
@@ -1401,7 +1393,6 @@ public class SongPlayerFragment extends Fragment {
 
         cancelPlaybackErrorRetry();
         if (hasPendingStreamResolution() && TextUtils.equals(loadedVideoId, track.videoId)) {
-            Log.d(TAG, "playCurrentTrack: resolver already running for same videoId=" + track.videoId);
             return;
         }
         cancelPendingStreamResolver();
@@ -1413,7 +1404,6 @@ public class SongPlayerFragment extends Fragment {
         // OfflineAudioStore.hasOfflineAudio is a simple SharedPrefs/file existence check.
         boolean hasOfflineLocal = OfflineAudioStore.hasOfflineAudio(requireContext(), track.videoId);
         if (hasOfflineLocal) {
-            Log.d(TAG, "playCurrentTrack: prioritizing local offline audio. videoId=" + track.videoId);
             List<String> directSources = buildDirectSourceCandidates(track);
             attemptPlaybackFromSources(track, directSources, 0, requestToken, 0);
             return;
@@ -1421,7 +1411,6 @@ public class SongPlayerFragment extends Fragment {
 
         // Not offline — check prefetch (main-thread fields), then resolve online via executor.
         if (TextUtils.equals(track.videoId, prefetchedNextVideoId) && !TextUtils.isEmpty(prefetchedNextUrl)) {
-            Log.d(TAG, "playCurrentTrack: using prefetched stream for videoId=" + track.videoId);
             String url = prefetchedNextUrl;
             prefetchedNextVideoId = null;
             prefetchedNextUrl = null;
@@ -1440,7 +1429,6 @@ public class SongPlayerFragment extends Fragment {
         if (localCrossfadeInProgress && localCrossfadeIncomingPlayer != null) {
             return;
         }
-        Log.d(TAG, "onCompletion: seamless player completed track");
         stopLocalProgressTicker();
         handleTrackEnded();
     }
@@ -1498,13 +1486,11 @@ public class SongPlayerFragment extends Fragment {
         // Skip if already prefetched
         if (TextUtils.equals(nextTrack.videoId, prefetchedNextVideoId)) return;
 
-        Log.d(TAG, "prefetchNextTrackStream: starting pre-fetch for videoId=" + nextTrack.videoId);
         streamResolverExecutor.submit(() -> {
             String url = InnertubeResolver.resolveStreamUrl(requireContext(), nextTrack.videoId);
             if (!TextUtils.isEmpty(url)) {
                 prefetchedNextVideoId = nextTrack.videoId;
                 prefetchedNextUrl = url;
-                Log.d(TAG, "prefetchNextTrackStream: successfully prefetched videoId=" + nextTrack.videoId);
             }
         });
     }
@@ -1522,17 +1508,10 @@ public class SongPlayerFragment extends Fragment {
 
         if (requestToken != activePlaybackRequestToken
                 || !TextUtils.equals(track.videoId, loadedVideoId)) {
-            Log.d(TAG, "attemptPlaybackFromSources: stale request ignored. token=" + requestToken
-                    + " activeToken=" + activePlaybackRequestToken
-                    + " trackVideoId=" + track.videoId
-                    + " loadedVideoId=" + loadedVideoId);
             return;
         }
 
         if (sourceIndex >= sources.size()) {
-            Log.d(TAG, "attemptPlaybackFromSources: exhausted sources for videoId=" + track.videoId
-                    + " (stream directo agotado)");
-
             if (isNetworkAvailable() && tryReresolveOrSkipCurrentTrack("No se encontro audio directo.", false)) {
                 return;
             }
@@ -1547,10 +1526,6 @@ public class SongPlayerFragment extends Fragment {
         }
 
         String source = sources.get(sourceIndex);
-        Log.d(TAG, "attemptPlaybackFromSources: trying sourceIndex=" + sourceIndex
-            + " source=" + maskUrlForLog(source)
-            + " retry=" + sourceRetryCount
-            + " requestToken=" + requestToken);
         startMediaPlaybackFromSource(
                 track,
                 source,
@@ -1588,9 +1563,6 @@ public class SongPlayerFragment extends Fragment {
             @NonNull Runnable onFailure
     ) {
         final boolean networkSource = isHttpStreamSource(source) || isInnertubeSource(source);
-        Log.d(TAG, "startMediaPlaybackFromSource: source=" + maskUrlForLog(source)
-            + " videoId=" + track.videoId
-            + " token=" + requestToken);
         stopLocalProgressTicker();
         releaseLocalExoMediaPlayer();
         usingOfflineSource = !networkSource;
@@ -1612,7 +1584,6 @@ public class SongPlayerFragment extends Fragment {
         if (sharedExoPlayer != null) {
             try {
                 player = new ExoMediaPlayer(playbackAppContext, sharedExoPlayer);
-                Log.d(TAG, "Using shared ExoPlayer instance");
             } catch (Exception e) {
                 Log.w(TAG, "Failed to use shared ExoPlayer, falling back", e);
                 player = new ExoMediaPlayer(playbackAppContext);
@@ -1636,14 +1607,11 @@ public class SongPlayerFragment extends Fragment {
         player.setOnPreparedListener(mp -> {
             cancelSourcePrepareTimeout();
             localSourcePreparing = false;
-            Log.d(TAG, "onPrepared: videoId=" + track.videoId + " token=" + requestToken);
 
             if (!isAdded()
                     || localExoMediaPlayer != mp
                     || requestToken != activePlaybackRequestToken
                     || !TextUtils.equals(track.videoId, loadedVideoId)) {
-                Log.d(TAG, "onPrepared: released stale player for videoId=" + track.videoId
-                        + " token=" + requestToken);
                 releaseSingleExoMediaPlayer(mp);
                 return;
             }
@@ -1667,8 +1635,6 @@ public class SongPlayerFragment extends Fragment {
                     mp.start();
                     consecutiveStreamFailures = 0; // Reset counter on successful playback
                     audioTrackReinitToken = -1;
-                    Log.d(TAG, "onPrepared: playback started videoId=" + track.videoId
-                            + " durationSec=" + totalSeconds);
                     startLocalProgressTicker();
                     
                     // Start pre-fetching the next track once this one is successfully playing
@@ -1691,7 +1657,6 @@ public class SongPlayerFragment extends Fragment {
 
         player.setOnCompletionListener(mp -> {
             if (!isAdded()) {
-                Log.d(TAG, "onCompletion: fragment not attached, ignoring completion callback");
                 return;
             }
             if (requestToken != activePlaybackRequestToken) {
@@ -1700,7 +1665,6 @@ public class SongPlayerFragment extends Fragment {
             if (localCrossfadeInProgress && localCrossfadeIncomingPlayer != null) {
                 return;
             }
-            Log.d(TAG, "onCompletion: videoId=" + track.videoId + " token=" + requestToken);
             stopLocalProgressTicker();
             handleTrackEnded();
         });
@@ -1790,7 +1754,6 @@ public class SongPlayerFragment extends Fragment {
                 player.setDataSource(source);
             }
             player.prepareAsync();
-            Log.d(TAG, "startMediaPlaybackFromSource: prepareAsync requested for source=" + maskUrlForLog(source));
             scheduleSourcePrepareTimeout(track, requestToken, player, onFailure);
         } catch (IllegalStateException ise) {
             cancelSourcePrepareTimeout();
@@ -1952,8 +1915,6 @@ public class SongPlayerFragment extends Fragment {
         cancelPendingStreamResolver();
         pendingStreamResolverFuture = streamResolverExecutor.submit(() -> {
             String resolved = fetchAudiusStreamUrl(track);
-            Log.d(TAG, "tryResolveAudiusAndReplay: resolvedUrl=" + maskUrlForLog(resolved)
-                    + " videoId=" + track.videoId);
 
             localProgressHandler.post(() -> {
                 pendingStreamResolverFuture = null;
@@ -1962,10 +1923,6 @@ public class SongPlayerFragment extends Fragment {
                 }
                 if (requestToken != activePlaybackRequestToken
                         || !TextUtils.equals(track.videoId, loadedVideoId)) {
-                    Log.d(TAG, "tryResolveAudiusAndReplay: stale callback ignored. token=" + requestToken
-                            + " activeToken=" + activePlaybackRequestToken
-                            + " trackVideoId=" + track.videoId
-                            + " loadedVideoId=" + loadedVideoId);
                     return;
                 }
 
@@ -1995,8 +1952,6 @@ public class SongPlayerFragment extends Fragment {
                 Log.w(TAG, "fetchAudiusStreamUrl: empty query for videoId=" + track.videoId);
                 return "";
             }
-            Log.d(TAG, "fetchAudiusStreamUrl: query='" + query + "' videoId=" + track.videoId);
-
             Uri searchUri = Uri.parse(AUDIUS_API_BASE_URL)
                     .buildUpon()
                     .appendPath("tracks")
@@ -2017,8 +1972,6 @@ public class SongPlayerFragment extends Fragment {
                 Log.w(TAG, "fetchAudiusStreamUrl: no results for query='" + query + "'");
                 return "";
             }
-            Log.d(TAG, "fetchAudiusStreamUrl: candidates=" + data.length() + " query='" + query + "'");
-
             String selectedTrackId = "";
             int selectedScore = Integer.MIN_VALUE;
             for (int i = 0; i < data.length(); i++) {
@@ -2047,8 +2000,6 @@ public class SongPlayerFragment extends Fragment {
                 Log.w(TAG, "fetchAudiusStreamUrl: no candidate selected for query='" + query + "'");
                 return "";
             }
-            Log.d(TAG, "fetchAudiusStreamUrl: selectedTrackId=" + selectedTrackId + " score=" + selectedScore);
-
             Uri streamUri = Uri.parse(AUDIUS_API_BASE_URL)
                     .buildUpon()
                     .appendPath("tracks")
@@ -2616,7 +2567,6 @@ public class SongPlayerFragment extends Fragment {
         if (TextUtils.equals(videoId, mediaSessionArtworkVideoId)
                 && mediaSessionArtwork != null
                 && !mediaSessionArtwork.isRecycled()) {
-            Log.d(TAG, "loadNotificationArtworkOnly: already cached for videoId=" + videoId);
             return;
         }
 
@@ -2629,8 +2579,6 @@ public class SongPlayerFragment extends Fragment {
         // Use applicationContext so this request outlives fragment hide/show.
         Context appCtx = getContext() != null ? getContext().getApplicationContext() : null;
         if (appCtx == null) return;
-
-        Log.d(TAG, "loadNotificationArtworkOnly: loading for videoId=" + notifVideoId);
 
         com.bumptech.glide.RequestManager rm = Glide.with(appCtx);
         rm.asBitmap()
@@ -4289,8 +4237,6 @@ public class SongPlayerFragment extends Fragment {
                 && TextUtils.equals(track.videoId, mediaSessionArtworkVideoId)
                 && mediaSessionArtwork != null
                 && !mediaSessionArtwork.isRecycled()) {
-            Log.d(TAG, "updateMediaSessionMetadata: artwork OK videoId=" + track.videoId
-                    + " size=" + mediaSessionArtwork.getWidth() + "x" + mediaSessionArtwork.getHeight());
             metadataBuilder
                     .putBitmap(MediaMetadataCompat.METADATA_KEY_ART, mediaSessionArtwork)
                     .putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, mediaSessionArtwork)
@@ -4384,7 +4330,6 @@ public class SongPlayerFragment extends Fragment {
                         .setShowActionsInCompactView(0, 1, 2));
 
         if (mediaSessionArtwork != null && !mediaSessionArtwork.isRecycled()) {
-            Log.d(TAG, "updateMediaNotification: setLargeIcon videoId=" + track.videoId);
             builder.setLargeIcon(mediaSessionArtwork);
         } else {
             Log.w(TAG, "updateMediaNotification: NO artwork for videoId=" + track.videoId
@@ -5819,7 +5764,6 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void clearMediaNotificationArtwork() {
-        Log.d(TAG, "clearMediaNotificationArtwork: was=" + mediaSessionArtworkVideoId);
         mediaSessionArtwork = null;
         mediaSessionArtworkVideoId = "";
     }
@@ -5831,8 +5775,6 @@ public class SongPlayerFragment extends Fragment {
         }
         mediaSessionArtwork = scaleArtworkBitmap(source, MEDIA_SESSION_ARTWORK_MAX_SIZE_PX);
         mediaSessionArtworkVideoId = videoId;
-        Log.d(TAG, "cacheMediaNotificationArtwork: cached videoId=" + videoId
-                + " size=" + source.getWidth() + "x" + source.getHeight());
     }
 
     @NonNull

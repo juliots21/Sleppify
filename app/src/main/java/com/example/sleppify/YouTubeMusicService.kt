@@ -160,6 +160,20 @@ class YouTubeMusicService @JvmOverloads constructor(
         @JvmField val items: List<MixResult>
     )
 
+    class ReplacementCandidate(
+        @JvmField val videoId: String,
+        @JvmField val title: String,
+        @JvmField val artist: String,
+        @JvmField val duration: String,
+        @JvmField val thumbnailUrl: String,
+        @JvmField val durationSeconds: Int
+    )
+
+    interface ReplacementCandidatesCallback {
+        fun onSuccess(candidates: List<ReplacementCandidate>)
+        fun onError(error: String)
+    }
+
     // ----- Private data holders -----
 
     private class ApiErrorDetails(val reason: String, val message: String)
@@ -1601,7 +1615,6 @@ class YouTubeMusicService @JvmOverloads constructor(
 
         while (continuationToken != null && continuationCount < MAX_HOME_CONTINUATIONS) {
             continuationCount++
-            Log.d("YouTubeMusicService", "Home browse continuation #$continuationCount")
             try {
                 val contBody = JSONObject().apply {
                     put("context", JSONObject().put("client", clientContext))
@@ -1618,8 +1631,6 @@ class YouTubeMusicService @JvmOverloads constructor(
             }
         }
 
-        Log.d("YouTubeMusicService", "Home browse total: ${result.allSections.size} sections, " +
-                "${result.personalMixes.size} personal, ${result.genericMixes.size} generic")
         return result
     }
 
@@ -1910,6 +1921,91 @@ class YouTubeMusicService @JvmOverloads constructor(
             Log.w("YouTubeMusicService", "parseInnertubeSearch error: ${e.message}")
         }
         return results
+    }
+
+    fun searchReplacementCandidates(
+        context: android.content.Context,
+        query: String,
+        originalVideoId: String,
+        maxCandidates: Int,
+        callback: ReplacementCandidatesCallback
+    ) {
+        val normalized = query.trim()
+        if (normalized.isEmpty()) {
+            callback.onError("No hay texto de búsqueda.")
+            return
+        }
+
+        val apiKey = (BuildConfig.YOUTUBE_DATA_API_KEY ?: "").trim()
+        if (apiKey.isEmpty()) {
+            callback.onError("Configura YOUTUBE_DATA_API_KEY.")
+            return
+        }
+
+        val appContext = context.applicationContext
+        val maxResults = maxOf(5, maxCandidates * 3)
+
+        executor.execute {
+            try {
+                val pageResult = performSearchRequest(normalized, maxResults, apiKey, null)
+                val originalId = originalVideoId.trim()
+
+                val eligible = ArrayList<TrackResult>()
+                for (item in pageResult.tracks) {
+                    if (!item.isVideo() || TextUtils.isEmpty(item.videoId)) continue
+                    if (item.videoId == originalId) continue
+                    eligible.add(item)
+                    if (eligible.size >= maxResults) break
+                }
+
+                if (eligible.isEmpty()) {
+                    mainHandler.post { callback.onSuccess(emptyList()) }
+                    return@execute
+                }
+
+                val videoIds = eligible.map { it.videoId }
+                val filterMap = try {
+                    fetchPublicVideoFiltersByIds(apiKey, videoIds)
+                } catch (_: Exception) {
+                    emptyMap()
+                }
+
+                val candidates = ArrayList<ReplacementCandidate>()
+                for (item in eligible) {
+                    val info = filterMap[item.videoId]
+                    if (info != null) {
+                        if (!info.embeddable) continue
+                        if (info.durationSeconds in 1 until MIN_PUBLIC_MUSIC_DURATION_SECONDS) continue
+                    }
+
+                    val durationSeconds = info?.durationSeconds ?: 0
+                    val durationStr = if (durationSeconds > 0) {
+                        val h = durationSeconds / 3600
+                        val m = (durationSeconds % 3600) / 60
+                        val s = durationSeconds % 60
+                        if (h > 0) String.format(java.util.Locale.US, "%d:%02d:%02d", h, m, s)
+                        else String.format(java.util.Locale.US, "%d:%02d", m, s)
+                    } else "--:--"
+
+                    candidates.add(
+                        ReplacementCandidate(
+                            videoId = item.videoId,
+                            title = item.title,
+                            artist = item.subtitle,
+                            duration = durationStr,
+                            thumbnailUrl = item.thumbnailUrl,
+                            durationSeconds = durationSeconds
+                        )
+                    )
+                    if (candidates.size >= maxCandidates) break
+                }
+
+                mainHandler.post { callback.onSuccess(candidates) }
+            } catch (e: Exception) {
+                val error = e.message ?: "No se pudieron buscar alternativas."
+                mainHandler.post { callback.onError(error) }
+            }
+        }
     }
 
     companion object {

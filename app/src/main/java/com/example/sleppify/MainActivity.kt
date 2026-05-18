@@ -378,7 +378,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun invokeSearchActionOnMusicFragment(intent: Intent): Boolean {
         val music = supportFragmentManager.findFragmentByTag(TAG_MODULE_MUSIC)
-        Log.d("MainActivity", "invokeSearchActionOnMusicFragment: musicFragment=$music")
         if (music == null || music.javaClass.simpleName != "MusicPlayerFragment") {
             return false
         }

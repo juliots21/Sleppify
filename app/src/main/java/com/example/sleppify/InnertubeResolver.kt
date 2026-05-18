@@ -32,13 +32,11 @@ object InnertubeResolver {
     fun loadAuthCookiesFromPrefs(context: Context) {
         val prefs = context.getSharedPreferences(PREFS_PLAYER_STATE, Context.MODE_PRIVATE)
         authCookieHeader = prefs.getString(PREF_LAST_YOUTUBE_WEB_COOKIE, "")?.trim() ?: ""
-        Log.d(TAG, "Cookies cargadas: ${authCookieHeader.isNotEmpty()}")
     }
 
     @JvmStatic
     fun setAuthCookies(cookieHeader: String?) {
         authCookieHeader = cookieHeader?.trim() ?: ""
-        Log.d(TAG, "Cookies set: ${authCookieHeader.isNotEmpty()}")
     }
 
     @JvmStatic
@@ -69,7 +67,6 @@ object InnertubeResolver {
         if (NewPipe.getDownloader() == null) {
             synchronized(newPipeInitLock) {
                 if (NewPipe.getDownloader() == null) {
-                    Log.d(TAG, "Inicializando NewPipe (lazy fallback)...")
                     NewPipe.init(NewPipeHttpDownloader.getInstance())
                 }
             }
@@ -88,12 +85,10 @@ object InnertubeResolver {
         val cacheKey = "${videoId}_${targetBitrate}"
         urlCache[cacheKey]?.let {
             if (System.currentTimeMillis() - it.timestamp < CACHE_EXPIRY_MS) {
-                Log.d(TAG, "Cache hit: $cacheKey")
                 return it.url
             }
         }
 
-        Log.d(TAG, "resolving via NewPipe: $videoId")
         return try {
             ensureNewPipe()
             val info = StreamInfo.getInfo(YouTube, "https://www.youtube.com/watch?v=$videoId")
@@ -105,7 +100,6 @@ object InnertubeResolver {
             val url = audioStream?.content
             if (!url.isNullOrEmpty()) {
                 urlCache[cacheKey] = CachedUrl(url, System.currentTimeMillis())
-                Log.d(TAG, "NewPipe fallback success: $videoId - ${audioStream?.format} @ ${audioStream?.bitrate}bps")
                 url
             } else {
                 Log.w(TAG, "No audio stream via NewPipe for: $videoId")

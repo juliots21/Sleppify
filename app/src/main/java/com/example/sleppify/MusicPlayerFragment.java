@@ -1357,7 +1357,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
     }
     private void fetchLibraryPlaylists(boolean userTriggered, boolean backgroundRefresh, boolean forceRefresh) {
         if (libraryFetchInFlight && !forceRefresh) {
-            Log.d(TAG_STREAMING, "playlist_fetch skipped: already in flight");
             return;
         }
         libraryFetchInFlight = true;
@@ -3704,13 +3703,11 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         // Extract per-playlist download progress for circular indicator
         Map<String, Float> progressByPlaylist = new HashMap<>();
         Set<String> downloading = new HashSet<>();
-        int totalInfos = workInfos == null ? 0 : workInfos.size();
         if (workInfos != null) {
             for (WorkInfo info : workInfos) {
                 if (info == null) continue;
                 WorkInfo.State state = info.getState();
                 String playlistId = extractPlaylistIdFromTags(info);
-                Log.d(TAG_STREAMING, "offline_progress: workInfo state=" + state + " playlistId=" + playlistId + " tags=" + info.getTags());
                 if (state != WorkInfo.State.RUNNING && state != WorkInfo.State.ENQUEUED) continue;
 
                 if (TextUtils.isEmpty(playlistId)) continue;
@@ -3724,15 +3721,11 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                     if (total > 0) {
                         float fraction = Math.max(0f, Math.min(1f,
                                 done / (float) total));
-                        Log.d(TAG_STREAMING, "offline_progress: pid=" + playlistId + " done=" + done + "/" + total + " fraction=" + fraction);
                         progressByPlaylist.put(playlistId, fraction);
-                    } else {
-                        Log.d(TAG_STREAMING, "offline_progress: pid=" + playlistId + " total=0 (worker not yet reporting), skipping");
                     }
                 }
             }
         }
-        Log.d(TAG_STREAMING, "offline_progress: totalInfos=" + totalInfos + " downloading=" + downloading + " progress=" + progressByPlaylist);
         if (adapter != null) {
             adapter.updateDownloadProgress(progressByPlaylist, downloading);
         }
@@ -3885,7 +3878,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                             wm.cancelUniqueWork(OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME);
                         }
                         if (!onlyBlocked && finalActiveCount >= 3) {
-                            Log.d(TAG_STREAMING, "pull_refresh: " + finalActiveCount + " download workers active, skipping resume");
                             return;
                         }
                         mainHandler.postDelayed(() -> {
@@ -5325,8 +5317,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             if (isDownloading && playlistDownloadProgressCache.containsKey(playlistId)) {
                 downloadFraction = playlistDownloadProgressCache.get(playlistId);
             }
-            Log.d(TAG_STREAMING, "bindOfflineState: pid=" + playlistId + " autoEnabled=" + offlineAutoEnabled + " complete=" + completeOffline + " downloading=" + isDownloading + " fraction=" + downloadFraction);
-
             Context ctx = holder.itemView.getContext();
 
             if (completeOffline && offlineAutoEnabled) {
