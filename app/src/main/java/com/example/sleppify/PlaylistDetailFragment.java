@@ -91,7 +91,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class PlaylistDetailFragment extends Fragment
-        implements PlaybackEventBus.Listener {
+        implements PlaybackEventBus.Listener,
+                   TrackReplacementSheet.OnReplacementConfirmedListener,
+                   TrackReplacementSheet.OnReplacementUndoneListener {
 
     private static final String PREFS_STREAMING_CACHE = "streaming_cache";
     private static final long TRACKS_CACHE_TTL_MS = 24 * 60 * 60 * 1000L;
@@ -3276,6 +3278,34 @@ public class PlaylistDetailFragment extends Fragment
             btnDownload.setVisibility(View.GONE);
         }
 
+        // Row: Reemplazar
+        View btnReplace = view.findViewById(R.id.btnBsReplace);
+        btnReplace.setVisibility(View.VISIBLE);
+        ImageView ivReplace = view.findViewById(R.id.ivBsReplace);
+        TextView tvReplace = view.findViewById(R.id.tvBsReplace);
+        ivReplace.setImageResource(R.drawable.ic_player_repeat);
+        tvReplace.setText("Reemplazar");
+        btnReplace.setOnClickListener(v -> {
+            dialog.dismiss();
+            String playlistType = resolvePlaylistType(currentPlaylistId);
+            boolean offlineSub = isCurrentPlaylistOfflineAutoEnabled();
+            String resolvedId = resolveOriginalVideoId(selectedTrack.videoId);
+            boolean hasOverride = PlaylistOverrideStore.INSTANCE.getOverrides(requireContext(), currentPlaylistId)
+                    .containsKey(resolvedId);
+            TrackReplacementSheet.show(
+                    getChildFragmentManager(),
+                    currentPlaylistId,
+                    playlistType,
+                    resolvedId,
+                    selectedTrack.title,
+                    selectedTrack.artist,
+                    selectedTrack.duration,
+                    selectedTrack.imageUrl,
+                    offlineSub,
+                    hasOverride
+            );
+        });
+
         View parent = (View) view.getParent();
         if (parent != null) {
             parent.setBackgroundColor(android.graphics.Color.TRANSPARENT);
@@ -3899,6 +3929,147 @@ public class PlaylistDetailFragment extends Fragment
         if (music instanceof MusicPlayerFragment) {
             ((MusicPlayerFragment) music).notifyPlaylistOfflineChanged(currentPlaylistId);
         }
+    }
+
+    private String resolveOriginalVideoId(@NonNull String videoId) {
+        if (!isAdded() || TextUtils.isEmpty(currentPlaylistId) || TextUtils.isEmpty(videoId))
+            return videoId;
+        java.util.Map<String, PlaylistOverrideStore.Override> overrides =
+                PlaylistOverrideStore.INSTANCE.getOverrides(requireContext(), currentPlaylistId);
+        for (java.util.Map.Entry<String, PlaylistOverrideStore.Override> entry : overrides.entrySet()) {
+            if (videoId.equals(entry.getValue().getReplacementVideoId())) {
+                return entry.getKey();
+            }
+        }
+        return videoId;
+    }
+
+    @Override
+    public void onReplacementUndone(@NonNull String playlistId, @NonNull String originalVideoId) {
+        if (!isAdded()) return;
+        Context ctx = requireContext();
+
+        PlaylistOverrideStore.Override existing =
+                PlaylistOverrideStore.INSTANCE.getOverrides(ctx, playlistId).get(originalVideoId);
+        String replacementVideoId = existing != null ? existing.getReplacementVideoId() : "";
+        if (!TextUtils.isEmpty(replacementVideoId)) {
+            OfflineAudioStore.deleteOfflineAudio(ctx, replacementVideoId);
+        }
+
+        PlaylistOverrideStore.INSTANCE.removeOverride(ctx, playlistId, originalVideoId);
+
+        List<PlaylistTrack> updatedTracks = sanitizeTracksForPlaylist(playlistId, loadCachedTracks(playlistId));
+        renderTracks(updatedTracks, playlistId, false);
+
+        if (trackAdapter != null) {
+            trackAdapter.invalidateTrackStateCache(replacementVideoId);
+            trackAdapter.invalidateTrackStateCache(originalVideoId);
+            trackAdapter.submitTracks(updatedTracks);
+        }
+
+        android.widget.Toast.makeText(ctx, "Reemplazo deshecho", android.widget.Toast.LENGTH_SHORT).show();
+
+        if (AuthManager.getInstance(ctx).isSignedIn()) {
+            CloudSyncManager.getInstance(ctx).syncPlaylistOverridesToCloud(
+                    playlistId,
+                    new ArrayList<>(PlaylistOverrideStore.INSTANCE.getOverrides(ctx, playlistId).values())
+            );
+        }
+
+        notifyMusicPlayerOfflineChanged();
+    }
+
+    @Override
+    public void onReplacementConfirmed(
+            @NonNull String playlistId,
+            @NonNull String playlistType,
+            @NonNull String originalVideoId,
+            @NonNull YouTubeMusicService.ReplacementCandidate candidate
+    ) {
+        if (!isAdded()) return;
+
+        Context ctx = requireContext();
+
+        PlaylistOverrideStore.Override previousOverride =
+                PlaylistOverrideStore.INSTANCE.getOverrides(ctx, playlistId).get(originalVideoId);
+        String previousVideoId = previousOverride != null
+                ? previousOverride.getReplacementVideoId()
+                : originalVideoId;
+        if (!TextUtils.isEmpty(previousVideoId)) {
+            OfflineAudioStore.deleteOfflineAudio(ctx, previousVideoId);
+        }
+
+        PlaylistOverrideStore.Override override = new PlaylistOverrideStore.Override(
+                originalVideoId,
+                candidate.videoId,
+                candidate.title,
+                candidate.artist,
+                candidate.duration,
+                candidate.thumbnailUrl,
+                System.currentTimeMillis()
+        );
+        PlaylistOverrideStore.INSTANCE.putOverride(ctx, playlistId, override);
+
+        List<PlaylistTrack> updatedTracks = sanitizeTracksForPlaylist(playlistId, loadCachedTracks(playlistId));
+        renderTracks(updatedTracks, playlistId, false);
+
+        if (trackAdapter != null) {
+            trackAdapter.invalidateTrackStateCache(previousVideoId);
+            trackAdapter.invalidateTrackStateCache(candidate.videoId);
+            trackAdapter.submitTracks(updatedTracks);
+        }
+
+        if (isCurrentPlaylistOfflineAutoEnabled()) {
+            enqueueSingleTrackForOfflineDownload(candidate.videoId, candidate.title, candidate.artist, candidate.duration);
+        }
+
+        if (AuthManager.getInstance(ctx).isSignedIn()) {
+            CloudSyncManager.getInstance(ctx).syncPlaylistOverridesToCloud(
+                    playlistId,
+                    new ArrayList<>(PlaylistOverrideStore.INSTANCE.getOverrides(ctx, playlistId).values())
+            );
+        }
+
+        notifyMusicPlayerOfflineChanged();
+    }
+
+    private void enqueueSingleTrackForOfflineDownload(
+            @NonNull String videoId,
+            @NonNull String title,
+            @NonNull String artist,
+            @NonNull String duration
+    ) {
+        if (!isAdded() || TextUtils.isEmpty(videoId)) return;
+        try {
+            Data inputData = new Data.Builder()
+                    .putString(OfflinePlaylistDownloadWorker.INPUT_PLAYLIST_ID, currentPlaylistId)
+                    .putString(OfflinePlaylistDownloadWorker.INPUT_PLAYLIST_TITLE, currentPlaylistTitle)
+                    .putStringArray(OfflinePlaylistDownloadWorker.INPUT_VIDEO_IDS, new String[] { videoId })
+                    .putStringArray(OfflinePlaylistDownloadWorker.INPUT_TITLES, new String[] { title })
+                    .putStringArray(OfflinePlaylistDownloadWorker.INPUT_ARTISTS, new String[] { artist })
+                    .putStringArray(OfflinePlaylistDownloadWorker.INPUT_DURATIONS, new String[] { duration })
+                    .putInt(OfflinePlaylistDownloadWorker.INPUT_ALREADY_OFFLINE_COUNT, 0)
+                    .putInt(OfflinePlaylistDownloadWorker.INPUT_TOTAL_WITH_VIDEO_ID, 1)
+                    .putBoolean(OfflinePlaylistDownloadWorker.INPUT_USER_INITIATED, true)
+                    .putBoolean(OfflinePlaylistDownloadWorker.INPUT_MANUAL_QUEUE, true)
+                    .build();
+
+            SharedPreferences prefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE);
+            boolean allowMobileData = prefs.getBoolean(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false);
+            Constraints constraints = new Constraints.Builder()
+                    .setRequiredNetworkType(allowMobileData ? NetworkType.CONNECTED : NetworkType.UNMETERED)
+                    .build();
+
+            String uniqueName = OFFLINE_DOWNLOAD_MANUAL_TRACK_QUEUE_UNIQUE_NAME;
+            OneTimeWorkRequest request = new OneTimeWorkRequest.Builder(OfflinePlaylistDownloadWorker.class)
+                    .setInputData(inputData)
+                    .setConstraints(constraints)
+                    .addTag(uniqueName)
+                    .addTag(currentPlaylistOfflineTag())
+                    .build();
+
+            enqueueOfflineDownloadUniqueWork(uniqueName, request);
+        } catch (Exception ignored) {}
     }
 
     private void playAllInOrder() {
