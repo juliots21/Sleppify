@@ -199,7 +199,7 @@
         android:layout_height="wrap_content"
         android:orientation="vertical">
 
-        <!-- Reproducir Playlist -->
+        <!-- 1. Reproducir a continuación -->
         <LinearLayout
             android:id="@+id/btnBsPlayPlaylist"
             android:layout_width="match_parent"
@@ -215,20 +215,20 @@
                 android:id="@+id/ivBsPlayPlaylist"
                 android:layout_width="22dp"
                 android:layout_height="22dp"
-                android:src="@drawable/ic_player_play"
+                android:src="@drawable/ic_bs_play_next_yt"
                 app:tint="@android:color/white"/>
             <TextView
                 android:id="@+id/tvBsPlayPlaylist"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="16dp"
-                android:text="Reproducir playlist"
+                android:text="Reproducir a continuación"
                 android:textColor="@color/text_primary"
                 android:textSize="15sp"
                 android:fontFamily="@font/inter_variable"/>
         </LinearLayout>
 
-        <!-- Add to Queue (when Add to playlist is primary) -->
+        <!-- 2. Agregar a la fila -->
         <LinearLayout
             android:id="@+id/btnBsAddToQueue"
             android:layout_width="match_parent"
@@ -244,7 +244,7 @@
                 android:id="@+id/ivBsAddToQueue"
                 android:layout_width="22dp"
                 android:layout_height="22dp"
-                android:src="@drawable/ic_stream_queue_add"
+                android:src="@drawable/ic_bs_add_queue_yt"
                 app:tint="@android:color/white"/>
             <TextView
                 android:id="@+id/tvBsAddToQueue"
@@ -257,8 +257,35 @@
                 android:fontFamily="@font/inter_variable"/>
         </LinearLayout>
 
+        <!-- 3. Añadir a playlist -->
+        <LinearLayout
+            android:id="@+id/btnBsFavorite"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingVertical="14dp"
+            android:background="?attr/selectableItemBackground"
+            android:clickable="true"
+            android:focusable="true">
+            <ImageView
+                android:id="@+id/ivBsFavorite"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:src="@drawable/ic_stream_queue_add"
+                app:tint="@android:color/white"/>
+            <TextView
+                android:id="@+id/tvBsFavorite"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:text="Añadir a playlist"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp"
+                android:fontFamily="@font/inter_variable"/>
+        </LinearLayout>
 
-        <!-- Play (for MusicPlayerFragment search result) -->
+        <!-- 4. Radio -->
         <LinearLayout
             android:id="@+id/btnBsPlay"
             android:layout_width="match_parent"
@@ -274,48 +301,20 @@
                 android:id="@+id/ivBsPlay"
                 android:layout_width="22dp"
                 android:layout_height="22dp"
-                android:src="@drawable/ic_player_play"
+                android:src="@drawable/ic_bs_radio"
                 app:tint="@android:color/white"/>
             <TextView
                 android:id="@+id/tvBsPlayLabel"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="16dp"
-                android:text="Reproducir"
+                android:text="Radio"
                 android:textColor="@color/text_primary"
                 android:textSize="15sp"
                 android:fontFamily="@font/inter_variable"/>
         </LinearLayout>
 
-        <!-- Favorite -->
-        <LinearLayout
-            android:id="@+id/btnBsFavorite"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:paddingVertical="14dp"
-            android:background="?attr/selectableItemBackground"
-            android:clickable="true"
-            android:focusable="true">
-            <ImageView
-                android:id="@+id/ivBsFavorite"
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:src="@drawable/ic_favorite_star"
-                app:tint="@android:color/white"/>
-            <TextView
-                android:id="@+id/tvBsFavorite"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="16dp"
-                android:text="Agregar a Favoritos"
-                android:textColor="@color/text_primary"
-                android:textSize="15sp"
-                android:fontFamily="@font/inter_variable"/>
-        </LinearLayout>
-
-        <!-- Download / Delete -->
+        <!-- 5. Borrar de la playlist -->
         <LinearLayout
             android:id="@+id/btnBsDownload"
             android:layout_width="match_parent"
@@ -325,19 +324,20 @@
             android:paddingVertical="14dp"
             android:background="?attr/selectableItemBackground"
             android:clickable="true"
-            android:focusable="true">
+            android:focusable="true"
+            android:visibility="gone">
             <ImageView
                 android:id="@+id/ivBsDownload"
                 android:layout_width="22dp"
                 android:layout_height="22dp"
-                android:src="@drawable/ic_download_bold"
+                android:src="@drawable/ic_delete_modern"
                 app:tint="@android:color/white"/>
             <TextView
                 android:id="@+id/tvBsDownload"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="16dp"
-                android:text="Descargar"
+                android:text="Borrar de la playlist"
                 android:textColor="@color/text_primary"
                 android:textSize="15sp"
                 android:fontFamily="@font/inter_variable"/>

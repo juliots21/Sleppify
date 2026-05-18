@@ -835,7 +835,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun setSyncOverlayVisible(visible: Boolean) { /* Signals visual sync in header */ }
 
+    private fun setTopAppBarExtraTopPadding(extraDp: Int) {
+        val density = resources.displayMetrics.density
+        val extraPx = (extraDp * density).toInt()
+        topAppBar.setPadding(topAppBar.paddingLeft, extraPx, topAppBar.paddingRight, topAppBar.paddingBottom)
+    }
+
     private fun configureHeaderActionForMainModules() {
+        setTopAppBarExtraTopPadding(0)
         btnCamera.visibility = View.GONE
         btnHeaderSearch.visibility = View.VISIBLE
         btnHeaderSearch.setOnClickListener { openSearchFragment() }
@@ -888,6 +895,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun configureHeaderActionForSettings() {
+        setTopAppBarExtraTopPadding(14)
         btnProfilePhoto.visibility = View.GONE
         btnSignInHeader?.visibility = View.GONE
         btnHeaderSearch.visibility = View.GONE
@@ -905,6 +913,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun configureHeaderActionForScanner() {
+        setTopAppBarExtraTopPadding(14)
         btnProfilePhoto.visibility = View.GONE
         btnSignInHeader?.visibility = View.GONE
         btnCamera.visibility = View.GONE
@@ -929,6 +938,7 @@ class MainActivity : AppCompatActivity() {
         if (bottomNav.selectedItemId == R.id.nav_music) markStreamingEntryAsLibrary()
 
         inSettings = true
+        globalMiniPlayer?.hide()
         val target = settingsFragment ?: SettingsFragment().also { settingsFragment = it }
         val isNew = !target.isAdded
         showModuleLoadingOverlay()
@@ -989,6 +999,7 @@ class MainActivity : AppCompatActivity() {
         if (isNavigating) return
         inEqualizerFromPlayer = true
         inEqualizerFromSettings = false
+        globalMiniPlayer?.hide()
         val target = equalizerFragment ?: EqualizerFragment().also { equalizerFragment = it }
         val isNew = !target.isAdded
         showModuleLoadingOverlay()
@@ -1007,6 +1018,7 @@ class MainActivity : AppCompatActivity() {
                 commit()
             }
             topAppBar.visibility = View.VISIBLE
+            setTopAppBarExtraTopPadding(14)
             btnProfilePhoto.visibility = View.GONE
             btnCamera.visibility = View.GONE
             btnHeaderSearch.visibility = View.GONE
@@ -1058,6 +1070,7 @@ class MainActivity : AppCompatActivity() {
     fun openEqualizerFromSettings() {
         if (isNavigating) return
         inEqualizerFromSettings = true
+        globalMiniPlayer?.hide()
         val target = equalizerFragment ?: EqualizerFragment().also { equalizerFragment = it }
         val isNew = !target.isAdded
         showModuleLoadingOverlay()
@@ -1114,6 +1127,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun configureHeaderActionForEqualizer() {
+        setTopAppBarExtraTopPadding(14)
         btnProfilePhoto.visibility = View.GONE
         btnSignInHeader?.visibility = View.GONE
         btnCamera.visibility = View.GONE
@@ -1133,6 +1147,7 @@ class MainActivity : AppCompatActivity() {
     fun openScannerFromSettings() {
         if (isNavigating) return
         inScannerFromSettings = true
+        globalMiniPlayer?.hide()
         val target = scannerFragment ?: ScannerFragment().also { scannerFragment = it }
         val isNew = !target.isAdded
         scannerLoadingOverlay.alpha = 1f
@@ -1229,7 +1244,8 @@ class MainActivity : AppCompatActivity() {
     fun getGlobalMiniPlayerController(): GlobalMiniPlayerController? = globalMiniPlayer
 
     fun isMiniPlayerAllowedForCurrentScreen(): Boolean {
-        // Mini-player only in these 4 screens
+        // Mini-player only in these 4 screens — block all overlay screens
+        if (inSettings || inEqualizerFromSettings || inEqualizerFromPlayer || inScannerFromSettings) return false
         if (isSearchFragmentVisible()) return true
         if (isPlaylistDetailVisible()) return true
         return when (currentMainNavItemId) {

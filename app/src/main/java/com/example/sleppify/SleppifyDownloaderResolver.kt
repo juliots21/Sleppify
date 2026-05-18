@@ -18,8 +18,8 @@ object SleppifyDownloaderResolver {
 
     private const val TAG = "SleppifyDL"
     private const val ENDPOINT = "https://sleppifydownloader.alwaysdata.net/api/download"
-    private const val CONNECT_TIMEOUT_MS = 15000
-    private const val READ_TIMEOUT_MS = 120000
+    private const val CONNECT_TIMEOUT_MS = 10000
+    private const val READ_TIMEOUT_MS = 20000
     private const val MIN_VALID_BYTES = 50_000L
 
     /**

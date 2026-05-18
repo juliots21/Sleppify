@@ -1157,8 +1157,14 @@ class SearchFragment : Fragment() {
             btnBsDownload.setOnClickListener {
                 dialog.dismiss()
                 if (containingPlaylists.size == 1) {
-                    removeTrackFromPlaylistByKey(containingPlaylists[0], videoId)
-                    showStatusBarSearch("Se eliminó correctamente") { showSaveToPlaylistSheet(track) }
+                    val playlistKey = containingPlaylists[0]
+                    val playlistName = resolvePlaylistName(playlistKey)
+                    removeTrackFromPlaylistByKey(playlistKey, videoId)
+                    showStatusBarSearchWithUndo(
+                        "${track.title?.takeIf { it.isNotEmpty() } ?: "Tema"} eliminado de $playlistName",
+                        playlistKey,
+                        track
+                    )
                 } else {
                     showSaveToPlaylistSheet(track)
                 }
@@ -1330,12 +1336,16 @@ class SearchFragment : Fragment() {
     }
 
     private fun showStatusBarSearch(message: String, onChangeClick: (() -> Unit)? = null) {
-        if (!isAdded || view == null) return
-        val rootView = view as? android.view.ViewGroup ?: return
+        if (!isAdded) return
+        val activity = requireActivity() as? MainActivity ?: return
+        val rootView = activity.findViewById<android.view.ViewGroup>(android.R.id.content) ?: return
         val existing = rootView.findViewWithTag<View>("saved_bar")
         if (existing != null) rootView.removeView(existing)
 
         val density = resources.displayMetrics.density
+        val miniPlayerHeight = (72 * density).toInt() // Height of llGlobalMiniPlayer
+        val bottomNavHeight = (48 * density).toInt()  // Height of bottomNavigation
+        val marginAboveMiniPlayer = (8 * density).toInt()
 
         val bar = android.widget.LinearLayout(requireContext()).apply {
             tag = "saved_bar"
@@ -1346,7 +1356,7 @@ class SearchFragment : Fragment() {
             val hPad = (16 * density).toInt()
             val vPad = (20 * density).toInt()
             setPadding(hPad, vPad, hPad, vPad)
-            elevation = 8 * density
+            elevation = 40 * density // Higher than miniplayer (33dp)
         }
 
         val tvMsg = TextView(requireContext()).apply {
@@ -1373,28 +1383,89 @@ class SearchFragment : Fragment() {
             bar.addView(btnChange)
         }
 
-        val barBottomMargin = (12 * density).toInt()
-        if (rootView is androidx.constraintlayout.widget.ConstraintLayout) {
-            val clp = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
-                androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.MATCH_PARENT,
-                androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
-                this.bottomMargin = barBottomMargin
-                startToStart = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
-                endToEnd = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
-            }
-            rootView.addView(bar, clp)
-        } else {
-            val flp = android.widget.FrameLayout.LayoutParams(
-                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                gravity = android.view.Gravity.BOTTOM
-                this.bottomMargin = barBottomMargin
-            }
-            rootView.addView(bar, flp)
+        val barBottomMargin = miniPlayerHeight + bottomNavHeight + marginAboveMiniPlayer
+        val flp = android.widget.FrameLayout.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = android.view.Gravity.BOTTOM
+            this.bottomMargin = barBottomMargin
         }
+        rootView.addView(bar, flp)
+
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            if (bar.parent != null) {
+                (bar.parent as android.view.ViewGroup).removeView(bar)
+            }
+        }, 4000L)
+    }
+
+    private fun resolvePlaylistName(playlistKey: String): String {
+        return if (playlistKey == FavoritesPlaylistStore.PLAYLIST_ID) {
+            FavoritesPlaylistStore.PLAYLIST_TITLE
+        } else if (playlistKey.startsWith(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX)) {
+            playlistKey.removePrefix(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX)
+        } else {
+            "playlist"
+        }
+    }
+
+    private fun showStatusBarSearchWithUndo(message: String, playlistKey: String, track: YouTubeMusicService.TrackResult) {
+        if (!isAdded) return
+        val activity = requireActivity() as? MainActivity ?: return
+        val rootView = activity.findViewById<android.view.ViewGroup>(android.R.id.content) ?: return
+        val existing = rootView.findViewWithTag<View>("saved_bar")
+        if (existing != null) rootView.removeView(existing)
+
+        val density = resources.displayMetrics.density
+        val miniPlayerHeight = (72 * density).toInt() // Height of llGlobalMiniPlayer
+        val bottomNavHeight = (48 * density).toInt()  // Height of bottomNavigation
+        val marginAboveMiniPlayer = (8 * density).toInt()
+
+        val bar = android.widget.LinearLayout(requireContext()).apply {
+            tag = "saved_bar"
+            id = View.generateViewId()
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setBackgroundColor(android.graphics.Color.parseColor("#FF1E1E1E"))
+            val hPad = (16 * density).toInt()
+            val vPad = (20 * density).toInt()
+            setPadding(hPad, vPad, hPad, vPad)
+            elevation = 40 * density // Higher than miniplayer (33dp)
+        }
+
+        val tvMsg = TextView(requireContext()).apply {
+            text = message
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 14f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            layoutParams = android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        bar.addView(tvMsg)
+
+        val btnUndo = TextView(requireContext()).apply {
+            text = "Deshacer"
+            setTextColor(android.graphics.Color.parseColor("#8AB4F8"))
+            textSize = 14f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding((12 * density).toInt(), 0, 0, 0)
+            setOnClickListener {
+                rootView.removeView(bar)
+                addTrackToPlaylistByKey(playlistKey, track)
+                Toast.makeText(requireContext(), "Restaurado en ${resolvePlaylistName(playlistKey)}", Toast.LENGTH_SHORT).show()
+            }
+        }
+        bar.addView(btnUndo)
+
+        val barBottomMargin = miniPlayerHeight + bottomNavHeight + marginAboveMiniPlayer
+        val flp = android.widget.FrameLayout.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = android.view.Gravity.BOTTOM
+            this.bottomMargin = barBottomMargin
+        }
+        rootView.addView(bar, flp)
 
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             if (bar.parent != null) {
@@ -1659,6 +1730,21 @@ class SearchFragment : Fragment() {
             result.add(SuggestionItem.Suggestion(draft.trim()))
         }
 
+        // Text-based autocomplete: suggest full track titles that start with the typed text
+        if (normDraft.length >= 2 && localTrackIndex.isNotEmpty()) {
+            val normDraftLower = normDraft.lowercase()
+            val seenNorm = mutableSetOf<String>()
+            val autocompleteCandidates = localTrackIndex
+                .mapNotNull { track ->
+                    val normTitle = normalizeForFilter(track.title)
+                    if (normTitle.startsWith(normDraftLower) && normTitle != normDraftLower && seenNorm.add(normTitle)) {
+                        track.title.trim()
+                    } else null
+                }
+                .take(3)
+            autocompleteCandidates.forEach { result.add(SuggestionItem.Autocomplete(it)) }
+        }
+
         // Show recent images carousel only when bar is empty (no query typed)
         if (normDraft.isEmpty()) {
             val itemsWithImages = recentSearchData.filter { it.thumbnail.isNotEmpty() }.take(5)
@@ -1678,12 +1764,29 @@ class SearchFragment : Fragment() {
         }
 
         if (normDraft.length >= 3 && localTrackIndex.isNotEmpty()) {
+            val draftTokens = normDraft.split(Regex("\\s+")).filter { it.isNotEmpty() }
             val trackMatches = localTrackIndex
-                .filter { normalizeForFilter(it.title).contains(normDraft) || normalizeForFilter(it.artist).contains(normDraft) }
+                .filter { track ->
+                    val titleNorm = normalizeForFilter(track.title)
+                    val artistNorm = normalizeForFilter(track.artist)
+                    // Full-string contains (original fast path)
+                    if (titleNorm.contains(normDraft) || artistNorm.contains(normDraft)) return@filter true
+                    // Per-token prefix matching: each query token must be a prefix of some word in title or artist
+                    val titleWords = titleNorm.split(Regex("\\s+"))
+                    val artistWords = artistNorm.split(Regex("\\s+"))
+                    val allWords = titleWords + artistWords
+                    val hits = draftTokens.count { tok ->
+                        allWords.any { w -> w.startsWith(tok) || (tok.length >= 4 && w.length >= 4 && tok.substring(0, 4) == w.substring(0, 4)) }
+                    }
+                    hits >= (draftTokens.size + 1) / 2
+                }
                 .sortedByDescending {
+                    val titleNorm = normalizeForFilter(it.title)
+                    val artistNorm = normalizeForFilter(it.artist)
                     when {
-                        normalizeForFilter(it.title).startsWith(normDraft) -> 2
-                        normalizeForFilter(it.artist).startsWith(normDraft) -> 1
+                        titleNorm.startsWith(normDraft) -> 3
+                        titleNorm.contains(normDraft) -> 2
+                        artistNorm.startsWith(normDraft) -> 1
                         else -> 0
                     }
                 }
@@ -2005,6 +2108,7 @@ class SearchFragment : Fragment() {
         data class Header(val label: String) : SuggestionItem()
         data class Recent(val query: String, val thumbnail: String = "") : SuggestionItem()
         data class Suggestion(val query: String) : SuggestionItem()
+        data class Autocomplete(val query: String) : SuggestionItem()
         data class Track(val track: FavoritesPlaylistStore.FavoriteTrack) : SuggestionItem()
         data class RecentImages(val items: List<RecentSearch>) : SuggestionItem()
     }
@@ -2028,6 +2132,7 @@ class SearchFragment : Fragment() {
             is SuggestionItem.Header -> TYPE_HEADER
             is SuggestionItem.Recent -> TYPE_RECENT
             is SuggestionItem.Suggestion -> TYPE_SUGGESTION
+            is SuggestionItem.Autocomplete -> TYPE_SUGGESTION
             is SuggestionItem.Track -> TYPE_TRACK
             is SuggestionItem.RecentImages -> TYPE_RECENT_IMAGES
         }
@@ -2061,8 +2166,19 @@ class SearchFragment : Fragment() {
                         text.text = item.query
                         icon.setImageResource(R.drawable.ic_search)
                         icon.setColorFilter(android.graphics.Color.WHITE)
-                        icon.scaleType = android.widget.ImageView.ScaleType.CENTER
-                        icon.setPadding(0, 0, 0, 0)
+                        icon.scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+                        icon.setPadding(12, 12, 12, 12)
+                        itemView.setOnClickListener { onClick(item.query) }
+                        itemView.setOnLongClickListener { true }
+                    }
+                }
+                is SuggestionItem.Autocomplete -> {
+                    (h as RowViewHolder).apply {
+                        text.text = item.query
+                        icon.setImageResource(R.drawable.ic_arrow_outward)
+                        icon.setColorFilter(ContextCompat.getColor(itemView.context, R.color.text_secondary))
+                        icon.scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+                        icon.setPadding(12, 12, 12, 12)
                         itemView.setOnClickListener { onClick(item.query) }
                         itemView.setOnLongClickListener { true }
                     }
@@ -2163,9 +2279,21 @@ class SearchFragment : Fragment() {
         private val data = mutableListOf<RecentSearch>()
 
         fun updateItems(newList: List<RecentSearch>) {
+            val diffCallback = object : DiffUtil.Callback() {
+                override fun getOldListSize() = data.size
+                override fun getNewListSize() = newList.size
+                override fun areItemsTheSame(oldPos: Int, newPos: Int): Boolean {
+                    return data[oldPos].videoId == newList[newPos].videoId &&
+                           data[oldPos].query == newList[newPos].query
+                }
+                override fun areContentsTheSame(oldPos: Int, newPos: Int): Boolean {
+                    return data[oldPos] == newList[newPos]
+                }
+            }
+            val diffResult = DiffUtil.calculateDiff(diffCallback)
             data.clear()
             data.addAll(newList)
-            notifyDataSetChanged()
+            diffResult.dispatchUpdatesTo(this)
         }
 
         override fun onCreateViewHolder(p: ViewGroup, t: Int): ViewHolder {

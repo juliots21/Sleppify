@@ -33,6 +33,7 @@ import android.widget.FrameLayout;
 import android.widget.ProgressBar;
 import android.widget.SeekBar;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -100,6 +101,7 @@ public class PlaylistDetailFragment extends Fragment
     private static final String PREF_PLAYLIST_OFFLINE_COMPLETE_PREFIX = "playlist_offline_complete_";
     private static final String PREF_CACHED_GOOGLE_PROFILE_PHOTO_URL = "cached_google_profile_photo_url";
     private static final String PREF_PLAYLIST_OFFLINE_AUTO_PREFIX = "playlist_offline_auto_";
+    private static final String PREF_PLAYLIST_GRID_URLS_PREFIX = "playlist_grid_urls_";
     private static final String PREFS_PLAYER_STATE = "player_state";
     private static final String PREF_LAST_PLAYLIST_ID = "stream_last_playlist_id";
     private static final String PREF_LAST_PLAYLIST_TITLE = "stream_last_playlist_title";
@@ -479,6 +481,13 @@ public class PlaylistDetailFragment extends Fragment
     private void onBecameVisible(boolean deferHeavyWork) {
         persistStreamingScreen(STREAM_SCREEN_PLAYLIST_DETAIL);
         syncTrackStateFromPlayer();
+
+        // Always fade-in the content when the fragment becomes visible
+        if (!awaitingInitialPlaylistRender && rvPlaylistContent != null) {
+            rvPlaylistContent.animate().cancel();
+            rvPlaylistContent.setAlpha(0f);
+            rvPlaylistContent.animate().alpha(1f).setDuration(PLAYLIST_INITIAL_CONTENT_FADE_MS).start();
+        }
 
         if (deferHeavyWork) {
             View v = getView();
@@ -2536,15 +2545,31 @@ public class PlaylistDetailFragment extends Fragment
             onOfflineTogglePressed();
         }
 
-        List<String> gridUrls = new ArrayList<>(4);
-        Set<String> seenUrls = new HashSet<>();
-        for (PlaylistTrack track : currentTracks) {
-            if (track == null || TextUtils.isEmpty(track.imageUrl)) {
-                continue;
+        boolean isYouTubePlaylist = !isFavoritesPlaylistContext(playlistId)
+                && !isCustomPlaylistContext(playlistId)
+                && !isLikedPlaylistContext(playlistId);
+
+        // For YouTube playlists, use persisted grid URLs so the 2x2 never changes
+        List<String> gridUrls = null;
+        if (isYouTubePlaylist && isAdded()) {
+            gridUrls = loadPersistedGridUrls(playlistId);
+        }
+
+        if (gridUrls == null || gridUrls.size() < 4) {
+            gridUrls = new ArrayList<>(4);
+            Set<String> seenUrls = new HashSet<>();
+            for (PlaylistTrack track : currentTracks) {
+                if (track == null || TextUtils.isEmpty(track.imageUrl)) {
+                    continue;
+                }
+                String url = track.imageUrl.trim();
+                if (!url.isEmpty() && seenUrls.add(url) && gridUrls.size() < 4) {
+                    gridUrls.add(url);
+                }
             }
-            String url = track.imageUrl.trim();
-            if (!url.isEmpty() && seenUrls.add(url) && gridUrls.size() < 4) {
-                gridUrls.add(url);
+            // Persist for YouTube playlists so grid survives track reordering/removal
+            if (isYouTubePlaylist && gridUrls.size() >= 4 && isAdded()) {
+                persistGridUrls(playlistId, gridUrls);
             }
         }
         headerGridUrls = gridUrls;
@@ -2995,6 +3020,36 @@ public class PlaylistDetailFragment extends Fragment
         return requireContext().getSharedPreferences(PREFS_STREAMING_CACHE, Activity.MODE_PRIVATE);
     }
 
+    private void persistGridUrls(@NonNull String playlistId, @NonNull List<String> urls) {
+        try {
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < urls.size(); i++) {
+                if (i > 0) sb.append("\n");
+                sb.append(urls.get(i));
+            }
+            getCachePrefs().edit()
+                    .putString(PREF_PLAYLIST_GRID_URLS_PREFIX + playlistId, sb.toString())
+                    .apply();
+        } catch (Exception ignored) {}
+    }
+
+    @Nullable
+    private List<String> loadPersistedGridUrls(@NonNull String playlistId) {
+        try {
+            String raw = getCachePrefs().getString(PREF_PLAYLIST_GRID_URLS_PREFIX + playlistId, "");
+            if (TextUtils.isEmpty(raw)) return null;
+            String[] parts = raw.split("\\n");
+            List<String> result = new ArrayList<>(parts.length);
+            for (String part : parts) {
+                String trimmed = part.trim();
+                if (!trimmed.isEmpty()) result.add(trimmed);
+            }
+            return result.size() >= 4 ? result : null;
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
     @Nullable
     private SongPlayerFragment findSongPlayerFragment() {
         long now = System.currentTimeMillis();
@@ -3282,7 +3337,8 @@ public class PlaylistDetailFragment extends Fragment
             if (lastAddedKey[0] != null && lastAddedName[0] != null) {
                 showSavedInPlaylistBar(track, lastAddedKey[0], lastAddedName[0]);
             } else if (didRemove[0]) {
-                showRemovedFromPlaylistBar(track);
+                String playlistName = resolveCurrentPlaylistName();
+                showRemovedFromPlaylistBar(track, playlistName);
             }
         });
 
@@ -3450,15 +3506,19 @@ public class PlaylistDetailFragment extends Fragment
     }
 
     private void showSavedInPlaylistBar(@NonNull PlaylistTrack track, @NonNull String playlistKey, @NonNull String playlistName) {
-        if (!isAdded() || getView() == null) return;
-
-        ViewGroup rootView = (ViewGroup) getView();
+        if (!isAdded()) return;
+        MainActivity activity = (MainActivity) requireActivity();
+        ViewGroup rootView = activity.findViewById(android.R.id.content);
+        if (rootView == null) return;
 
         // Remove any existing saved bar
         View existing = rootView.findViewWithTag("saved_bar");
         if (existing != null) rootView.removeView(existing);
 
         float density = getResources().getDisplayMetrics().density;
+        int miniPlayerHeight = (int) (72 * density); // Height of llGlobalMiniPlayer
+        int bottomNavHeight = (int) (48 * density);  // Height of bottomNavigation
+        int marginAboveMiniPlayer = (int) (8 * density);
 
         // Build the bar programmatically
         LinearLayout bar = new LinearLayout(requireContext());
@@ -3470,7 +3530,7 @@ public class PlaylistDetailFragment extends Fragment
         int hPad = (int) (16 * density);
         int vPad = (int) (20 * density);
         bar.setPadding(hPad, vPad, hPad, vPad);
-        bar.setElevation(8 * density);
+        bar.setElevation(40 * density); // Higher than miniplayer (33dp)
 
         TextView tvSaved = new TextView(requireContext());
         tvSaved.setText("Se guardó en " + playlistName);
@@ -3493,22 +3553,12 @@ public class PlaylistDetailFragment extends Fragment
         });
         bar.addView(btnChange);
 
-        int barBottomMargin = (int) (12 * density);
-        if (rootView instanceof ConstraintLayout) {
-            ConstraintLayout.LayoutParams clp = new ConstraintLayout.LayoutParams(
-                    ConstraintLayout.LayoutParams.MATCH_PARENT, ConstraintLayout.LayoutParams.WRAP_CONTENT);
-            clp.bottomToBottom = ConstraintLayout.LayoutParams.PARENT_ID;
-            clp.bottomMargin = barBottomMargin;
-            clp.startToStart = ConstraintLayout.LayoutParams.PARENT_ID;
-            clp.endToEnd = ConstraintLayout.LayoutParams.PARENT_ID;
-            rootView.addView(bar, clp);
-        } else {
-            FrameLayout.LayoutParams flp = new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            flp.gravity = android.view.Gravity.BOTTOM;
-            flp.bottomMargin = barBottomMargin;
-            rootView.addView(bar, flp);
-        }
+        int barBottomMargin = miniPlayerHeight + bottomNavHeight + marginAboveMiniPlayer;
+        FrameLayout.LayoutParams flp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        flp.gravity = android.view.Gravity.BOTTOM;
+        flp.bottomMargin = barBottomMargin;
+        rootView.addView(bar, flp);
 
         // Auto-dismiss after 4 seconds
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
@@ -3518,14 +3568,19 @@ public class PlaylistDetailFragment extends Fragment
         }, 4000L);
     }
 
-    private void showRemovedFromPlaylistBar(@NonNull PlaylistTrack track) {
-        if (!isAdded() || getView() == null) return;
+    private void showRemovedFromPlaylistBar(@NonNull PlaylistTrack track, @NonNull String playlistName) {
+        if (!isAdded()) return;
+        MainActivity activity = (MainActivity) requireActivity();
+        ViewGroup rootView = activity.findViewById(android.R.id.content);
+        if (rootView == null) return;
 
-        ViewGroup rootView = (ViewGroup) getView();
         View existing = rootView.findViewWithTag("saved_bar");
         if (existing != null) rootView.removeView(existing);
 
         float density = getResources().getDisplayMetrics().density;
+        int miniPlayerHeight = (int) (72 * density); // Height of llGlobalMiniPlayer
+        int bottomNavHeight = (int) (48 * density);  // Height of bottomNavigation
+        int marginAboveMiniPlayer = (int) (8 * density);
 
         LinearLayout bar = new LinearLayout(requireContext());
         bar.setTag("saved_bar");
@@ -3536,10 +3591,11 @@ public class PlaylistDetailFragment extends Fragment
         int hPad = (int) (16 * density);
         int vPad = (int) (20 * density);
         bar.setPadding(hPad, vPad, hPad, vPad);
-        bar.setElevation(8 * density);
+        bar.setElevation(40 * density); // Higher than miniplayer (33dp)
 
+        String title = TextUtils.isEmpty(track.title) ? "Tema" : track.title;
         TextView tvMsg = new TextView(requireContext());
-        tvMsg.setText("Se eliminó correctamente");
+        tvMsg.setText(title + " eliminado de " + playlistName);
         tvMsg.setTextColor(Color.WHITE);
         tvMsg.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
         tvMsg.setTypeface(null, android.graphics.Typeface.BOLD);
@@ -3547,34 +3603,25 @@ public class PlaylistDetailFragment extends Fragment
         tvMsg.setLayoutParams(tvParams);
         bar.addView(tvMsg);
 
-        TextView btnChange = new TextView(requireContext());
-        btnChange.setText("Cambiar");
-        btnChange.setTextColor(Color.parseColor("#8AB4F8"));
-        btnChange.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
-        btnChange.setTypeface(null, android.graphics.Typeface.BOLD);
-        btnChange.setPadding((int) (12 * density), 0, 0, 0);
-        btnChange.setOnClickListener(v -> {
+        TextView btnUndo = new TextView(requireContext());
+        btnUndo.setText("Deshacer");
+        btnUndo.setTextColor(Color.parseColor("#8AB4F8"));
+        btnUndo.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
+        btnUndo.setTypeface(null, android.graphics.Typeface.BOLD);
+        btnUndo.setPadding((int) (12 * density), 0, 0, 0);
+        btnUndo.setOnClickListener(v -> {
             rootView.removeView(bar);
-            showSaveToPlaylistSheet(track, null);
+            undoRemoveTrackFromPlaylist(track);
+            Toast.makeText(requireContext(), "Restaurado en " + playlistName, Toast.LENGTH_SHORT).show();
         });
-        bar.addView(btnChange);
+        bar.addView(btnUndo);
 
-        int barBottomMargin = (int) (12 * density);
-        if (rootView instanceof ConstraintLayout) {
-            ConstraintLayout.LayoutParams clp = new ConstraintLayout.LayoutParams(
-                    ConstraintLayout.LayoutParams.MATCH_PARENT, ConstraintLayout.LayoutParams.WRAP_CONTENT);
-            clp.bottomToBottom = ConstraintLayout.LayoutParams.PARENT_ID;
-            clp.bottomMargin = barBottomMargin;
-            clp.startToStart = ConstraintLayout.LayoutParams.PARENT_ID;
-            clp.endToEnd = ConstraintLayout.LayoutParams.PARENT_ID;
-            rootView.addView(bar, clp);
-        } else {
-            FrameLayout.LayoutParams flp = new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            flp.gravity = android.view.Gravity.BOTTOM;
-            flp.bottomMargin = barBottomMargin;
-            rootView.addView(bar, flp);
-        }
+        int barBottomMargin = miniPlayerHeight + bottomNavHeight + marginAboveMiniPlayer;
+        FrameLayout.LayoutParams flp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        flp.gravity = android.view.Gravity.BOTTOM;
+        flp.bottomMargin = barBottomMargin;
+        rootView.addView(bar, flp);
 
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
             if (bar.getParent() != null) {
@@ -3690,7 +3737,33 @@ public class PlaylistDetailFragment extends Fragment
         currentTracks.remove(position);
         trackAdapter.submitTracks(currentTracks);
         rebuildPlaybackQueue();
-        showRemovedFromPlaylistBar(selected);
+        String playlistName = resolveCurrentPlaylistName();
+        showRemovedFromPlaylistBar(selected, playlistName);
+    }
+
+    private String resolveCurrentPlaylistName() {
+        if (FavoritesPlaylistStore.PLAYLIST_ID.equals(currentPlaylistId)) {
+            return FavoritesPlaylistStore.PLAYLIST_TITLE;
+        } else if (currentPlaylistId != null && currentPlaylistId.startsWith(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX)) {
+            return currentPlaylistId.substring(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX.length());
+        }
+        return "playlist";
+    }
+
+    private void undoRemoveTrackFromPlaylist(PlaylistTrack track) {
+        if (!isAdded()) return;
+        if (FavoritesPlaylistStore.PLAYLIST_ID.equals(currentPlaylistId)) {
+            FavoritesPlaylistStore.upsertFavorite(requireContext(), track.videoId, 
+                track.title, track.artist, track.duration, track.imageUrl);
+        } else if (currentPlaylistId != null && currentPlaylistId.startsWith(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX)) {
+            String name = currentPlaylistId.substring(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX.length());
+            CustomPlaylistsStore.INSTANCE.addTrackToPlaylist(requireContext(), name, 
+                track.videoId, track.title, track.artist, track.duration, track.imageUrl);
+        }
+        // Refresh the track list
+        currentTracks.add(track);
+        trackAdapter.submitTracks(currentTracks);
+        rebuildPlaybackQueue();
     }
 
     private int resolveCurrentQueueIndex() {
@@ -5220,11 +5293,27 @@ public class PlaylistDetailFragment extends Fragment
                 }
             }
 
+            // When the batch is still running but individual tracks were removed from
+            // downloadingTrackIds, they just finished downloading. Eagerly mark them as
+            // offline-available so bindTrackState shows the filled check immediately
+            // instead of waiting for a scroll-triggered async disk lookup.
+            if (wasRunning && running) {
+                for (String previousTrackId : previousIds) {
+                    if (!TextUtils.isEmpty(previousTrackId) && !normalizedIds.contains(previousTrackId)) {
+                        offlineAvailabilityCache.put(previousTrackId.trim(), true);
+                        lastOfflineStateLookupTimeByTrack.remove(previousTrackId.trim());
+                    }
+                }
+            }
+
             for (String previousTrackId : previousIds) {
                 if (wasRunning && !running) {
                     // Cache already set to true above — only clear the debounce timestamp
                     // so the next scroll-triggered lookup can re-verify, but don't evict
                     // the cache entry itself (that would cause the flicker we just fixed).
+                    lastOfflineStateLookupTimeByTrack.remove(previousTrackId.trim());
+                } else if (wasRunning && running && !normalizedIds.contains(previousTrackId)) {
+                    // Track just completed mid-batch — cache already set above, just clear debounce
                     lastOfflineStateLookupTimeByTrack.remove(previousTrackId.trim());
                 } else {
                     invalidateTrackStateCache(previousTrackId);

@@ -1,5 +1,4 @@
-pandas
-Flask
-yt-dlp
-openpyxl
+Flask>=3.0
+yt-dlp>=2026.03.17
 gunicorn
+requests>=2.31.0

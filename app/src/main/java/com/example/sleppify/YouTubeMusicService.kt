@@ -1099,7 +1099,10 @@ class YouTubeMusicService @JvmOverloads constructor(
 
     private fun extractYouTubeThumbnail(thumbnails: JSONObject?): String {
         if (thumbnails == null) return ""
-        val qualityOrder = arrayOf("maxres", "standard", "high", "medium", "default")
+        // Prefer medium (320×180) — sharp enough for list thumbnails (50dp ≈ 150px)
+        // and search results, while being ~10x smaller than maxres (1280×720).
+        // Glide .override() handles final sizing; the player cover has its own URL chain.
+        val qualityOrder = arrayOf("medium", "high", "default", "standard", "maxres")
         for (quality in qualityOrder) {
             val url = readThumbnailUrl(thumbnails, quality)
             if (url.isNotEmpty()) return url

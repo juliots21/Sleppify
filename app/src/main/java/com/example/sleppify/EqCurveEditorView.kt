@@ -410,30 +410,26 @@ class EqCurveEditorView : View {
     private fun findClosestBandByX(x: Float): Int {
         var closest = -1
         var minDistance = Float.MAX_VALUE
-        val minTouchTarget = dp(MIN_TOUCH_TARGET_DP)
 
         for (i in 0 until BAND_COUNT) {
             val distance = abs(x - bandX[i])
-            // For first and last bands, extend touch target beyond content bounds
-            val effectiveDistance = when (i) {
-                0 -> if (x < bandX[0]) minOf(distance, abs(x - (bandX[0] - minTouchTarget/2))) else distance
-                BAND_COUNT - 1 -> if (x > bandX[BAND_COUNT - 1]) minOf(distance, abs(x - (bandX[BAND_COUNT - 1] + minTouchTarget/2))) else distance
-                else -> distance
-            }
-            if (effectiveDistance < minDistance) {
-                minDistance = effectiveDistance
+            if (distance < minDistance) {
+                minDistance = distance
                 closest = i
             }
         }
 
-        // Accept the touch if within reasonable distance (including extended touch targets for edge bands)
-        val maxAcceptableDistance = if (closest == 0 || closest == BAND_COUNT - 1) {
-            minTouchTarget
-        } else {
-            (bandX[1] - bandX[0]) / 2f
+        if (closest < 0) return -1
+
+        // Edge bands (first and last): accept any touch within the view width
+        if (closest == 0 || closest == BAND_COUNT - 1) {
+            if (x >= 0f && x <= width.toFloat()) return closest
         }
 
-        return if (minDistance <= maxAcceptableDistance) closest else -1
+        // Inner bands: use a generous acceptance radius (half the spacing between bands)
+        val bandSpacing = if (BAND_COUNT > 1) (contentRight - contentLeft) / (BAND_COUNT - 1).toFloat() else dp(MIN_TOUCH_TARGET_DP)
+        val acceptRadius = max(dp(MIN_TOUCH_TARGET_DP) / 2f, bandSpacing / 2f)
+        return if (minDistance <= acceptRadius) closest else -1
     }
 
     private fun updateActiveBandFromTouch(touchY: Float, notify: Boolean) {

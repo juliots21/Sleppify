@@ -206,7 +206,13 @@ public final class GlobalMiniPlayerController implements PlaybackEventBus.Listen
         SongPlayerFragment songPlayer = activity.findSongPlayerFragment();
         if (songPlayer != null && songPlayer.isAdded()) {
             songPlayer.externalTogglePlayback();
-            updateUi();
+            // Use intent flag for immediate icon feedback — ExoPlayer may not
+            // have started yet for online streams, so externalIsPlaying() would
+            // return false even though the user just pressed play.
+            miniPlaying = songPlayer.externalIsPlayingIntent();
+            btnPlayPause.setImageResource(miniPlaying
+                    ? R.drawable.ic_mini_pause
+                    : R.drawable.ic_mini_play);
             return;
         }
         // No player attached — try to restore from snapshot

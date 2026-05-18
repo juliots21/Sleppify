@@ -85,7 +85,7 @@
             <TextView
                 android:id="@+id/tvTrackSubtitle"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                android:layout_height="wrap_content" 
                 android:layout_marginTop="4dp"
                 android:ellipsize="end"
                 android:fontFamily="@font/inter_variable"
@@ -96,11 +96,24 @@
                 android:textSize="14sp" />
         </LinearLayout>
 
-        <ImageView
-            android:id="@+id/ivPlaylistOfflineAll"
+        <FrameLayout
+            android:id="@+id/flPlaylistOfflineContainer"
             android:layout_width="1dp"
             android:layout_height="1dp"
-            android:visibility="gone" />
+            android:visibility="gone">
+
+            <com.example.sleppify.CircularProgressView
+                android:id="@+id/circularProgress"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:visibility="gone" />
+
+            <ImageView
+                android:id="@+id/ivPlaylistOfflineAll"
+                android:layout_width="1dp"
+                android:layout_height="1dp"
+                android:visibility="gone" />
+        </FrameLayout>
 
         <ImageView
             android:id="@+id/ivOfflineIndicator"

@@ -18,6 +18,7 @@ import java.io.InterruptedIOException
 import java.net.ConnectException
 import java.net.SocketException
 import java.net.SocketTimeoutException
+import java.net.URL
 import java.net.UnknownHostException
 import java.util.Collections
 import java.util.Locale
@@ -371,19 +372,95 @@ class OfflinePlaylistDownloadWorker(
     ): Boolean {
         val startMs = System.currentTimeMillis()
         progressReporter?.onProgress(0.05f)
-        return try {
-            val target = OfflineAudioStore.getOfflineAudioFileForFormat(context, videoId, false)
-            val ok = SleppifyDownloaderResolver.downloadViaProxy(videoId, target) { bytesReceived ->
-                val fraction = (bytesReceived.toFloat() / 4_000_000L).coerceIn(0.05f, 0.95f)
+
+        // Primary: SleppifyDownloaderResolver (server proxy)
+        val target = OfflineAudioStore.getOfflineAudioFileForFormat(context, videoId, false)
+        var ok = try {
+            val proxyOk = SleppifyDownloaderResolver.downloadViaProxy(videoId, target) { bytesReceived ->
+                val fraction = (bytesReceived.toFloat() / 4_000_000L).coerceIn(0.05f, 0.90f)
                 progressReporter?.onProgress(fraction)
             }
-            if (ok) progressReporter?.onProgress(0.99f)
-            Log.d(TAG, "SleppifyDL:proxy_${if (ok) "ok" else "fail"} id=$videoId elapsed=${System.currentTimeMillis() - startMs}ms")
-            ok
+            Log.d(TAG, "SleppifyDL:proxy_${if (proxyOk) "ok" else "fail"} id=$videoId elapsed=${System.currentTimeMillis() - startMs}ms")
+            proxyOk
         } catch (e: Exception) {
             if (isLikelyNetworkException(e)) networkIssueTracker.markIssue()
             Log.w(TAG, "SleppifyDL:proxy_exception id=$videoId msg=${e.message}")
             false
+        }
+
+        // Fallback: download directly via InnerTube stream URL
+        if (!ok && !networkIssueTracker.hasIssue()) {
+            ok = try {
+                downloadTrackFromInnertube(context, videoId, target, progressReporter)
+            } catch (e: Exception) {
+                if (isLikelyNetworkException(e)) networkIssueTracker.markIssue()
+                Log.w(TAG, "Innertube:fallback_exception id=$videoId msg=${e.message}")
+                false
+            }
+        }
+
+        if (ok) progressReporter?.onProgress(0.99f)
+        return ok
+    }
+
+    private fun downloadTrackFromInnertube(
+        context: Context,
+        videoId: String,
+        target: File,
+        progressReporter: ProgressReporter?
+    ): Boolean {
+        val startMs = System.currentTimeMillis()
+        val streamUrl = InnertubeResolver.resolveStreamUrl(context, videoId) ?: run {
+            Log.w(TAG, "Innertube:no_url id=$videoId")
+            return false
+        }
+
+        val url = URL(streamUrl)
+        val conn = url.openConnection() as java.net.HttpURLConnection
+        conn.connectTimeout = 15000
+        conn.readTimeout = 90000
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36")
+        val headers = InnertubeResolver.getHeadersFor(videoId)
+        for ((key, value) in headers) {
+            conn.setRequestProperty(key, value)
+        }
+
+        return try {
+            val code = conn.responseCode
+            if (code != 200) {
+                Log.w(TAG, "Innertube:http_fail id=$videoId code=$code elapsed=${System.currentTimeMillis() - startMs}ms")
+                return false
+            }
+
+            target.parentFile?.let { if (!it.exists()) it.mkdirs() }
+            var totalBytes = 0L
+            conn.inputStream.use { input ->
+                target.outputStream().use { output ->
+                    val buf = ByteArray(16384)
+                    var n: Int
+                    while (input.read(buf).also { n = it } != -1) {
+                        output.write(buf, 0, n)
+                        totalBytes += n
+                        val fraction = (totalBytes.toFloat() / 4_000_000L).coerceIn(0.10f, 0.95f)
+                        progressReporter?.onProgress(fraction)
+                    }
+                }
+            }
+
+            val elapsed = System.currentTimeMillis() - startMs
+            if (totalBytes < 50_000L) {
+                Log.w(TAG, "Innertube:too_small id=$videoId bytes=$totalBytes elapsed=${elapsed}ms")
+                target.delete()
+                return false
+            }
+
+            Log.d(TAG, "Innertube:ok id=$videoId bytes=$totalBytes elapsed=${elapsed}ms")
+            true
+        } catch (e: Exception) {
+            target.delete()
+            throw e
+        } finally {
+            conn.disconnect()
         }
     }
 

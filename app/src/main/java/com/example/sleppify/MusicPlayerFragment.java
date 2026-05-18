@@ -1822,7 +1822,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 String displayTitle = TextUtils.isEmpty(cachedTrack.title) ? "Cancion" : cachedTrack.title;
                 String subtitle = TextUtils.isEmpty(cachedTrack.artist)
                         ? "Playlist: " + playlistTitle
-                        : cachedTrack.artist + " â€¢ " + playlistTitle;
+                        : cachedTrack.artist + " \u2022 " + playlistTitle;
                 result.add(new YouTubeMusicService.TrackResult(
                         "video",
                         cachedTrack.videoId,
@@ -3367,7 +3367,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         // Hide global mini-player when opening full player
         if (getActivity() instanceof MainActivity) {
             GlobalMiniPlayerController ctrl = ((MainActivity) getActivity()).getGlobalMiniPlayerController();
-            if (ctrl != null) ctrl.animateOut();
+            if (ctrl != null) ctrl.hide();
         }
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
         if (existingPlayer != null) {
@@ -3545,7 +3545,11 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         }
         persistPlaylistOfflineAutoEnabled(playlistId, true);
         if (adapter != null) {
-            adapter.invalidatePlaylistOfflineState(playlistId);
+            Map<String, Float> immediateProgress = new HashMap<>(adapter.playlistDownloadProgressCache);
+            immediateProgress.put(playlistId, 0f);
+            Set<String> immediateDownloading = new HashSet<>(adapter.playlistsCurrentlyDownloading);
+            immediateDownloading.add(playlistId);
+            adapter.updateDownloadProgress(immediateProgress, immediateDownloading);
         }
         enqueuePlaylistOfflineDownloadInternal(playlistId, playlistTitle, true);
     }
@@ -3697,6 +3701,42 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             return;
         }
 
+        // Extract per-playlist download progress for circular indicator
+        Map<String, Float> progressByPlaylist = new HashMap<>();
+        Set<String> downloading = new HashSet<>();
+        int totalInfos = workInfos == null ? 0 : workInfos.size();
+        if (workInfos != null) {
+            for (WorkInfo info : workInfos) {
+                if (info == null) continue;
+                WorkInfo.State state = info.getState();
+                String playlistId = extractPlaylistIdFromTags(info);
+                Log.d(TAG_STREAMING, "offline_progress: workInfo state=" + state + " playlistId=" + playlistId + " tags=" + info.getTags());
+                if (state != WorkInfo.State.RUNNING && state != WorkInfo.State.ENQUEUED) continue;
+
+                if (TextUtils.isEmpty(playlistId)) continue;
+
+                downloading.add(playlistId);
+
+                if (state == WorkInfo.State.RUNNING) {
+                    Data progress = info.getProgress();
+                    int done = progress.getInt(OfflinePlaylistDownloadWorker.PROGRESS_DONE, 0);
+                    int total = progress.getInt(OfflinePlaylistDownloadWorker.PROGRESS_TOTAL, 0);
+                    if (total > 0) {
+                        float fraction = Math.max(0f, Math.min(1f,
+                                done / (float) total));
+                        Log.d(TAG_STREAMING, "offline_progress: pid=" + playlistId + " done=" + done + "/" + total + " fraction=" + fraction);
+                        progressByPlaylist.put(playlistId, fraction);
+                    } else {
+                        Log.d(TAG_STREAMING, "offline_progress: pid=" + playlistId + " total=0 (worker not yet reporting), skipping");
+                    }
+                }
+            }
+        }
+        Log.d(TAG_STREAMING, "offline_progress: totalInfos=" + totalInfos + " downloading=" + downloading + " progress=" + progressByPlaylist);
+        if (adapter != null) {
+            adapter.updateDownloadProgress(progressByPlaylist, downloading);
+        }
+
         if (hasActiveWork) {
             offlineQueueHadActiveWork = true;
             if (!hasEnqueuedWork) {
@@ -3713,10 +3753,52 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         }
         maybeEnqueueNextOfflineAutoPlaylist();
     }
+
+    @Nullable
+    private String extractPlaylistIdFromTags(@NonNull WorkInfo info) {
+        for (String tag : info.getTags()) {
+            if (tag.equals(OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME)
+                    || tag.equals(OFFLINE_DOWNLOAD_MANUAL_TRACK_QUEUE_UNIQUE_NAME)) {
+                continue;
+            }
+            if (tag.startsWith(OFFLINE_DOWNLOAD_UNIQUE_PREFIX)) {
+                String id = tag.substring(OFFLINE_DOWNLOAD_UNIQUE_PREFIX.length()).trim();
+                if (!id.isEmpty()) return id;
+            }
+        }
+        return null;
+    }
     private void onOfflineManualQueueWorkInfosChanged(@Nullable List<WorkInfo> workInfos) {
         if (!isAdded()) {
             return;
         }
+        // Extract progress from manual queue too
+        Map<String, Float> progressByPlaylist = new HashMap<>();
+        Set<String> downloading = new HashSet<>();
+        if (workInfos != null) {
+            for (WorkInfo info : workInfos) {
+                if (info == null) continue;
+                WorkInfo.State state = info.getState();
+                if (state != WorkInfo.State.RUNNING && state != WorkInfo.State.ENQUEUED) continue;
+                String playlistId = extractPlaylistIdFromTags(info);
+                if (TextUtils.isEmpty(playlistId)) continue;
+                downloading.add(playlistId);
+                if (state == WorkInfo.State.RUNNING) {
+                    Data progress = info.getProgress();
+                    int done = progress.getInt(OfflinePlaylistDownloadWorker.PROGRESS_DONE, 0);
+                    int total = progress.getInt(OfflinePlaylistDownloadWorker.PROGRESS_TOTAL, 0);
+                    if (total > 0) {
+                        float fraction = Math.max(0f, Math.min(1f,
+                                done / (float) total));
+                        progressByPlaylist.put(playlistId, fraction);
+                    }
+                }
+            }
+        }
+        if (adapter != null && !downloading.isEmpty()) {
+            adapter.updateDownloadProgress(progressByPlaylist, downloading);
+        }
+
         boolean hasActiveWork = hasActiveOfflineWork(workInfos);
         if (hasActiveWork) {
             offlineManualQueueHadActiveWork = true;
@@ -4471,7 +4553,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         // Hide global mini-player when opening full player
         if (!startInMiniMode && getActivity() instanceof MainActivity) {
             GlobalMiniPlayerController ctrl = ((MainActivity) getActivity()).getGlobalMiniPlayerController();
-            if (ctrl != null) ctrl.animateOut();
+            if (ctrl != null) ctrl.hide();
         }
         SongPlayerFragment existingPlayer = findSongPlayerFragment();
         if (existingPlayer != null && existingPlayer.isAdded()) {
@@ -4761,12 +4843,15 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         private static final int VIEW_TYPE_CREATE_PLAYLIST = 3;
         private static final String PAYLOAD_PLAYBACK_STATE = "playback_state";
         private static final String PAYLOAD_OFFLINE_STATE = "offline_state";
+        private static final String PAYLOAD_DOWNLOAD_PROGRESS = "download_progress";
         private final List<YouTubeMusicService.TrackResult> data = new ArrayList<>();
         private final OnLibraryTrackClick onTrackClick;
         private final OnLibraryTrackMoreClick onTrackMoreClick;
         private final Map<String, Boolean> playlistOfflineCompleteCache = new HashMap<>();
-        private final Map<String, Integer> playlistPositionCache = new HashMap<>();  // âœ… Cache for O(1) lookups
+        private final Map<String, Integer> playlistPositionCache = new HashMap<>();  // Cache for O(1) lookups
         private final Set<String> playlistOfflineRefreshInFlight = new HashSet<>();
+        private final Map<String, Float> playlistDownloadProgressCache = new HashMap<>();
+        private final Set<String> playlistsCurrentlyDownloading = new HashSet<>();
         private long playlistOfflineStateGeneration;
         private boolean forceNextOfflineRecalculation = false;
         private boolean searchMode;
@@ -4873,6 +4958,39 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         void notifyPlaybackStateChanged() {
             if (data.isEmpty()) return;
             safeNotify(() -> notifyItemRangeChanged(0, data.size(), PAYLOAD_PLAYBACK_STATE));
+        }
+
+        void updateDownloadProgress(@NonNull Map<String, Float> progressByPlaylistId,
+                                    @NonNull Set<String> downloading) {
+            Set<String> changed = new HashSet<>(playlistsCurrentlyDownloading);
+            changed.addAll(downloading);
+
+            boolean anyChanged = false;
+            for (String pid : changed) {
+                float oldVal = playlistDownloadProgressCache.containsKey(pid)
+                        ? playlistDownloadProgressCache.get(pid) : -1f;
+                float newVal = progressByPlaylistId.containsKey(pid)
+                        ? progressByPlaylistId.get(pid) : -1f;
+                boolean wasDownloading = playlistsCurrentlyDownloading.contains(pid);
+                boolean nowDownloading = downloading.contains(pid);
+                if (wasDownloading != nowDownloading || Math.abs(oldVal - newVal) > 0.005f) {
+                    anyChanged = true;
+                    break;
+                }
+            }
+            if (!anyChanged) return;
+
+            playlistDownloadProgressCache.clear();
+            playlistDownloadProgressCache.putAll(progressByPlaylistId);
+            playlistsCurrentlyDownloading.clear();
+            playlistsCurrentlyDownloading.addAll(downloading);
+
+            for (String pid : changed) {
+                int pos = findPlaylistPositionById(pid);
+                if (pos >= 0) {
+                    safeNotify(() -> notifyItemChanged(pos, PAYLOAD_DOWNLOAD_PROGRESS));
+                }
+            }
         }
 
         void safeNotifyItemInserted(int position) {
@@ -5085,7 +5203,8 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 for (Object payload : payloads) {
                     if (PAYLOAD_PLAYBACK_STATE.equals(payload)) {
                         bindPlaybackState(holder, item);
-                    } else if (PAYLOAD_OFFLINE_STATE.equals(payload)) {
+                    } else if (PAYLOAD_OFFLINE_STATE.equals(payload)
+                            || PAYLOAD_DOWNLOAD_PROGRESS.equals(payload)) {
                         bindOfflineState(holder, item);
                     }
                 }
@@ -5159,7 +5278,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             boolean isPlaylistItem = "playlist".equals(item.resultType);
             boolean isPinned = isFavoritesPlaylistStyle || isLikedPlaylistStyle;
             holder.ivTrackMore.setVisibility(isPlaylistItem ? View.VISIBLE : View.GONE);
-            holder.ivPlaylistOfflineAll.setVisibility(isPlaylistItem ? View.VISIBLE : View.GONE);
+            if (!isPlaylistItem) holder.flPlaylistOfflineContainer.setVisibility(View.GONE);
             if (holder.ivPlaylistPin != null) {
                 holder.ivPlaylistPin.setVisibility(isPinned ? View.VISIBLE : View.GONE);
             }
@@ -5192,10 +5311,8 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             boolean offlineAutoEnabled = isPersistedPlaylistOfflineAutoEnabled(playlistId);
             Boolean cachedState = playlistOfflineCompleteCache.get(playlistId);
             if (cachedState == null) {
-                // State unknown - trigger async calculation
                 requestPlaylistOfflineStateRefreshAsync(playlistId, playlistOfflineStateGeneration);
             }
-            // If cachedState is null, use persisted state as fallback to maintain visual state during refresh
             boolean completeOffline;
             if (cachedState != null) {
                 completeOffline = cachedState;
@@ -5203,23 +5320,46 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 completeOffline = isPersistedPlaylistOfflineComplete(playlistId);
             }
 
-            if (offlineAutoEnabled) {
+            boolean isDownloading = playlistsCurrentlyDownloading.contains(playlistId);
+            float downloadFraction = 0f;
+            if (isDownloading && playlistDownloadProgressCache.containsKey(playlistId)) {
+                downloadFraction = playlistDownloadProgressCache.get(playlistId);
+            }
+            Log.d(TAG_STREAMING, "bindOfflineState: pid=" + playlistId + " autoEnabled=" + offlineAutoEnabled + " complete=" + completeOffline + " downloading=" + isDownloading + " fraction=" + downloadFraction);
+
+            Context ctx = holder.itemView.getContext();
+
+            if (completeOffline && offlineAutoEnabled) {
+                // State: fully downloaded — filled circle + check
+                holder.flPlaylistOfflineContainer.setVisibility(View.VISIBLE);
+                holder.circularProgress.setVisibility(View.GONE);
+                holder.circularProgress.setProgressImmediate(0f);
                 holder.ivPlaylistOfflineAll.setImageResource(R.drawable.ic_check_small);
-                holder.ivPlaylistOfflineAll.setBackgroundResource(completeOffline
-                        ? R.drawable.bg_offline_state_filled_primary
-                        : R.drawable.bg_playlist_action_white);
-                holder.ivPlaylistOfflineAll.setColorFilter(completeOffline
-                        ? ContextCompat.getColor(holder.itemView.getContext(), R.color.surface_dark)
-                        : Color.BLACK);
+                holder.ivPlaylistOfflineAll.setBackgroundResource(R.drawable.bg_offline_state_filled_primary);
+                holder.ivPlaylistOfflineAll.setColorFilter(ContextCompat.getColor(ctx, R.color.surface_dark));
+                holder.ivPlaylistOfflineAll.setAlpha(1f);
+            } else if (isDownloading) {
+                // State: downloading — circular arc + download icon (no background circle)
+                holder.flPlaylistOfflineContainer.setVisibility(View.VISIBLE);
+                holder.circularProgress.setVisibility(View.VISIBLE);
+                holder.circularProgress.setProgress(downloadFraction);
+                holder.ivPlaylistOfflineAll.setImageResource(R.drawable.ic_download_bold);
+                holder.ivPlaylistOfflineAll.setBackground(null);
+                holder.ivPlaylistOfflineAll.setColorFilter(ContextCompat.getColor(ctx, R.color.stitch_blue));
+                holder.ivPlaylistOfflineAll.setAlpha(1f);
+            } else if (offlineAutoEnabled) {
+                // State: queued (auto-offline enabled, waiting for worker)
+                // Show empty circular track + download icon (like downloading at 0%)
+                holder.flPlaylistOfflineContainer.setVisibility(View.VISIBLE);
+                holder.circularProgress.setVisibility(View.VISIBLE);
+                holder.circularProgress.setProgressImmediate(0f);
+                holder.ivPlaylistOfflineAll.setImageResource(R.drawable.ic_download_bold);
+                holder.ivPlaylistOfflineAll.setBackground(null);
+                holder.ivPlaylistOfflineAll.setColorFilter(ContextCompat.getColor(ctx, R.color.text_secondary));
                 holder.ivPlaylistOfflineAll.setAlpha(1f);
             } else {
-                holder.ivPlaylistOfflineAll.setImageResource(R.drawable.ic_download_bold);
-                holder.ivPlaylistOfflineAll.setBackgroundResource(R.drawable.bg_offline_state_outline_muted);
-                holder.ivPlaylistOfflineAll.setColorFilter(ContextCompat.getColor(
-                        holder.itemView.getContext(),
-                    R.color.text_secondary
-                ));
-                holder.ivPlaylistOfflineAll.setAlpha(0.85f);
+                // State: not downloaded — hide entirely
+                holder.flPlaylistOfflineContainer.setVisibility(View.GONE);
             }
         }
 
@@ -5273,7 +5413,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         ) {
             holder.vLikedBackground.setVisibility(View.GONE);
             holder.ivLikedIcon.setVisibility(View.GONE);
-            holder.ivPlaylistOfflineAll.setVisibility(View.GONE);
+            holder.flPlaylistOfflineContainer.setVisibility(View.GONE);
             holder.ivTrackThumb.setVisibility(View.VISIBLE);
             SongPlayerFragment songPlayer = findSongPlayerFragment();
             String currentVideoId = songPlayer != null ? songPlayer.getLoadedVideoId() : "";
@@ -5429,7 +5569,9 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             final View vLikedBackground;
             final ImageView ivLikedIcon;
             final ImageView ivPlaylistPin;
+            final View flPlaylistOfflineContainer;
             final ImageView ivPlaylistOfflineAll;
+            final CircularProgressView circularProgress;
             final TextView tvTrackTitle;
             final TextView tvTrackSubtitle;
             final ImageView ivTrackMore;
@@ -5441,7 +5583,9 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 vLikedBackground = itemView.findViewById(R.id.vLikedBackground);
                 ivLikedIcon = itemView.findViewById(R.id.ivLikedIcon);
                 ivPlaylistPin = itemView.findViewById(R.id.ivPlaylistPin);
+                flPlaylistOfflineContainer = itemView.findViewById(R.id.flPlaylistOfflineContainer);
                 ivPlaylistOfflineAll = itemView.findViewById(R.id.ivPlaylistOfflineAll);
+                circularProgress = itemView.findViewById(R.id.circularProgress);
                 tvTrackTitle = itemView.findViewById(R.id.tvTrackTitle);
                 tvTrackSubtitle = itemView.findViewById(R.id.tvTrackSubtitle);
                 ivTrackMore = itemView.findViewById(R.id.ivTrackMore);

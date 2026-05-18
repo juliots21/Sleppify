@@ -118,15 +118,28 @@
                 android:visibility="gone"
                 app:tint="@color/text_primary" />
 
-            <ImageView
-                android:id="@+id/ivPlaylistOfflineAll"
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:background="@drawable/bg_offline_state_outline_muted"
-                android:padding="4dp"
-                android:src="@drawable/ic_check_small"
-                android:visibility="gone"
-                app:tint="@color/text_secondary" />
+            <FrameLayout
+                android:id="@+id/flPlaylistOfflineContainer"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:visibility="gone">
+
+                <com.example.sleppify.CircularProgressView
+                    android:id="@+id/circularProgress"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:visibility="gone" />
+
+                <ImageView
+                    android:id="@+id/ivPlaylistOfflineAll"
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:layout_gravity="center"
+                    android:background="@drawable/bg_offline_state_outline_muted"
+                    android:padding="4dp"
+                    android:src="@drawable/ic_check_small"
+                    app:tint="@color/text_secondary" />
+            </FrameLayout>
 
             <ImageView
                 android:id="@+id/ivTrackMore"

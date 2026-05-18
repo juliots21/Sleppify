@@ -905,7 +905,7 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
         SongPlayerFragment songPlayer = findSongPlayerFragment();
         if (songPlayer != null && songPlayer.isAdded()) {
             songPlayer.externalTogglePlayback();
-            miniPlaying = songPlayer.externalIsPlaying();
+            miniPlaying = songPlayer.externalIsPlayingIntent();
             updateMiniPlayerUi();
             return;
         }

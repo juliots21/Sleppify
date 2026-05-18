@@ -608,7 +608,7 @@ public class SongPlayerFragment extends Fragment {
                 @Override
                 public void onStopTrackingTouch(SeekBar seekBar) {
                     userSeeking = false;
-                    if (usingOfflineSource && localExoMediaPlayer != null) {
+                    if (localExoMediaPlayer != null) {
                         try {
                             localExoMediaPlayer.seekTo(currentSeconds * 1000);
                         } catch (Exception ignored) {
@@ -871,7 +871,7 @@ public class SongPlayerFragment extends Fragment {
             @Override
             public void onPause() {
                 pauseRequestedByUser = true;
-                if (usingOfflineSource && localExoMediaPlayer != null) {
+                if (localExoMediaPlayer != null) {
                     try {
                         localExoMediaPlayer.pause();
                         stopLocalProgressTicker();
@@ -903,7 +903,7 @@ public class SongPlayerFragment extends Fragment {
             @Override
             public void onSeekTo(long pos) {
                 currentSeconds = Math.max(0, (int) (pos / 1000L));
-                if (usingOfflineSource && localExoMediaPlayer != null) {
+                if (localExoMediaPlayer != null) {
                     try {
                         localExoMediaPlayer.seekTo(currentSeconds * 1000);
                     } catch (Exception ignored) {
@@ -957,7 +957,7 @@ public class SongPlayerFragment extends Fragment {
                     // Restart current track
                     currentSeconds = 0;
                     isPlaying = true;
-                    if (usingOfflineSource && localExoMediaPlayer != null) {
+                    if (localExoMediaPlayer != null) {
                         try {
                             localExoMediaPlayer.seekTo(0);
                         } catch (Exception ignored) {
@@ -1190,6 +1190,13 @@ public class SongPlayerFragment extends Fragment {
         if (isPlaying) {
             pauseRequestedByUser = true;
             isPlaying = false;
+            if (localExoMediaPlayer != null) {
+                try {
+                    localExoMediaPlayer.pause();
+                } catch (Exception ignored) {
+                }
+            }
+            stopLocalProgressTicker();
             updatePlayPauseIcon();
             updateMediaSessionState();
                 syncMiniStateWithPlaylist();
@@ -1828,7 +1835,6 @@ public class SongPlayerFragment extends Fragment {
 
     private void resetPlaybackStateForNewTrack() {
         currentSeconds = 0;
-        totalSeconds = 1;
         if (tvCurrentTime != null) tvCurrentTime.setText("00:00");
         if (tvTotalTime != null) tvTotalTime.setText("--:--");
         if (sbPlaybackProgress != null) sbPlaybackProgress.setProgress(0);
@@ -3744,6 +3750,10 @@ public class SongPlayerFragment extends Fragment {
 
     public boolean externalIsPlaying() {
         return isEffectivePlaying();
+    }
+
+    public boolean externalIsPlayingIntent() {
+        return isPlaying;
     }
 
     public boolean externalIsShuffleEnabled() {
