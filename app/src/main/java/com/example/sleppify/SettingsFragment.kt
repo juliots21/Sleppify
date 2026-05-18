@@ -59,6 +59,7 @@ class SettingsFragment : Fragment() {
     private lateinit var swDownloadOnMobileData: MaterialSwitch
     private lateinit var swOfflineMode: MaterialSwitch
     private lateinit var swMonoAudio: MaterialSwitch
+    private lateinit var swGaplessPlayback: MaterialSwitch
     private lateinit var rowDownloadQuality: View
     private lateinit var tvDownloadQualityValue: TextView
     private lateinit var rowStreamingQuality: View
@@ -150,6 +151,7 @@ class SettingsFragment : Fragment() {
         swDownloadOnMobileData = v.findViewById(R.id.swDownloadOnMobileData)
         swOfflineMode = v.findViewById(R.id.swOfflineMode)
         swMonoAudio = v.findViewById(R.id.swMonoAudio)
+        swGaplessPlayback = v.findViewById(R.id.swGaplessPlayback)
         rowDownloadQuality = v.findViewById(R.id.rowDownloadQuality)
         rowStreamingQuality = v.findViewById(R.id.rowStreamingQuality)
         rowOpenEqualizer = v.findViewById(R.id.rowOpenEqualizer)
@@ -440,6 +442,15 @@ class SettingsFragment : Fragment() {
                         player.seekTo(player.currentPosition)
                     }
                 }
+                renderSettingsState()
+            }
+        }
+
+        swGaplessPlayback.apply {
+            setOnCheckedChangeListener(null)
+            isChecked = settingsPrefs.getBoolean(CloudSyncManager.KEY_GAPLESS_PLAYBACK, true)
+            setOnCheckedChangeListener { _, c ->
+                settingsPrefs.edit().putBoolean(CloudSyncManager.KEY_GAPLESS_PLAYBACK, c).apply()
                 renderSettingsState()
             }
         }

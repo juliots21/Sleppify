@@ -1671,7 +1671,7 @@ class YouTubeMusicService @JvmOverloads constructor(
             ?.optJSONArray("continuations")
             ?.optJSONObject(0)
             ?.optJSONObject("nextContinuationData")
-            ?.optString("continuation", null)
+            ?.optString("continuation", "")?.takeIf { it.isNotEmpty() }
     }
 
     private fun extractContinuationTokenFromContinuation(contJson: JSONObject): String? {
@@ -1680,7 +1680,7 @@ class YouTubeMusicService @JvmOverloads constructor(
             ?.optJSONArray("continuations")
             ?.optJSONObject(0)
             ?.optJSONObject("nextContinuationData")
-            ?.optString("continuation", null)
+            ?.optString("continuation", "")?.takeIf { it.isNotEmpty() }
     }
 
     private fun parseContinuationSections(contJson: JSONObject, result: HomeBrowseResult) {

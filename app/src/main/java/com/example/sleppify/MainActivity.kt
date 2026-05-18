@@ -872,9 +872,7 @@ class MainActivity : AppCompatActivity() {
     private fun loadProfilePhoto() {
         val prefs = getSharedPreferences("streaming_cache", MODE_PRIVATE)
         val cachedUrl = prefs.getString("cached_google_profile_photo_url", "") ?: ""
-        val account = com.google.android.gms.auth.api.signin.GoogleSignIn.getLastSignedInAccount(this)
-        val photoUri = account?.photoUrl
-            ?: com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.photoUrl
+        val photoUri = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.photoUrl
             ?: if (cachedUrl.isNotEmpty()) android.net.Uri.parse(cachedUrl) else null
 
         val signedIn = authManagerLazy.isSignedIn() && photoUri != null

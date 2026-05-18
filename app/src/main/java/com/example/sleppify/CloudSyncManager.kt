@@ -885,6 +885,7 @@ class CloudSyncManager private constructor(context: Context) {
                 decodePreferenceEntry(key, value, editor)
             }
             editor.apply()
+            FavoritesPlaylistStore.invalidateCache()
             return true
         } finally {
             suppressStreamingSync = false
@@ -1433,6 +1434,7 @@ class CloudSyncManager private constructor(context: Context) {
         @JvmField val DOWNLOAD_QUALITY_VERY_HIGH = "very_high"
 
         @JvmField val KEY_MONO_AUDIO = "mono_audio_enabled"
+        @JvmField val KEY_GAPLESS_PLAYBACK = "gapless_playback_enabled"
 
         private const val USERS_COLLECTION = "users"
         private const val APP_SCOPE_COLLECTION = "sleppify"

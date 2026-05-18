@@ -764,7 +764,7 @@ class SearchFragment : Fragment() {
         }
 
         // --- Offline availability boost ---
-        val isDownloaded = vid.isNotEmpty() && OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), vid, null)
+        val isDownloaded = vid.isNotEmpty() && OfflineAudioStore.hasOfflineAudio(requireContext(), vid)
         if (isDownloaded) score += 5000
 
         return score
@@ -779,7 +779,7 @@ class SearchFragment : Fragment() {
             tvFeaturedSubtitle.text = if (track.subtitle.isEmpty()) typeLabel else "$typeLabel • ${track.subtitle}"
         }
         
-        val isDownloaded = track.videoId.isNotEmpty() && OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), track.videoId, null)
+        val isDownloaded = track.videoId.isNotEmpty() && OfflineAudioStore.hasOfflineAudio(requireContext(), track.videoId)
         if (isDownloaded) {
             ivFeaturedOfflineIndicator.visibility = View.VISIBLE
             ivFeaturedOfflineIndicator.setImageResource(R.drawable.ic_check_small)
@@ -1028,7 +1028,7 @@ class SearchFragment : Fragment() {
         val ctx = requireContext()
         val videoId = track.videoId ?: ""
         val hasOfflineAudio = videoId.isNotEmpty()
-            && OfflineAudioStore.hasValidatedOfflineAudio(ctx, videoId, null)
+            && OfflineAudioStore.hasOfflineAudio(ctx, videoId)
 
         val dialog = com.google.android.material.bottomsheet.BottomSheetDialog(ctx)
         val view = layoutInflater.inflate(R.layout.bottom_sheet_track_options, null)
@@ -1993,6 +1993,10 @@ class SearchFragment : Fragment() {
         val onMoreClick: (YouTubeMusicService.TrackResult, View) -> Unit
     ) : RecyclerView.Adapter<SearchResultsAdapter.TrackViewHolder>() {
         private val data = mutableListOf<YouTubeMusicService.TrackResult>()
+        private val offlineStateCache = HashMap<String, Boolean>()
+        private val pendingLookups = HashSet<String>()
+        private val lookupExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        private val handler = Handler(Looper.getMainLooper())
 
         init { setHasStableIds(true) }
 
@@ -2011,6 +2015,11 @@ class SearchFragment : Fragment() {
             diff.dispatchUpdatesTo(this)
         }
 
+        fun invalidateOfflineCache() {
+            offlineStateCache.clear()
+            pendingLookups.clear()
+        }
+
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) = TrackViewHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_music_search_result, parent, false))
 
         override fun onBindViewHolder(holder: TrackViewHolder, position: Int) {
@@ -2023,12 +2032,19 @@ class SearchFragment : Fragment() {
                 holder.subtitle.text = if (item.subtitle.isEmpty()) typeLabel else "$typeLabel • ${item.subtitle}"
             }
             loadArtworkInto(holder.thumb, item.thumbnailUrl, item.videoId)
-            
-            if (item.videoId?.isNotEmpty() == true && OfflineAudioStore.hasOfflineAudio(requireContext(), item.videoId)) {
-                holder.offlineIndicator.visibility = View.VISIBLE
-                holder.offlineIndicator.setImageResource(R.drawable.ic_check_small)
-                holder.offlineIndicator.setBackgroundResource(R.drawable.bg_offline_state_filled_primary)
-                holder.offlineIndicator.setColorFilter(ContextCompat.getColor(requireContext(), R.color.surface_dark))
+
+            val vid = item.videoId ?: ""
+            if (vid.isNotEmpty()) {
+                val cached = offlineStateCache[vid]
+                if (cached == true) {
+                    holder.offlineIndicator.visibility = View.VISIBLE
+                    holder.offlineIndicator.setImageResource(R.drawable.ic_check_small)
+                    holder.offlineIndicator.setBackgroundResource(R.drawable.bg_offline_state_filled_primary)
+                    holder.offlineIndicator.setColorFilter(ContextCompat.getColor(requireContext(), R.color.surface_dark))
+                } else {
+                    holder.offlineIndicator.visibility = View.GONE
+                    if (cached == null) triggerOfflineLookup(vid, position)
+                }
             } else {
                 holder.offlineIndicator.visibility = View.GONE
             }
@@ -2039,6 +2055,24 @@ class SearchFragment : Fragment() {
                 true
             }
             holder.more.setOnClickListener { onMoreClick(item, it) }
+        }
+
+        private fun triggerOfflineLookup(videoId: String, position: Int) {
+            if (pendingLookups.contains(videoId)) return
+            pendingLookups.add(videoId)
+            val ctx = context?.applicationContext ?: return
+            lookupExecutor.execute {
+                val available = OfflineAudioStore.hasOfflineAudio(ctx, videoId)
+                handler.post {
+                    pendingLookups.remove(videoId)
+                    val prev = offlineStateCache[videoId]
+                    offlineStateCache[videoId] = available
+                    if (available && prev != true && position >= 0 && position < data.size
+                        && data[position].videoId == videoId) {
+                        notifyItemChanged(position)
+                    }
+                }
+            }
         }
 
         override fun getItemCount() = data.size

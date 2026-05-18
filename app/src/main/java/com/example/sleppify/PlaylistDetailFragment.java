@@ -59,8 +59,6 @@ import com.bumptech.glide.Glide;
 import com.bumptech.glide.load.engine.DiskCacheStrategy;
 import com.bumptech.glide.load.DecodeFormat;
 import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions;
-import com.google.android.gms.auth.api.signin.GoogleSignIn;
-import com.google.android.gms.auth.api.signin.GoogleSignInAccount;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.imageview.ShapeableImageView;
@@ -973,23 +971,15 @@ public class PlaylistDetailFragment extends Fragment
     private void bindGoogleProfile(@NonNull String fallbackName) {
         String profileName = resolvePrimaryUserName();
         FirebaseUser firebaseUser = FirebaseAuth.getInstance().getCurrentUser();
-        GoogleSignInAccount account = GoogleSignIn.getLastSignedInAccount(requireContext());
         Uri profilePhoto = null;
         String cachedPhotoUrl = getCachePrefs().getString(PREF_CACHED_GOOGLE_PROFILE_PHOTO_URL, "");
 
-        if (account != null) {
-            if (TextUtils.isEmpty(profileName) && !TextUtils.isEmpty(account.getDisplayName())) {
-                profileName = account.getDisplayName();
+        if (firebaseUser != null) {
+            if (TextUtils.isEmpty(profileName) && !TextUtils.isEmpty(firebaseUser.getDisplayName())) {
+                profileName = firebaseUser.getDisplayName();
             }
-            profilePhoto = account.getPhotoUrl();
-            if (profilePhoto != null && !TextUtils.isEmpty(profilePhoto.toString())) {
-                getCachePrefs().edit().putString(PREF_CACHED_GOOGLE_PROFILE_PHOTO_URL, profilePhoto.toString()).apply();
-            }
-        }
-
-        if (profilePhoto == null && firebaseUser != null && firebaseUser.getPhotoUrl() != null) {
             profilePhoto = firebaseUser.getPhotoUrl();
-            if (!TextUtils.isEmpty(profilePhoto.toString())) {
+            if (profilePhoto != null && !TextUtils.isEmpty(profilePhoto.toString())) {
                 getCachePrefs().edit().putString(PREF_CACHED_GOOGLE_PROFILE_PHOTO_URL, profilePhoto.toString()).apply();
             }
         }

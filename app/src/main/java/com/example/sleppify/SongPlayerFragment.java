@@ -284,6 +284,14 @@ public class SongPlayerFragment extends Fragment {
     private volatile String prefetchedNextVideoId = null;
     private volatile String prefetchedNextUrl = null;
 
+    // Gapless pre-buffer: an ExoMediaPlayer prepared silently for the next track
+    private static final long GAPLESS_PRE_BUFFER_LEAD_MS = 30_000L;
+    @Nullable
+    private ExoMediaPlayer gaplessPreBufferedPlayer = null;
+    @NonNull
+    private String gaplessPreBufferedVideoId = "";
+    private boolean gaplessPreBufferTriggered = false;
+
     @Nullable
     private Future<?> pendingStreamResolverFuture;
     @Nullable
@@ -363,6 +371,7 @@ public class SongPlayerFragment extends Fragment {
                 int durationMs = Math.max(1, localExoMediaPlayer.getDuration());
 
                 maybeStartOfflineCrossfade(positionMs, durationMs);
+                maybeStartGaplessPreBuffer(positionMs, durationMs);
 
                 int playerSeconds = positionMs / 1000;
 
@@ -1409,6 +1418,17 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
+        // GAPLESS: if pre-buffered player is ready for this track, use it instantly
+        if (gaplessPreBufferedPlayer != null && TextUtils.equals(gaplessPreBufferedVideoId, track.videoId)) {
+            ExoMediaPlayer preBuffered = gaplessPreBufferedPlayer;
+            gaplessPreBufferedPlayer = null;
+            gaplessPreBufferedVideoId = "";
+            gaplessPreBufferTriggered = false;
+            adoptGaplessPlayer(track, preBuffered, requestToken);
+            return;
+        }
+        cancelGaplessPreBuffer();
+
         // Not offline — check prefetch (main-thread fields), then resolve online via executor.
         if (TextUtils.equals(track.videoId, prefetchedNextVideoId) && !TextUtils.isEmpty(prefetchedNextUrl)) {
             String url = prefetchedNextUrl;
@@ -1420,6 +1440,49 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
         resolveAndPlayOnlineTrack(track, requestToken);
+    }
+
+    private void adoptGaplessPlayer(@NonNull PlayerTrack track, @NonNull ExoMediaPlayer preBuffered, long requestToken) {
+        // Release current player
+        releaseLocalExoMediaPlayer();
+        usingOfflineSource = false;
+        localSourcePreparing = false;
+
+        localExoMediaPlayer = preBuffered;
+        preBuffered.isCrossfadeComponent = false;
+        preBuffered.setVolume(1f, 1f);
+        preBuffered.setOnCompletionListener(mp -> handleLocalPlaybackCompletion());
+        preBuffered.setOnErrorListener((mp, what, extra) -> {
+            Log.e(TAG, "adoptGaplessPlayer: error what=" + what + " extra=" + extra);
+            handlePlaybackError();
+            return true;
+        });
+
+        try {
+            preBuffered.start();
+        } catch (Exception e) {
+            Log.e(TAG, "adoptGaplessPlayer: start failed", e);
+            releaseLocalExoMediaPlayer();
+            resolveAndPlayOnlineTrack(track, requestToken);
+            return;
+        }
+
+        int durationMs;
+        try {
+            durationMs = Math.max(0, preBuffered.getDuration());
+        } catch (Exception ignored) {
+            durationMs = 0;
+        }
+        totalSeconds = durationMs > 0 ? Math.max(1, durationMs / 1000) : Math.max(1, parseDurationSeconds(track.duration));
+
+        isPlaying = true;
+        updatePlayPauseIcon();
+        startLocalProgressTicker();
+        updateMediaSessionMetadata();
+        updateMediaSessionState();
+        syncMiniStateWithPlaylist();
+        persistPlaybackSnapshot(false);
+        prefetchNextTrackStream();
     }
 
     private void handleLocalPlaybackCompletion() {
@@ -1493,6 +1556,133 @@ public class SongPlayerFragment extends Fragment {
                 prefetchedNextUrl = url;
             }
         });
+    }
+
+    private boolean isGaplessPlaybackEnabled() {
+        return settingsPrefs != null
+                && settingsPrefs.getBoolean(CloudSyncManager.KEY_GAPLESS_PLAYBACK, true);
+    }
+
+    private void maybeStartGaplessPreBuffer(int positionMs, int durationMs) {
+        if (!isAdded()
+                || !isGaplessPlaybackEnabled()
+                || localExoMediaPlayer == null
+                || localSourcePreparing
+                || localCrossfadeInProgress
+                || gaplessPreBufferTriggered
+                || !isPlaying
+                || usingOfflineSource
+                || durationMs <= 0
+                || durationMs < 35000) {
+            return;
+        }
+
+        int remainingMs = Math.max(0, durationMs - Math.max(0, positionMs));
+        if (remainingMs > GAPLESS_PRE_BUFFER_LEAD_MS) {
+            return;
+        }
+
+        // Determine next track
+        int nextIndex = resolveNextIndexForCompletionCrossfade();
+        if (nextIndex < 0 || nextIndex >= tracks.size()) {
+            return;
+        }
+
+        PlayerTrack nextTrack = tracks.get(nextIndex);
+        if (nextTrack == null || TextUtils.isEmpty(nextTrack.videoId)) {
+            return;
+        }
+
+        // Skip if already offline (offline playback is already instant)
+        if (OfflineAudioStore.hasOfflineAudio(requireContext(), nextTrack.videoId)) {
+            return;
+        }
+
+        // Skip if already pre-buffered for this track
+        if (gaplessPreBufferedPlayer != null && TextUtils.equals(gaplessPreBufferedVideoId, nextTrack.videoId)) {
+            return;
+        }
+
+        gaplessPreBufferTriggered = true;
+
+        // Find a URL: use prefetched if available, otherwise resolve in background
+        String url = null;
+        if (TextUtils.equals(nextTrack.videoId, prefetchedNextVideoId) && !TextUtils.isEmpty(prefetchedNextUrl)) {
+            url = prefetchedNextUrl;
+        }
+
+        if (!TextUtils.isEmpty(url)) {
+            prepareGaplessPlayer(nextTrack, url);
+        } else {
+            streamResolverExecutor.submit(() -> {
+                String resolved = InnertubeResolver.resolveStreamUrl(requireContext(), nextTrack.videoId);
+                localProgressHandler.post(() -> {
+                    if (!isAdded() || TextUtils.isEmpty(resolved)) return;
+                    prepareGaplessPlayer(nextTrack, resolved);
+                });
+            });
+        }
+    }
+
+    private void prepareGaplessPlayer(@NonNull PlayerTrack nextTrack, @NonNull String url) {
+        if (!isAdded()) return;
+
+        // Release any existing pre-buffer player
+        if (gaplessPreBufferedPlayer != null) {
+            releaseSingleExoMediaPlayer(gaplessPreBufferedPlayer);
+            gaplessPreBufferedPlayer = null;
+            gaplessPreBufferedVideoId = "";
+        }
+
+        Context appCtx = requireContext().getApplicationContext();
+        ExoMediaPlayer player = new ExoMediaPlayer(appCtx);
+        player.isCrossfadeComponent = true; // Mark so it doesn't interfere with media session
+
+        try {
+            player.setAudioAttributes(new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build());
+
+            Map<String, String> headers = new HashMap<>();
+            headers.put("User-Agent", STREAM_HTTP_USER_AGENT);
+            headers.put("Accept", "*/*");
+            Map<String, String> authHeaders = InnertubeResolver.getHeadersFor(nextTrack.videoId);
+            if (authHeaders != null) {
+                headers.putAll(authHeaders);
+            }
+            player.setDataSource(appCtx, Uri.parse(url), headers);
+            player.setVolume(0f, 0f);
+
+            player.setOnPreparedListener(mp -> {
+                // Prepared and buffering — keep silent, ready to use
+                gaplessPreBufferedPlayer = mp;
+                gaplessPreBufferedVideoId = nextTrack.videoId;
+            });
+
+            player.setOnErrorListener((mp, what, extra) -> {
+                // Pre-buffer failed — silent cleanup, normal flow will handle it
+                if (gaplessPreBufferedPlayer == mp) {
+                    gaplessPreBufferedPlayer = null;
+                    gaplessPreBufferedVideoId = "";
+                }
+                releaseSingleExoMediaPlayer(mp);
+                return true;
+            });
+
+            player.prepareAsync();
+        } catch (Exception e) {
+            releaseSingleExoMediaPlayer(player);
+        }
+    }
+
+    private void cancelGaplessPreBuffer() {
+        gaplessPreBufferTriggered = false;
+        if (gaplessPreBufferedPlayer != null) {
+            releaseSingleExoMediaPlayer(gaplessPreBufferedPlayer);
+            gaplessPreBufferedPlayer = null;
+            gaplessPreBufferedVideoId = "";
+        }
     }
 
     private void attemptPlaybackFromSources(
@@ -2326,6 +2516,16 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
+        // Use gapless pre-buffered player if available for this next track
+        if (gaplessPreBufferedPlayer != null && TextUtils.equals(gaplessPreBufferedVideoId, nextTrack.videoId)) {
+            ExoMediaPlayer preBuffered = gaplessPreBufferedPlayer;
+            gaplessPreBufferedPlayer = null;
+            gaplessPreBufferedVideoId = "";
+            gaplessPreBufferTriggered = false;
+            executeAutomaticCrossfadeWithPlayer(outgoing, nextIndex, preBuffered, crossfadeDurationMs);
+            return;
+        }
+
         String nextUrl = null;
         boolean nextIsNetwork = false;
 
@@ -2356,6 +2556,27 @@ public class SongPlayerFragment extends Fragment {
 
     private void executeAutomaticCrossfade(ExoMediaPlayer outgoing, int nextIndex, String nextUrl, boolean nextIsNetwork, int crossfadeDurationMs) {
         executeCrossfade(outgoing, nextIndex, nextUrl, nextIsNetwork, crossfadeDurationMs);
+    }
+
+    private void executeAutomaticCrossfadeWithPlayer(ExoMediaPlayer outgoing, int nextIndex, ExoMediaPlayer preBuffered, int crossfadeDurationMs) {
+        preBuffered.isCrossfadeComponent = true;
+        try {
+            preBuffered.setVolume(0f, 0f);
+            preBuffered.start();
+        } catch (Exception e) {
+            Log.e(TAG, "executeAutomaticCrossfadeWithPlayer: start failed", e);
+            releaseSingleExoMediaPlayer(preBuffered);
+            startOfflineFadeOutOnly(outgoing, crossfadeDurationMs);
+            return;
+        }
+
+        localCrossfadeIncomingPlayer = preBuffered;
+        localCrossfadeInProgress = true;
+        localCrossfadeTargetIndex = nextIndex;
+        localCrossfadeStartedAtMs = SystemClock.elapsedRealtime();
+        outgoing.setOnCompletionListener(null);
+        localCrossfadeTicker = buildCrossfadeTicker(outgoing, crossfadeDurationMs);
+        localProgressHandler.post(localCrossfadeTicker);
     }
 
     private void executeCrossfade(ExoMediaPlayer outgoing, int nextIndex, String nextUrl, boolean nextIsNetwork, int crossfadeDurationMs) {
@@ -2546,6 +2767,8 @@ public class SongPlayerFragment extends Fragment {
             } catch (Exception ignored) {
             }
         }
+
+        cancelGaplessPreBuffer();
     }
 
     private void startLocalProgressTicker() {
@@ -3290,10 +3513,40 @@ public class SongPlayerFragment extends Fragment {
         }
 
         actionDownloadTrack.setVisibility(View.VISIBLE);
-        boolean isDownloaded = OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), track.videoId, null);
         boolean isPending = track.videoId.equals(pendingDownloadVideoId);
+        if (isPending) {
+            tvActionDownloadLabel.setText("Descargando...");
+            ivActionDownloadIcon.setImageResource(R.drawable.ic_download_bold);
+            actionDownloadTrack.setAlpha(0.6f);
+            actionDownloadTrack.setClickable(false);
+            return;
+        }
+
+        // Default state while checking
+        tvActionDownloadLabel.setText("Descargar");
+        ivActionDownloadIcon.setImageResource(R.drawable.ic_download_bold);
+        actionDownloadTrack.setAlpha(1f);
+        actionDownloadTrack.setClickable(true);
+
+        final String videoId = track.videoId;
+        final Context appCtx = requireContext().getApplicationContext();
+        localProgressHandler.post(() -> {
+            new Thread(() -> {
+                boolean isDownloaded = OfflineAudioStore.hasValidatedOfflineAudio(appCtx, videoId, null);
+                localProgressHandler.post(() -> {
+                    if (!isAdded() || actionDownloadTrack == null) return;
+                    if (currentIndex < 0 || currentIndex >= tracks.size()) return;
+                    if (!TextUtils.equals(tracks.get(currentIndex).videoId, videoId)) return;
+                    applyDownloadChipVisual(isDownloaded, videoId.equals(pendingDownloadVideoId));
+                });
+            }).start();
+        });
+    }
+
+    private void applyDownloadChipVisual(boolean isDownloaded, boolean isPending) {
+        if (actionDownloadTrack == null || ivActionDownloadIcon == null || tvActionDownloadLabel == null) return;
         if (isDownloaded) {
-            if (isPending) pendingDownloadVideoId = "";
+            pendingDownloadVideoId = "";
             tvActionDownloadLabel.setText("Eliminar descarga");
             ivActionDownloadIcon.setImageResource(R.drawable.ic_download_bold);
             actionDownloadTrack.setAlpha(1f);
@@ -3717,10 +3970,25 @@ public class SongPlayerFragment extends Fragment {
     }
 
     public int externalGetCurrentSeconds() {
+        // When hidden, localProgressTicker is stopped so currentSeconds is stale.
+        // Read live position from ExoPlayer if it's still active.
+        if (isHidden() && localExoMediaPlayer != null) {
+            try {
+                return Math.max(0, localExoMediaPlayer.getCurrentPosition() / 1000);
+            } catch (Exception ignored) {
+            }
+        }
         return Math.max(0, currentSeconds);
     }
 
     public int externalGetTotalSeconds() {
+        if (isHidden() && localExoMediaPlayer != null) {
+            try {
+                int durationMs = localExoMediaPlayer.getDuration();
+                if (durationMs > 0) return Math.max(1, durationMs / 1000);
+            } catch (Exception ignored) {
+            }
+        }
         return Math.max(1, totalSeconds);
     }
 

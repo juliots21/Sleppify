@@ -29,6 +29,14 @@ object FavoritesPlaylistStore {
     }
 
     @JvmStatic
+    fun invalidateCache() {
+        synchronized(CACHE_LOCK) {
+            favoritesCache = null
+            favoritesIdSet = null
+        }
+    }
+
+    @JvmStatic
     fun getFavoritesCount(context: Context): Int {
         return loadFavorites(context).size
     }

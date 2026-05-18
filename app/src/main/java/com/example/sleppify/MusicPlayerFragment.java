@@ -756,6 +756,11 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         if (streamingOauthCompleted || loadingLibrary || webSessionLauncher == null) {
             return;
         }
+        // Don't auto-launch YouTube web session if user hasn't signed in with Firebase yet.
+        // The user should first use the header "Iniciar sesión" button.
+        if (FirebaseAuth.getInstance().getCurrentUser() == null) {
+            return;
+        }
         if (!isNetworkAvailable()) {
             return;
         }
@@ -1407,10 +1412,11 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 libraryTracks.clear();
                 libraryTracks.addAll(mapPlaylistsToLibraryTracks(playlists));
                 cacheLibraryForCurrentAccount(libraryTracks);
-                // Only prefetch tracks on initial load, not on pull-to-refresh.
-                // Pull-to-refresh already has cached tracks; re-prefetching causes
-                // cascading adapter submits that flicker all grid images.
+                // Prefetch tracks on initial load. On pull-to-refresh, only prefetch
+                // if some playlists are still missing grid images (first-install catch-up).
                 if (!forceRefresh) {
+                    prefetchLibraryTracksForOffline(libraryTracks, youtubeAccessToken);
+                } else if (hasPlaylistsWithoutGrid(libraryTracks)) {
                     prefetchLibraryTracksForOffline(libraryTracks, youtubeAccessToken);
                 }
                 lastLibrarySyncAtMs = System.currentTimeMillis();
@@ -1477,6 +1483,12 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
     }
     public void refreshLibraryUi() {
         if (!isAdded()) return;
+        // Invalidate favorites grid/tracks cache so fresh data from cloud sync is used
+        playlistGridUrlsCache.remove(FavoritesPlaylistStore.PLAYLIST_ID);
+        synchronized (cachedPlaylistTracksLock) {
+            cachedPlaylistTracksById.remove(FavoritesPlaylistStore.PLAYLIST_ID);
+            cachedPlaylistTracksUpdatedAtById.remove(FavoritesPlaylistStore.PLAYLIST_ID);
+        }
         renderLibraryResults();
     }
     private void renderLibraryResults() {
@@ -2321,6 +2333,16 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             return new ArrayList<>();
         }
         return result;
+    }
+    private boolean hasPlaylistsWithoutGrid(@NonNull List<YouTubeMusicService.TrackResult> playlists) {
+        for (YouTubeMusicService.TrackResult item : playlists) {
+            if (!"playlist".equals(item.resultType)) continue;
+            String pid = item.contentId == null ? "" : item.contentId.trim();
+            if (pid.isEmpty()) continue;
+            if (FavoritesPlaylistStore.PLAYLIST_ID.equals(pid) || pid.startsWith("custom_")) continue;
+            if (!playlistGridUrlsCache.containsKey(pid)) return true;
+        }
+        return false;
     }
     private void prefetchLibraryTracksForOffline(
             @NonNull List<YouTubeMusicService.TrackResult> playlists,
@@ -4873,7 +4895,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                     requestPlaylistOfflineStateRefreshAsync(candidateId, generation, true);
                 }
                 if (!data.isEmpty()) {
-                    safeNotify(() -> notifyItemRangeChanged(0, data.size()));
+                    safeNotify(() -> notifyItemRangeChanged(0, data.size(), PAYLOAD_OFFLINE_STATE));
                 }
             } else {
                 // For single playlist, remove from cache and recalculate from files
@@ -4881,7 +4903,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 requestPlaylistOfflineStateRefreshAsync(playlistId, playlistOfflineStateGeneration, true);
                 int updatedPosition = findPlaylistPositionById(playlistId);
                 if (updatedPosition >= 0) {
-                    safeNotify(() -> notifyItemChanged(updatedPosition));
+                    safeNotify(() -> notifyItemChanged(updatedPosition, PAYLOAD_OFFLINE_STATE));
                 }
             }
         }
