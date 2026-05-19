@@ -528,6 +528,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
     private boolean youtubeAuthRefreshInProgress;
     private boolean streamingOauthCompleted;
     private long lastAutoWebSessionLaunchAtMs;
+    private boolean webSessionAlreadyAttempted;
     private boolean restoringHiddenMiniPlayerFromSnapshot;
     @Nullable
     private PopupWindow playlistActionPopupWindow;
@@ -698,7 +699,10 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         if (!isPlaylistDetailStatePending()) {
             persistStreamingScreen(STREAM_SCREEN_LIBRARY);
         }
-        maybeAutoLaunchWebSessionIfNeeded();
+        view.postDelayed(() -> {
+            if (!isAdded() || isRemoving() || isDetached()) return;
+            maybeAutoLaunchWebSessionIfNeeded();
+        }, 800L);
         view.post(() -> {
             if (!isAdded() || isRemoving() || isDetached()) return;
             maybeRestoreHiddenMiniPlayerFromPausedSnapshot();
@@ -718,7 +722,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         }
         maybeEnqueueNextOfflineAutoPlaylist();
         maybeRestoreHiddenMiniPlayerFromPausedSnapshot();
-        maybeAutoLaunchWebSessionIfNeeded();
         maybeSyncLibraryIfAuthorized();
         if (isAdded()) {
             boolean offlineMode = requireContext()
@@ -746,7 +749,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         }
         maybeEnqueueNextOfflineAutoPlaylist();
         maybeRestoreHiddenMiniPlayerFromPausedSnapshot();
-        maybeAutoLaunchWebSessionIfNeeded();
         maybeSyncLibraryIfAuthorized();
     }
     private void maybeAutoLaunchWebSessionIfNeeded() {
@@ -756,9 +758,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         if (streamingOauthCompleted || loadingLibrary || webSessionLauncher == null) {
             return;
         }
-        // Don't auto-launch YouTube web session if user hasn't signed in with Firebase yet.
-        // The user should first use the header "Iniciar sesión" button.
-        if (FirebaseAuth.getInstance().getCurrentUser() == null) {
+        if (webSessionAlreadyAttempted) {
             return;
         }
         if (!isNetworkAvailable()) {
@@ -769,6 +769,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             return;
         }
         lastAutoWebSessionLaunchAtMs = now;
+        webSessionAlreadyAttempted = true;
         onYoutubeLoginClicked();
     }
     private boolean isPlaylistDetailStatePending() {
@@ -1108,6 +1109,11 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                     .putString(PREF_LAST_YOUTUBE_WEB_COOKIE, cookieHeader)
                     .apply();
         }
+        // Trigger deferred heavy initialization (ExoPlayer, Glide, etc.) now that
+        // the user has successfully logged in via the web session.
+        if (isAdded()) {
+            ((SleppifyApp) requireContext().getApplicationContext()).performDeferredInit();
+        }
         // Activar inmediatamente la cookie en InnertubeResolver para que las
         // siguientes peticiones de resoluciÃ³n y playback estÃ©n autenticadas.
         InnertubeResolver.setAuthCookies(cookieHeader);
@@ -1116,6 +1122,17 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         // Keep user-agent available for future web-session API extensions.
         if (TextUtils.isEmpty(userAgent)) {
             userAgent = "";
+        }
+        // If Firebase auth is not done yet, sign in first then proceed with OAuth
+        if (FirebaseAuth.getInstance().getCurrentUser() == null && isAdded()) {
+            MainActivity mainActivity = (getActivity() instanceof MainActivity) ? (MainActivity) getActivity() : null;
+            if (mainActivity != null) {
+                mainActivity.requireAuth(
+                        () -> requestYoutubeAccessTokenFromPrimaryAccountAfterWebSession(true, false, true),
+                        () -> requestYoutubeAccessTokenFromPrimaryAccountAfterWebSession(true, false, true)
+                );
+                return;
+            }
         }
         requestYoutubeAccessTokenFromPrimaryAccountAfterWebSession(true, false, true);
     }
@@ -1952,11 +1969,8 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         if (!isAdded() || btnYoutubeLogin == null) {
             return;
         }
-        if (streamingOauthCompleted) {
-            btnYoutubeLogin.setVisibility(View.GONE);
-        } else {
-            btnYoutubeLogin.setVisibility(View.VISIBLE);
-        }
+        // Always hide — web session activity auto-launches when needed
+        btnYoutubeLogin.setVisibility(View.GONE);
     }
     private boolean hasLoggedInStreamingAccount() {
         return streamingOauthCompleted;

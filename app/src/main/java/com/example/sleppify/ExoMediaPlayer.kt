@@ -130,17 +130,25 @@ class ExoMediaPlayer {
     @JvmField
     var isCrossfadeComponent: Boolean = false
 
-    constructor(context: Context) {
+    @JvmOverloads
+    constructor(context: Context, lowBuffer: Boolean = false) {
         this.appContext = context.applicationContext
         val audioAttributes = androidx.media3.common.AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .build()
 
-        val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(15_000, 50_000, 500, 1_000)
-            .setPrioritizeTimeOverSizeThresholds(true)
-            .build()
+        val loadControl = if (lowBuffer) {
+            DefaultLoadControl.Builder()
+                .setBufferDurationsMs(5_000, 15_000, 500, 1_000)
+                .setPrioritizeTimeOverSizeThresholds(true)
+                .build()
+        } else {
+            DefaultLoadControl.Builder()
+                .setBufferDurationsMs(15_000, 50_000, 500, 1_000)
+                .setPrioritizeTimeOverSizeThresholds(true)
+                .build()
+        }
 
         val player = ExoPlayer.Builder(appContext)
             .setLoadControl(loadControl)

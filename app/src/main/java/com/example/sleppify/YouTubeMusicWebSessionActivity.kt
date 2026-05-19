@@ -20,50 +20,62 @@ import android.view.animation.AnimationUtils
 class YouTubeMusicWebSessionActivity : AppCompatActivity() {
 
     private var webView: WebView? = null
+    private var webSessionContainer: android.widget.FrameLayout? = null
     private var loginOverlay: View? = null
     private var btnOverlayLogin: Button? = null
     private var lastCookieHeader: String = ""
     private var lastAutoLoginClickAtMs: Long = 0L
     private var autoConnectTriggered: Boolean = false
 
-    @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_youtube_web_session)
 
-        webView = findViewById(R.id.webSessionView)
+        webSessionContainer = findViewById(R.id.webSessionContainer)
         loginOverlay = findViewById(R.id.loginOverlay)
         btnOverlayLogin = findViewById(R.id.btnOverlayLogin)
 
         val imgAmbient = findViewById<ImageView>(R.id.imgAmbient)
-        val breatheAnim = AnimationUtils.loadAnimation(this, R.anim.bg_breathe)
-        imgAmbient?.startAnimation(breatheAnim)
+        imgAmbient?.postDelayed({
+            val breatheAnim = AnimationUtils.loadAnimation(this, R.anim.bg_breathe)
+            imgAmbient.startAnimation(breatheAnim)
+        }, 400L)
 
         btnOverlayLogin?.setOnClickListener {
-            // Ocultamos la capa negra para revelar el WebView que ya estuvo cargando en segundo plano
+            // Start loading WebView only when user taps — avoids lag on the onboarding overlay
+            initWebViewAndLoad()
             loginOverlay?.visibility = View.GONE
         }
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun initWebViewAndLoad() {
+        val wv = WebView(this)
+        webView = wv
+        webSessionContainer?.addView(wv, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+        ))
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
-        webView?.let { cookieManager.setAcceptThirdPartyCookies(it, true) }
+        cookieManager.setAcceptThirdPartyCookies(wv, true)
 
-        val settings = webView?.settings
-        settings?.javaScriptEnabled = true
-        settings?.domStorageEnabled = true
-        settings?.setSupportMultipleWindows(false)
-        settings?.loadsImagesAutomatically = true
-        settings?.useWideViewPort = true
-        settings?.loadWithOverviewMode = true
-        settings?.mediaPlaybackRequiresUserGesture = false
-        settings?.cacheMode = WebSettings.LOAD_DEFAULT
-        webView?.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+        val settings = wv.settings
+        settings.javaScriptEnabled = true
+        settings.domStorageEnabled = true
+        settings.setSupportMultipleWindows(false)
+        settings.loadsImagesAutomatically = true
+        settings.useWideViewPort = true
+        settings.loadWithOverviewMode = true
+        settings.mediaPlaybackRequiresUserGesture = false
+        settings.cacheMode = WebSettings.LOAD_DEFAULT
+        wv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
-        webView?.webViewClient = object : WebViewClient() {
+        wv.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean {
                 val uri = Uri.parse(url)
                 val host = uri.host.orEmpty()
-                // Keep navigation inside YouTube/Google login domains for predictable session capture.
                 return !(host.endsWith("youtube.com") || host.endsWith("google.com") || host.endsWith("gstatic.com"))
             }
 
@@ -74,7 +86,7 @@ class YouTubeMusicWebSessionActivity : AppCompatActivity() {
             }
         }
 
-        webView?.loadUrl("https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fmusic.youtube.com%2F")
+        wv.loadUrl("https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fmusic.youtube.com%2F")
     }
 
     private fun refreshSessionState() {
@@ -154,6 +166,18 @@ class YouTubeMusicWebSessionActivity : AppCompatActivity() {
                 return
             }
         }
+
+        // Persist the cookie directly so that if the calling MainActivity is
+        // killed by the system while this activity is in the foreground, the
+        // recreated MusicPlayerFragment will find the session in SharedPreferences
+        // and won't launch the WebView again.
+        getSharedPreferences("player_state", MODE_PRIVATE)
+            .edit()
+            .putString("stream_last_youtube_web_cookie", lastCookieHeader)
+            .commit()
+
+        // Trigger deferred heavy initialization now that login succeeded.
+        (applicationContext as SleppifyApp).performDeferredInit()
 
         val data = Intent()
         data.putExtra(EXTRA_SESSION_COOKIE_HEADER, lastCookieHeader)

@@ -274,9 +274,17 @@ public final class VideoSurfaceRouter {
         playerView.setVisibility(View.GONE);
         removeFromParent(playerView);
 
-        // Restore artwork visibility
-        if (heroArt != null) heroArt.setVisibility(View.VISIBLE);
-        if (miniArt != null) miniArt.setVisibility(View.VISIBLE);
+        // Restore artwork visibility and reset alpha to avoid stale transparent state
+        if (heroArt != null) {
+            heroArt.animate().cancel();
+            heroArt.setAlpha(1f);
+            heroArt.setVisibility(View.VISIBLE);
+        }
+        if (miniArt != null) {
+            miniArt.animate().cancel();
+            miniArt.setAlpha(1f);
+            miniArt.setVisibility(View.VISIBLE);
+        }
 
         hideOverlay();
     }
