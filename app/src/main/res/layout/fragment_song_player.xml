@@ -112,6 +112,17 @@
                     android:scaleType="centerCrop"
                     android:src="@android:color/transparent" />
 
+                <androidx.media3.ui.PlayerView
+                    android:id="@+id/pvPlayerHeroVideo"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@android:color/black"
+                    android:visibility="gone"
+                    app:resize_mode="fit"
+                    app:use_controller="false"
+                    app:show_buffering="never"
+                    app:surface_type="surface_view" />
+
                 <ProgressBar
                     android:id="@+id/pbVideoLoading"
                     android:layout_width="36dp"

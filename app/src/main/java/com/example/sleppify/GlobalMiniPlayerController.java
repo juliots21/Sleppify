@@ -36,7 +36,6 @@ public final class GlobalMiniPlayerController implements PlaybackEventBus.Listen
     private final View llMiniPlayer;
     private final ImageView ivArt;
     @Nullable private final androidx.media3.ui.PlayerView miniPlayerVideoView;
-    @Nullable private final android.view.ViewGroup miniPlayerVideoParent;
     private final android.widget.ProgressBar pbMiniLoading;
     private final TextView tvTitle;
     private final TextView tvSubtitle;
@@ -61,13 +60,11 @@ public final class GlobalMiniPlayerController implements PlaybackEventBus.Listen
         llMiniPlayer = activity.findViewById(R.id.llGlobalMiniPlayer);
         ivArt = activity.findViewById(R.id.ivGlobalMiniPlayerArt);
         pbMiniLoading = activity.findViewById(R.id.pbMiniPlayerLoading);
+        miniPlayerVideoView = activity.findViewById(R.id.miniPlayerVideoView);
         tvTitle = activity.findViewById(R.id.tvGlobalMiniPlayerTitle);
         tvSubtitle = activity.findViewById(R.id.tvGlobalMiniPlayerSubtitle);
         btnPlayPause = activity.findViewById(R.id.btnGlobalMiniPlayPause);
         sbProgress = activity.findViewById(R.id.sbGlobalMiniPlayerProgress);
-        miniPlayerVideoView = activity.findViewById(R.id.miniPlayerVideoView);
-        miniPlayerVideoParent = miniPlayerVideoView != null
-                ? (android.view.ViewGroup) miniPlayerVideoView.getParent() : null;
 
         llMiniPlayer.setOnClickListener(v -> openFullPlayer());
         btnPlayPause.setOnClickListener(v -> togglePlayback());
@@ -408,7 +405,6 @@ public final class GlobalMiniPlayerController implements PlaybackEventBus.Listen
                 ivArt.animate().cancel();
                 ivArt.setAlpha(0f);
             }
-            // Immediately show pause icon so user sees "playing" feedback while buffering
             miniPlaying = true;
             btnPlayPause.setImageResource(R.drawable.ic_mini_pause);
         } else {
@@ -451,7 +447,7 @@ public final class GlobalMiniPlayerController implements PlaybackEventBus.Listen
         }
     }
 
-    // ── Video surface management ─────────────────────────────────────
+    // ── Video surface management ───────────────────────────────────────────
 
     /**
      * Attaches an ExoMediaPlayer's video output to the mini-player's PlayerView.
@@ -496,11 +492,6 @@ public final class GlobalMiniPlayerController implements PlaybackEventBus.Listen
     @Nullable
     public ImageView getArtView() {
         return ivArt;
-    }
-
-    @Nullable
-    public android.view.ViewGroup getVideoViewParent() {
-        return miniPlayerVideoParent;
     }
 
     /**
