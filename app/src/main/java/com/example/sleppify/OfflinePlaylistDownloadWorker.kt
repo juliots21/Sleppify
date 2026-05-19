@@ -364,12 +364,55 @@ class OfflinePlaylistDownloadWorker(
         val startMs = System.currentTimeMillis()
         progressReporter?.onProgress(0.05f)
 
-        val target = OfflineAudioStore.getOfflineAudioFileForFormat(context, videoId, false)
-        val otherServer = (primaryServer + 1) % SleppifyDownloaderResolver.SERVER_COUNT
+        val prefs = context.getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE)
+        val canvasEnabled = prefs.getBoolean(CloudSyncManager.KEY_DOWNLOAD_CANVAS_ENABLED, true)
+        val quality = prefs.getString(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_QUALITY, CloudSyncManager.DOWNLOAD_QUALITY_MEDIUM)
+            ?: CloudSyncManager.DOWNLOAD_QUALITY_MEDIUM
+        val ytCookie = context.getSharedPreferences("player_state", Context.MODE_PRIVATE)
+            .getString("stream_last_youtube_web_cookie", null)
+        Log.d(TAG, "ytCookie present=${!ytCookie.isNullOrBlank()} length=${ytCookie?.length ?: 0} prefix=${ytCookie?.take(40) ?: "null"}")
 
-        // Attempt order: primary → backoff → primary (resume) → other → backoff → other (resume)
+        val otherServer = (primaryServer + 1) % SleppifyDownloaderResolver.SERVER_COUNT
         val attemptSequence = intArrayOf(primaryServer, primaryServer, otherServer, otherServer)
         val backoffMs = longArrayOf(0L, 1500L, 0L, 2000L)
+
+        // Canvas mode: try video download first
+        if (canvasEnabled) {
+            val videoTarget = OfflineAudioStore.getOfflineVideoFile(context, videoId)
+            var videoOk = false
+            for (attempt in attemptSequence.indices) {
+                if (isStopped) break
+                if (networkIssueTracker.hasIssue()) break
+
+                val server = attemptSequence[attempt]
+                val delay = backoffMs[attempt]
+                if (delay > 0L) SystemClock.sleep(delay)
+
+                videoOk = try {
+                    SleppifyDownloaderResolver.downloadVideoViaProxy(videoId, videoTarget, server, onProgress = { bytesReceived ->
+                        val fraction = (bytesReceived.toFloat() / 12_000_000L).coerceIn(0.05f, 0.90f)
+                        progressReporter?.onProgress(fraction)
+                    }, youtubeCookie = ytCookie)
+                } catch (e: Exception) {
+                    if (isLikelyNetworkException(e)) networkIssueTracker.markIssue()
+                    Log.w(TAG, "SleppifyVDL:s$server attempt=$attempt exception id=$videoId msg=${e.message}")
+                    false
+                }
+
+                if (videoOk) break
+            }
+
+            if (videoOk) {
+                progressReporter?.onProgress(0.99f)
+                return true
+            }
+            // Video failed — clean up partial and fall through to audio download
+            if (videoTarget.isFile) videoTarget.delete()
+            Log.w(TAG, "canvas:video_failed id=$videoId falling_back_to_audio")
+        }
+
+        // Audio download (normal path or canvas fallback)
+        val target = OfflineAudioStore.getOfflineAudioFileForFormat(context, videoId, false)
 
         var ok = false
         for (attempt in attemptSequence.indices) {
@@ -381,10 +424,10 @@ class OfflinePlaylistDownloadWorker(
             if (delay > 0L) SystemClock.sleep(delay)
 
             ok = try {
-                val proxyOk = SleppifyDownloaderResolver.downloadViaProxy(videoId, target, server) { bytesReceived ->
+                val proxyOk = SleppifyDownloaderResolver.downloadViaProxy(videoId, target, server, quality, onProgress = { bytesReceived ->
                     val fraction = (bytesReceived.toFloat() / 4_000_000L).coerceIn(0.05f, 0.90f)
                     progressReporter?.onProgress(fraction)
-                }
+                }, youtubeCookie = ytCookie)
                 proxyOk
             } catch (e: Exception) {
                 if (isLikelyNetworkException(e)) networkIssueTracker.markIssue()
@@ -397,7 +440,6 @@ class OfflinePlaylistDownloadWorker(
 
         // Final fallback: download directly via InnerTube stream URL
         if (!ok && !networkIssueTracker.hasIssue() && !isStopped) {
-            // Delete any partial proxy file before InnerTube attempt (different format possible)
             if (target.isFile) target.delete()
             ok = try {
                 downloadTrackFromInnertube(context, videoId, target, progressReporter)

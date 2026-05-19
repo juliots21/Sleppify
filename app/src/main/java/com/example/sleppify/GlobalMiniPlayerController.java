@@ -23,7 +23,8 @@ import com.example.sleppify.utils.YouTubeCropTransformation;
  * Replaces the per-fragment duplicates in MusicPlayerFragment,
  * PlaylistDetailFragment and SearchFragment.
  */
-public final class GlobalMiniPlayerController implements PlaybackEventBus.Listener {
+@androidx.annotation.OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)
+public final class GlobalMiniPlayerController implements PlaybackEventBus.Listener, PlaybackLoadingBus.Listener {
 
     private static final long PROGRESS_TICK_MS = 200L;
     private static final PathInterpolator MATERIAL_EASE =
@@ -34,10 +35,15 @@ public final class GlobalMiniPlayerController implements PlaybackEventBus.Listen
     // Views (from activity_main.xml include)
     private final View llMiniPlayer;
     private final ImageView ivArt;
+    @Nullable private final androidx.media3.ui.PlayerView miniPlayerVideoView;
+    @Nullable private final android.view.ViewGroup miniPlayerVideoParent;
+    private final android.widget.ProgressBar pbMiniLoading;
     private final TextView tvTitle;
     private final TextView tvSubtitle;
     private final ImageButton btnPlayPause;
     private final SeekBar sbProgress;
+    private boolean videoAttached = false;
+    private boolean videoOverlayActive = false;
 
     // Owner
     private final MainActivity activity;
@@ -54,10 +60,14 @@ public final class GlobalMiniPlayerController implements PlaybackEventBus.Listen
         this.activity = activity;
         llMiniPlayer = activity.findViewById(R.id.llGlobalMiniPlayer);
         ivArt = activity.findViewById(R.id.ivGlobalMiniPlayerArt);
+        pbMiniLoading = activity.findViewById(R.id.pbMiniPlayerLoading);
         tvTitle = activity.findViewById(R.id.tvGlobalMiniPlayerTitle);
         tvSubtitle = activity.findViewById(R.id.tvGlobalMiniPlayerSubtitle);
         btnPlayPause = activity.findViewById(R.id.btnGlobalMiniPlayPause);
         sbProgress = activity.findViewById(R.id.sbGlobalMiniPlayerProgress);
+        miniPlayerVideoView = activity.findViewById(R.id.miniPlayerVideoView);
+        miniPlayerVideoParent = miniPlayerVideoView != null
+                ? (android.view.ViewGroup) miniPlayerVideoView.getParent() : null;
 
         llMiniPlayer.setOnClickListener(v -> openFullPlayer());
         btnPlayPause.setOnClickListener(v -> togglePlayback());
@@ -67,12 +77,15 @@ public final class GlobalMiniPlayerController implements PlaybackEventBus.Listen
 
     public void onResume() {
         PlaybackEventBus.addListener(this);
+        PlaybackLoadingBus.addListener(this);
+        syncMiniLoadingState();
         updateUi();
         startProgressTicker();
     }
 
     public void onPause() {
         PlaybackEventBus.removeListener(this);
+        PlaybackLoadingBus.removeListener(this);
         stopProgressTicker();
     }
 
@@ -189,12 +202,17 @@ public final class GlobalMiniPlayerController implements PlaybackEventBus.Listen
             lastProgressValue = bounded;
         }
 
-        // Artwork
+        // Artwork (skip if video overlay is active or video surface is attached)
         imageUrl = imageUrl == null ? "" : imageUrl.trim();
         String videoId = playerAttached ? songPlayer.externalGetCurrentVideoId() : (snapshotTrack != null ? snapshotTrack.videoId : "");
-        if (!TextUtils.equals(lastArtVideoId, videoId)
-                || !TextUtils.equals(lastArtUrl, imageUrl)) {
-            loadArtwork(imageUrl);
+        if (!videoAttached && !videoOverlayActive) {
+            if (!TextUtils.equals(lastArtVideoId, videoId)
+                    || !TextUtils.equals(lastArtUrl, imageUrl)) {
+                loadArtwork(imageUrl);
+                lastArtVideoId = videoId;
+                lastArtUrl = imageUrl;
+            }
+        } else {
             lastArtVideoId = videoId;
             lastArtUrl = imageUrl;
         }
@@ -323,7 +341,7 @@ public final class GlobalMiniPlayerController implements PlaybackEventBus.Listen
 
         SongPlayerFragment playerFragment = SongPlayerFragment.newInstance(
                 ids, titles, artists, durations, images,
-                snapshotIndex, false
+                snapshotIndex, startPlaying
         );
 
         activity.getSupportFragmentManager()
@@ -331,13 +349,7 @@ public final class GlobalMiniPlayerController implements PlaybackEventBus.Listen
                 .setReorderingAllowed(true)
                 .add(R.id.playerContainer, playerFragment, "song_player")
                 .hide(playerFragment)
-                .runOnCommit(() -> {
-                    playerFragment.externalReplaceQueue(
-                            ids, titles, artists, durations, images,
-                            snapshotIndex, startPlaying
-                    );
-                    updateUi();
-                })
+                .runOnCommit(this::updateUi)
                 .commit();
     }
 
@@ -385,7 +397,41 @@ public final class GlobalMiniPlayerController implements PlaybackEventBus.Listen
                 .commit();
     }
 
-    // ── Artwork ───────────────────────────────────────────────────
+    // ── PlaybackLoadingBus.Listener ─────────────────────────────────────
+
+    @Override
+    public void onPlaybackLoadingStateChanged(@NonNull String videoId, boolean loading) {
+        if (activity.isFinishing() || activity.isDestroyed()) return;
+        if (loading) {
+            if (pbMiniLoading != null) pbMiniLoading.setVisibility(View.VISIBLE);
+            if (ivArt != null) {
+                ivArt.animate().cancel();
+                ivArt.setAlpha(0f);
+            }
+            // Immediately show pause icon so user sees "playing" feedback while buffering
+            miniPlaying = true;
+            btnPlayPause.setImageResource(R.drawable.ic_mini_pause);
+        } else {
+            if (pbMiniLoading != null) pbMiniLoading.setVisibility(View.GONE);
+            if (ivArt != null) {
+                ivArt.animate().cancel();
+                ivArt.animate().alpha(1f).setDuration(300).start();
+            }
+        }
+    }
+
+    private void syncMiniLoadingState() {
+        String loadingId = PlaybackLoadingBus.getLoadingVideoId();
+        if (loadingId != null) {
+            if (pbMiniLoading != null) pbMiniLoading.setVisibility(View.VISIBLE);
+            if (ivArt != null) ivArt.setAlpha(0f);
+        } else {
+            if (pbMiniLoading != null) pbMiniLoading.setVisibility(View.GONE);
+            if (ivArt != null) ivArt.setAlpha(1f);
+        }
+    }
+
+    // ── Artwork ─────────────────────────────────────────────────────────
 
     private void loadArtwork(@Nullable String imageUrl) {
         if (TextUtils.isEmpty(imageUrl) || activity.isFinishing() || activity.isDestroyed()) {
@@ -403,5 +449,103 @@ public final class GlobalMiniPlayerController implements PlaybackEventBus.Listen
                     .into(ivArt);
         } catch (Exception ignored) {
         }
+    }
+
+    // ── Video surface management ─────────────────────────────────────
+
+    /**
+     * Attaches an ExoMediaPlayer's video output to the mini-player's PlayerView.
+     * Shows the mini video view and hides the artwork ImageView.
+     */
+    public void attachVideoSurface(@NonNull ExoMediaPlayer player) {
+        if (miniPlayerVideoView == null) return;
+        player.attachPlayerView(miniPlayerVideoView);
+        miniPlayerVideoView.setVisibility(View.VISIBLE);
+        if (ivArt != null) ivArt.setVisibility(View.GONE);
+        videoAttached = true;
+    }
+
+    /**
+     * Detaches video from the mini-player's PlayerView.
+     * Hides the mini video view and restores the artwork ImageView.
+     */
+    public void detachVideoSurface(@Nullable ExoMediaPlayer player) {
+        if (miniPlayerVideoView == null) return;
+        if (player != null) {
+            player.detachPlayerView(miniPlayerVideoView);
+        }
+        miniPlayerVideoView.setPlayer(null);
+        miniPlayerVideoView.setVisibility(View.GONE);
+        if (ivArt != null) ivArt.setVisibility(View.VISIBLE);
+        videoAttached = false;
+    }
+
+    public boolean isVideoAttached() {
+        return videoAttached;
+    }
+
+    public void setVideoAttached(boolean attached) {
+        this.videoAttached = attached;
+    }
+
+    @Nullable
+    public androidx.media3.ui.PlayerView getMiniPlayerVideoView() {
+        return miniPlayerVideoView;
+    }
+
+    @Nullable
+    public ImageView getArtView() {
+        return ivArt;
+    }
+
+    @Nullable
+    public android.view.ViewGroup getVideoViewParent() {
+        return miniPlayerVideoParent;
+    }
+
+    /**
+     * Shows a black overlay + spinner in the mini-player while video static detection runs.
+     * Art is hidden, spinner is shown on a black background.
+     */
+    public void showVideoOverlay() {
+        videoOverlayActive = true;
+        if (ivArt != null) {
+            ivArt.animate().cancel();
+            ivArt.setAlpha(0f);
+        }
+        if (pbMiniLoading != null) pbMiniLoading.setVisibility(View.VISIBLE);
+        if (miniPlayerVideoView != null) miniPlayerVideoView.setVisibility(View.GONE);
+    }
+
+    /**
+     * Hides the overlay spinner when video is confirmed as real video.
+     * Called right before attachVideoSurface.
+     */
+    public void hideVideoOverlay() {
+        videoOverlayActive = false;
+        if (pbMiniLoading != null) pbMiniLoading.setVisibility(View.GONE);
+        if (ivArt != null) {
+            ivArt.animate().cancel();
+            ivArt.setAlpha(1f);
+        }
+    }
+
+    /**
+     * Reverts from video overlay state back to normal artwork display.
+     * Called when video is determined to be static.
+     */
+    public void revertVideoToArtwork() {
+        videoOverlayActive = false;
+        if (pbMiniLoading != null) pbMiniLoading.setVisibility(View.GONE);
+        if (miniPlayerVideoView != null) {
+            miniPlayerVideoView.setPlayer(null);
+            miniPlayerVideoView.setVisibility(View.GONE);
+        }
+        if (ivArt != null) {
+            ivArt.animate().cancel();
+            ivArt.setAlpha(1f);
+            ivArt.setVisibility(View.VISIBLE);
+        }
+        videoAttached = false;
     }
 }

@@ -60,6 +60,7 @@ class SettingsFragment : Fragment() {
     private lateinit var swOfflineMode: MaterialSwitch
     private lateinit var swMonoAudio: MaterialSwitch
     private lateinit var swGaplessPlayback: MaterialSwitch
+    private lateinit var swDownloadCanvas: MaterialSwitch
     private lateinit var rowDownloadQuality: View
     private lateinit var tvDownloadQualityValue: TextView
     private lateinit var rowStreamingQuality: View
@@ -118,6 +119,7 @@ class SettingsFragment : Fragment() {
     private var lastOfflineModeEnabled = false
     private var lastMonoAudioEnabled = false
     private var lastDownloadQuality: String? = null
+    private var lastDownloadCanvasEnabled = false
     private var lastStreamingQuality: String? = null
     private var lastProfileSignedIn = false
     private var lastProfileDisplayName: String? = null
@@ -152,6 +154,7 @@ class SettingsFragment : Fragment() {
         swOfflineMode = v.findViewById(R.id.swOfflineMode)
         swMonoAudio = v.findViewById(R.id.swMonoAudio)
         swGaplessPlayback = v.findViewById(R.id.swGaplessPlayback)
+        swDownloadCanvas = v.findViewById(R.id.swDownloadCanvas)
         rowDownloadQuality = v.findViewById(R.id.rowDownloadQuality)
         rowStreamingQuality = v.findViewById(R.id.rowStreamingQuality)
         rowOpenEqualizer = v.findViewById(R.id.rowOpenEqualizer)
@@ -395,6 +398,7 @@ class SettingsFragment : Fragment() {
         val mobileDownloads = settingsPrefs.getBoolean(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false)
         val offlineMode = settingsPrefs.getBoolean(CloudSyncManager.KEY_OFFLINE_MODE_ENABLED, false)
         val quality = normalizeQuality(settingsPrefs.getString(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_QUALITY, CloudSyncManager.DOWNLOAD_QUALITY_MEDIUM))
+        val canvasEnabled = settingsPrefs.getBoolean(CloudSyncManager.KEY_DOWNLOAD_CANVAS_ENABLED, true)
         val streamingQuality = normalizeStreamingQuality(settingsPrefs.getString(CloudSyncManager.KEY_STREAMING_QUALITY, CloudSyncManager.STREAMING_QUALITY_MEDIUM))
         val monoAudio = settingsPrefs.getBoolean(CloudSyncManager.KEY_MONO_AUDIO, false)
 
@@ -402,12 +406,14 @@ class SettingsFragment : Fragment() {
             lastOfflineCrossfadeSeconds == crossfade &&
             lastAllowMobileDataDownloads == mobileDownloads && lastOfflineModeEnabled == offlineMode &&
             lastDownloadQuality == quality &&
+            lastDownloadCanvasEnabled == canvasEnabled &&
             lastStreamingQuality == streamingQuality &&
             lastMonoAudioEnabled == monoAudio) return
 
         hasSettingsSnapshot = true
         lastOfflineCrossfadeSeconds = crossfade
         lastAllowMobileDataDownloads = mobileDownloads; lastOfflineModeEnabled = offlineMode; lastDownloadQuality = quality
+        lastDownloadCanvasEnabled = canvasEnabled
         lastStreamingQuality = streamingQuality
         lastMonoAudioEnabled = monoAudio
 
@@ -455,7 +461,21 @@ class SettingsFragment : Fragment() {
             }
         }
 
-        tvDownloadQualityValue.text = labelForQuality(quality)
+        swDownloadCanvas.apply {
+            setOnCheckedChangeListener(null)
+            isChecked = canvasEnabled
+            setOnCheckedChangeListener { _, c ->
+                settingsPrefs.edit().putBoolean(CloudSyncManager.KEY_DOWNLOAD_CANVAS_ENABLED, c).apply()
+                renderSettingsState()
+            }
+        }
+
+        // When canvas is enabled, lock download quality (video is fixed 360p)
+        rowDownloadQuality.alpha = if (canvasEnabled) 0.4f else 1f
+        rowDownloadQuality.isClickable = !canvasEnabled
+        rowDownloadQuality.isFocusable = !canvasEnabled
+
+        tvDownloadQualityValue.text = if (canvasEnabled) "Video 360p" else labelForQuality(quality)
         tvStreamingQualityValue.text = labelForStreamingQuality(streamingQuality)
 
         sbOfflineCrossfade.apply {

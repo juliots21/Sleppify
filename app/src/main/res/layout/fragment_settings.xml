@@ -382,7 +382,7 @@
                     android:layout_marginHorizontal="16dp"
                     android:background="#0AFFFFFF" />
 
-                <!-- Calidad de descarga - Tercero -->
+                <!-- Calidad de descarga - Tercero (hidden) -->
                 <LinearLayout
                     android:id="@+id/rowDownloadQuality"
                     android:layout_width="match_parent"
@@ -392,7 +392,8 @@
                     android:foreground="?attr/selectableItemBackground"
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
-                    android:padding="16dp">
+                    android:padding="16dp"
+                    android:visibility="gone">
 
                     <LinearLayout
                         android:layout_width="0dp"
@@ -437,7 +438,57 @@
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:layout_marginHorizontal="16dp"
-                    android:background="#0AFFFFFF" />
+                    android:background="#0AFFFFFF"
+                    android:visibility="gone" />
+
+                <!-- Descargar canvas (video) (hidden) -->
+                <LinearLayout
+                    android:id="@+id/rowDownloadCanvas"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="16dp"
+                    android:visibility="gone">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Descargar canvas"
+                            android:textColor="@color/text_primary"
+                            android:textSize="14sp" />
+
+                        <TextView
+                            android:id="@+id/tvDownloadCanvasSubtitle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="La calidad de las canciones descargadas serán de calidad media y no se podrá cambiar."
+                            android:textColor="@color/text_secondary"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/swDownloadCanvas"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:checked="false" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginHorizontal="16dp"
+                    android:background="#0AFFFFFF"
+                    android:visibility="gone" />
 
                 <!-- Calidad de streaming - Cuarto (NUEVO) -->
                 <LinearLayout

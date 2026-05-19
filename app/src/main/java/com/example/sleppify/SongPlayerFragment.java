@@ -93,6 +93,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
+@androidx.annotation.OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)
 public class SongPlayerFragment extends Fragment {
 
     private static final String TAG = "SongPlayerFragment";
@@ -156,6 +157,14 @@ public class SongPlayerFragment extends Fragment {
     private ShapeableImageView ivPlayerBackdrop;
     private AnimatedEqualizerView animatedEqPlayer;
     private FrameLayout flPlayerHero;
+    @Nullable
+    private android.widget.ProgressBar pbVideoLoading;
+    private boolean currentSourceIsVideo = false;
+    private static final String PREFS_VIDEO_STATIC_CACHE = "video_static_cache";
+    @NonNull
+    private String currentVideoStaticCheckId = "";
+    @Nullable
+    private String currentVideoFilePath = null;
     private TextView tvPlayerTitle;
     private TextView tvPlayerArtist;
     private TextView tvActionLikeCount;
@@ -520,6 +529,7 @@ public class SongPlayerFragment extends Fragment {
         playerBackgroundContainer = ivPlayerBackdrop;
         animatedEqPlayer = view.findViewById(R.id.animatedEqPlayer);
         flPlayerHero = view.findViewById(R.id.flPlayerHero);
+        pbVideoLoading = view.findViewById(R.id.pbVideoLoading);
         playerArtworkBootstrapPending = true;
         tvPlayerTitle = view.findViewById(R.id.tvPlayerTitle);
         tvPlayerTitle.setSelected(true);
@@ -677,6 +687,10 @@ public class SongPlayerFragment extends Fragment {
             swipeDismissAnimationRunning = false;
             // ✅ ALWAYS pause ticker when hidden to reduce CPU waste
             stopLocalProgressTicker();
+            // Move video surface to mini player when collapsing
+            if (currentSourceIsVideo && localExoMediaPlayer != null) {
+                moveVideoToMiniPlayer();
+            }
         } else {
             if (getView() != null) {
                 if (!playerEnterAnimationRunning) {
@@ -686,6 +700,10 @@ public class SongPlayerFragment extends Fragment {
                 getView().setVisibility(View.VISIBLE);
             }
             resetPlayerScrollToTop();
+            // Reparent video surface from mini player to hero — same Surface, zero lag
+            if (currentSourceIsVideo && localExoMediaPlayer != null) {
+                moveVideoFromMiniPlayer();
+            }
             // ✅ Restart ticker when visible if playing
             if (isPlaying) {
                 startLocalProgressTicker();
@@ -796,6 +814,10 @@ public class SongPlayerFragment extends Fragment {
         cancelPendingSocialStatsFetch();
         cancelPendingStreamResolver();
         clearPlayerCoverRequest();
+        // Return the shared video view to the mini-player before destroying this fragment's view
+        if (currentSourceIsVideo) {
+            moveVideoToMiniPlayer();
+        }
         resetPlayerHeroContainerHeight();
         stopLocalProgressTicker();
         
@@ -1354,6 +1376,7 @@ public class SongPlayerFragment extends Fragment {
         }
 
         final PlayerTrack track = tracks.get(currentIndex);
+        Log.d(TAG, "[PLAYBACK_FLOW] playCurrentTrack START videoId=" + track.videoId + " title=" + track.title);
         loadedVideoId = track.videoId;
         playCountRecordedForCurrentTrack = false;
         currentSeconds = 0;
@@ -1371,6 +1394,7 @@ public class SongPlayerFragment extends Fragment {
                 && snapshot.currentTrack().videoId.equals(track.videoId);
 
         if (isSharedPlayerActive && localExoMediaPlayer == null) {
+            PlaybackLoadingBus.clearLoading();
             bindCurrentTrackInternal(true, false); // Keep current time and UI intact
             usingOfflineSource = true;
             localSourcePreparing = false;
@@ -1401,9 +1425,6 @@ public class SongPlayerFragment extends Fragment {
         lastPlaybackStartRequestAtMs = SystemClock.elapsedRealtime();
 
         cancelPlaybackErrorRetry();
-        if (hasPendingStreamResolution() && TextUtils.equals(loadedVideoId, track.videoId)) {
-            return;
-        }
         cancelPendingStreamResolver();
 
         // requestToken already incremented above
@@ -1413,6 +1434,7 @@ public class SongPlayerFragment extends Fragment {
         // OfflineAudioStore.hasOfflineAudio is a simple SharedPrefs/file existence check.
         boolean hasOfflineLocal = OfflineAudioStore.hasOfflineAudio(requireContext(), track.videoId);
         if (hasOfflineLocal) {
+            PlaybackLoadingBus.clearLoading();
             List<String> directSources = buildDirectSourceCandidates(track);
             attemptPlaybackFromSources(track, directSources, 0, requestToken, 0);
             return;
@@ -1420,6 +1442,7 @@ public class SongPlayerFragment extends Fragment {
 
         // GAPLESS: if pre-buffered player is ready for this track, use it instantly
         if (gaplessPreBufferedPlayer != null && TextUtils.equals(gaplessPreBufferedVideoId, track.videoId)) {
+            PlaybackLoadingBus.clearLoading();
             ExoMediaPlayer preBuffered = gaplessPreBufferedPlayer;
             gaplessPreBufferedPlayer = null;
             gaplessPreBufferedVideoId = "";
@@ -1429,8 +1452,19 @@ public class SongPlayerFragment extends Fragment {
         }
         cancelGaplessPreBuffer();
 
+        // If not playing (paused restore), just bind metadata — don't resolve online
+        if (!isPlaying) {
+            PlaybackLoadingBus.clearLoading();
+            setPlaybackUiForPreparedSource();
+            return;
+        }
+
+        // Online track: notify loading bus
+        PlaybackLoadingBus.notifyLoadingStarted(track.videoId);
+
         // Not offline — check prefetch (main-thread fields), then resolve online via executor.
         if (TextUtils.equals(track.videoId, prefetchedNextVideoId) && !TextUtils.isEmpty(prefetchedNextUrl)) {
+            Log.d(TAG, "[PLAYBACK_FLOW] using prefetched URL for videoId=" + track.videoId);
             String url = prefetchedNextUrl;
             prefetchedNextVideoId = null;
             prefetchedNextUrl = null;
@@ -1439,6 +1473,7 @@ public class SongPlayerFragment extends Fragment {
             });
             return;
         }
+        Log.d(TAG, "[PLAYBACK_FLOW] no offline/prefetch, resolving online for videoId=" + track.videoId);
         resolveAndPlayOnlineTrack(track, requestToken);
     }
 
@@ -1513,21 +1548,28 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
+        Log.d(TAG, "[PLAYBACK_FLOW] resolveAndPlayOnlineTrack BEGIN videoId=" + track.videoId + " forceAlt=" + forceAlternativeClient);
         pendingStreamResolverFuture = streamResolverExecutor.submit(() -> {
+            long resolveStartMs = System.currentTimeMillis();
             String resolvedUrl = forceAlternativeClient
                     ? InnertubeResolver.resolveStreamUrl(requireContext(), track.videoId, true)
                     : InnertubeResolver.resolveStreamUrl(requireContext(), track.videoId);
+            long resolveElapsedMs = System.currentTimeMillis() - resolveStartMs;
+            Log.d(TAG, "[PLAYBACK_FLOW] resolveStreamUrl DONE videoId=" + track.videoId
+                    + " elapsed=" + resolveElapsedMs + "ms resolved=" + (resolvedUrl != null && !resolvedUrl.isEmpty()));
 
             localProgressHandler.post(() -> {
                 if (requestToken != activePlaybackRequestToken || !isAdded()) return;
                 pendingStreamResolverFuture = null;
 
                 if (!TextUtils.isEmpty(resolvedUrl)) {
+                    Log.d(TAG, "[PLAYBACK_FLOW] URL resolved, starting playback source for videoId=" + track.videoId);
                     startMediaPlaybackFromSource(track, resolvedUrl, requestToken, () -> {
                         InnertubeResolver.invalidate(track.videoId);
                         tryReresolveOrSkipCurrentTrack("Fallo de reproducción directa: re-resolviendo.", false);
                     });
                 } else {
+                    Log.w(TAG, "[PLAYBACK_FLOW] URL resolve FAILED for videoId=" + track.videoId);
                     tryReresolveOrSkipCurrentTrack("No se pudo resolver el stream directo. Reintentando.", false);
                 }
             });
@@ -1756,6 +1798,8 @@ public class SongPlayerFragment extends Fragment {
         stopLocalProgressTicker();
         releaseLocalExoMediaPlayer();
         usingOfflineSource = !networkSource;
+        currentSourceIsVideo = !networkSource && isVideoSource(source);
+        currentVideoFilePath = currentSourceIsVideo ? source : null;
         localSourcePreparing = true;
         updatePlayerSurfaceForSource();
 
@@ -1793,10 +1837,18 @@ public class SongPlayerFragment extends Fragment {
         } catch (Exception ignored) {
         }
 
+        // Attach video surface when playing video files
+        if (currentSourceIsVideo) {
+            androidx.media3.ui.PlayerView sharedVideo = getSharedVideoView();
+            if (sharedVideo != null) {
+                player.attachPlayerView(sharedVideo);
+            }
+        }
 
         player.setOnPreparedListener(mp -> {
             cancelSourcePrepareTimeout();
             localSourcePreparing = false;
+            Log.d(TAG, "[PLAYBACK_FLOW] onPrepared videoId=" + track.videoId + " durationMs=" + mp.getDuration());
 
             if (!isAdded()
                     || localExoMediaPlayer != mp
@@ -1823,14 +1875,60 @@ public class SongPlayerFragment extends Fragment {
                 try {
                     mp.setVolume(1f, 1f);
                     mp.start();
+                    Log.d(TAG, "[PLAYBACK_FLOW] mp.start() called, AUDIO PLAYING for videoId=" + track.videoId);
+                    PlaybackLoadingBus.notifyAudioConfirmed(track.videoId);
                     consecutiveStreamFailures = 0; // Reset counter on successful playback
                     audioTrackReinitToken = -1;
                     startLocalProgressTicker();
                     
+                    // Check if video is static (single image) or has real motion
+                    if (currentSourceIsVideo && currentVideoFilePath != null) {
+                        final String checkPath = currentVideoFilePath;
+                        final String checkVideoId = track.videoId;
+                        // Show overlay+spinner in mini-player while checking
+                        if (getActivity() instanceof MainActivity) {
+                            GlobalMiniPlayerController mini = ((MainActivity) getActivity()).getGlobalMiniPlayer();
+                            if (mini != null) mini.showVideoOverlay();
+                        }
+                        checkVideoStaticAsync(checkPath, checkVideoId,
+                            () -> {
+                                // Real video — hide loading spinner in player
+                                if (pbVideoLoading != null) pbVideoLoading.setVisibility(View.GONE);
+                                // Show live video in mini-player (shared view is already attached)
+                                if (isAdded() && getActivity() instanceof MainActivity) {
+                                    GlobalMiniPlayerController mini = ((MainActivity) getActivity()).getGlobalMiniPlayer();
+                                    if (mini != null) {
+                                        mini.hideVideoOverlay();
+                                        if (isHidden()) {
+                                            // Ensure shared view is in mini-player and visible
+                                            androidx.media3.ui.PlayerView sv = mini.getMiniPlayerVideoView();
+                                            if (sv != null) {
+                                                sv.setVisibility(View.VISIBLE);
+                                                if (mini.getArtView() != null) mini.getArtView().setVisibility(View.GONE);
+                                                mini.setVideoAttached(true);
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            () -> {
+                                // Static image — revert to cover art mode
+                                revertVideoToStaticCover();
+                                // Revert mini-player to artwork
+                                if (isAdded() && getActivity() instanceof MainActivity) {
+                                    GlobalMiniPlayerController mini = ((MainActivity) getActivity()).getGlobalMiniPlayer();
+                                    if (mini != null) mini.revertVideoToArtwork();
+                                }
+                            }
+                        );
+                    } else {
+                        if (pbVideoLoading != null) pbVideoLoading.setVisibility(View.GONE);
+                    }
+
                     // Start pre-fetching the next track once this one is successfully playing
                     prefetchNextTrackStream();
                 } catch (Exception startError) {
-                    Log.e(TAG, "onPrepared: start failed for videoId=" + track.videoId, startError);
+                    Log.e(TAG, "[PLAYBACK_FLOW] onPrepared: start FAILED for videoId=" + track.videoId, startError);
                     if (localExoMediaPlayer == mp) {
                         releaseLocalExoMediaPlayer();
                         usingOfflineSource = false;
@@ -1939,10 +2037,13 @@ public class SongPlayerFragment extends Fragment {
                 if (authHeaders != null) {
                     headers.putAll(authHeaders);
                 }
+                Log.d(TAG, "[PLAYBACK_FLOW] setDataSource HTTP videoId=" + track.videoId + " sourceLen=" + source.length());
                 player.setDataSource(playbackAppContext, Uri.parse(source), headers);
             } else {
+                Log.d(TAG, "[PLAYBACK_FLOW] setDataSource LOCAL videoId=" + track.videoId);
                 player.setDataSource(source);
             }
+            Log.d(TAG, "[PLAYBACK_FLOW] prepareAsync called for videoId=" + track.videoId);
             player.prepareAsync();
             scheduleSourcePrepareTimeout(track, requestToken, player, onFailure);
         } catch (IllegalStateException ise) {
@@ -2713,6 +2814,23 @@ public class SongPlayerFragment extends Fragment {
             loadedVideoId = "";
         }
 
+        // Update video surface for incoming crossfade track
+        boolean nextIsVideo = false;
+        if (isAdded() && OfflineAudioStore.hasOfflineVideo(requireContext(), track.videoId)) {
+            nextIsVideo = true;
+        }
+        currentSourceIsVideo = nextIsVideo;
+        currentVideoFilePath = nextIsVideo
+                ? OfflineAudioStore.getOfflineVideoFile(requireContext(), track.videoId).getAbsolutePath()
+                : null;
+        updatePlayerSurfaceForSource();
+        if (currentSourceIsVideo) {
+            androidx.media3.ui.PlayerView sharedVideo = getSharedVideoView();
+            if (sharedVideo != null) {
+                incoming.attachPlayerView(sharedVideo);
+            }
+        }
+
         incoming.setOnCompletionListener(mp -> {
             if (localExoMediaPlayer != mp) {
                 return;
@@ -2742,6 +2860,47 @@ public class SongPlayerFragment extends Fragment {
         startLocalProgressTicker();
         updatePlayPauseIcon();
         updateMediaSessionState();
+
+        // Run static video detection for crossfade tracks (same as onPrepared path)
+        if (currentSourceIsVideo && currentVideoFilePath != null) {
+            final String checkPath = currentVideoFilePath;
+            final String checkVideoId = track.videoId;
+            // Show overlay+spinner in mini-player while checking
+            if (getActivity() instanceof MainActivity) {
+                GlobalMiniPlayerController mini = ((MainActivity) getActivity()).getGlobalMiniPlayer();
+                if (mini != null) mini.showVideoOverlay();
+            }
+            checkVideoStaticAsync(checkPath, checkVideoId,
+                () -> {
+                    // Real video — hide loading spinner in player
+                    if (pbVideoLoading != null) pbVideoLoading.setVisibility(View.GONE);
+                    // Show live video in mini-player (shared view already attached)
+                    if (isAdded() && getActivity() instanceof MainActivity) {
+                        GlobalMiniPlayerController mini = ((MainActivity) getActivity()).getGlobalMiniPlayer();
+                        if (mini != null) {
+                            mini.hideVideoOverlay();
+                            if (isHidden()) {
+                                androidx.media3.ui.PlayerView sv = mini.getMiniPlayerVideoView();
+                                if (sv != null) {
+                                    sv.setVisibility(View.VISIBLE);
+                                    if (mini.getArtView() != null) mini.getArtView().setVisibility(View.GONE);
+                                    mini.setVideoAttached(true);
+                                }
+                            }
+                        }
+                    }
+                },
+                () -> {
+                    // Static image — revert to cover art mode
+                    revertVideoToStaticCover();
+                    // Revert mini-player to artwork
+                    if (isAdded() && getActivity() instanceof MainActivity) {
+                        GlobalMiniPlayerController mini = ((MainActivity) getActivity()).getGlobalMiniPlayer();
+                        if (mini != null) mini.revertVideoToArtwork();
+                    }
+                }
+            );
+        }
         
         prefetchedNextVideoId = null;
         prefetchNextTrackStream();
@@ -2840,6 +2999,13 @@ public class SongPlayerFragment extends Fragment {
         if (!isAdded() || getActivity() == null || ivPlayerCover == null) {
             return;
         }
+        // When playing video, don't load cover art — video surface handles display
+        if (currentSourceIsVideo) {
+            clearPlayerCoverRequest();
+            ivPlayerCover.setImageDrawable(null);
+            ivPlayerCover.setVisibility(View.GONE);
+            return;
+        }
 
         String requestVideoId = track.videoId == null ? "" : track.videoId.trim();
         String fallbackImageUrl = track.imageUrl == null ? "" : track.imageUrl.trim();
@@ -2856,12 +3022,6 @@ public class SongPlayerFragment extends Fragment {
 
         activeCoverVideoId = requestVideoId;
         clearPlayerCoverRequest();
-
-        if (!bootstrapArtwork) {
-            ivPlayerCover.animate().cancel();
-            ivPlayerCover.setAlpha(0f);
-            ivPlayerCover.setImageDrawable(null);
-        }
 
         playerCoverTarget = new CustomTarget<Bitmap>() {
             @Override
@@ -2880,7 +3040,6 @@ public class SongPlayerFragment extends Fragment {
                         }
                         ivPlayerCover.animate().cancel();
                         ivPlayerCover.setTranslationX(0f);
-                        ivPlayerCover.setAlpha(0f);
                         // Adjust scaleType based on bitmap aspect ratio after crop:
                         // wide/panoramic → fitCenter (show full width); square/tall → centerCrop
                         if (processedResource != null && processedResource.getWidth() > processedResource.getHeight() * 1.2f) {
@@ -2888,14 +3047,14 @@ public class SongPlayerFragment extends Fragment {
                         } else {
                             ivPlayerCover.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
                         }
-                        // Set image and promote to hardware layer BEFORE starting the animation.
-                        // This uploads the bitmap to the GPU in the current vsync so the first
-                        // animated frame has zero upload cost — eliminating the "10fps" jank.
+                        // Set new bitmap directly — old image is replaced without black gap.
+                        // Subtle fade from 0.7→1 gives visual feedback without flash.
                         ivPlayerCover.setImageBitmap(processedResource);
+                        ivPlayerCover.setAlpha(0.7f);
                         ivPlayerCover.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null);
                         ivPlayerCover.animate()
                             .alpha(1f)
-                            .setDuration(420L)
+                            .setDuration(280L)
                             .setInterpolator(new android.view.animation.DecelerateInterpolator())
                             .withEndAction(() -> ivPlayerCover.setLayerType(
                                     android.view.View.LAYER_TYPE_NONE, null))
@@ -2968,6 +3127,11 @@ public class SongPlayerFragment extends Fragment {
 
     private void loadPlayerBackdrop(@NonNull PlayerTrack track, boolean bootstrapArtwork) {
         if (!isAdded() || getActivity() == null || playerBackgroundContainer == null) {
+            completePlayerArtworkBootstrap();
+            return;
+        }
+        // Keep pure black backdrop when video is playing
+        if (currentSourceIsVideo) {
             completePlayerArtworkBootstrap();
             return;
         }
@@ -3168,11 +3332,6 @@ public class SongPlayerFragment extends Fragment {
         if (bootstrapArtwork) {
             showPlayerArtworkLoadingState();
             if (!isAdded()) return;
-        } else {
-            if (ivPlayerCover != null) {
-                ivPlayerCover.animate().cancel();
-                ivPlayerCover.animate().alpha(0f).setDuration(180).start();
-            }
         }
 
         // Always load artwork for notification/MediaSession regardless of player visibility.
@@ -4289,12 +4448,104 @@ public class SongPlayerFragment extends Fragment {
         backPressedCallback.setEnabled(!hidden && isResumed());
     }
 
-    private void updatePlayerSurfaceForSource() {
-        if (ivPlayerCover == null) {
-            return;
+    private void moveVideoToMiniPlayer() {
+        if (!isAdded() || localExoMediaPlayer == null) return;
+        if (getActivity() instanceof MainActivity) {
+            GlobalMiniPlayerController mini = ((MainActivity) getActivity()).getGlobalMiniPlayer();
+            if (mini == null) return;
+            androidx.media3.ui.PlayerView sharedView = mini.getMiniPlayerVideoView();
+            android.view.ViewGroup miniParent = mini.getVideoViewParent();
+            if (sharedView == null || miniParent == null) return;
+            // Reparent the shared SurfaceView back to the mini-player container.
+            // No switchTargetView → same Surface → zero codec reconfiguration.
+            android.view.ViewGroup currentParent = (android.view.ViewGroup) sharedView.getParent();
+            if (currentParent != miniParent) {
+                if (currentParent != null) currentParent.removeView(sharedView);
+                // Restore mini-player layout params (50×50dp container)
+                FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT);
+                miniParent.addView(sharedView, lp);
+            }
+            sharedView.setVisibility(View.VISIBLE);
+            if (mini.getArtView() != null) mini.getArtView().setVisibility(View.GONE);
+            mini.setVideoAttached(true);
         }
-        ivPlayerCover.setVisibility(View.VISIBLE);
-        ivPlayerCover.setClickable(true);
+    }
+
+    private void moveVideoFromMiniPlayer() {
+        if (!isAdded() || localExoMediaPlayer == null || flPlayerHero == null) return;
+        if (getActivity() instanceof MainActivity) {
+            GlobalMiniPlayerController mini = ((MainActivity) getActivity()).getGlobalMiniPlayer();
+            if (mini == null) return;
+            androidx.media3.ui.PlayerView sharedView = mini.getMiniPlayerVideoView();
+            if (sharedView == null) return;
+            // Reparent the shared SurfaceView into the full player's hero container.
+            // Same Surface object → no codec output surface change → instant, zero lag.
+            android.view.ViewGroup currentParent = (android.view.ViewGroup) sharedView.getParent();
+            if (currentParent != flPlayerHero) {
+                if (currentParent != null) currentParent.removeView(sharedView);
+                FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT);
+                flPlayerHero.addView(sharedView, 1, lp); // index 1: above ivPlayerCover, below pbVideoLoading
+            }
+            sharedView.setVisibility(View.VISIBLE);
+            if (mini.getArtView() != null) mini.getArtView().setVisibility(View.VISIBLE);
+            mini.setVideoAttached(false);
+        }
+    }
+
+    @Nullable
+    private androidx.media3.ui.PlayerView getSharedVideoView() {
+        if (!isAdded() || !(getActivity() instanceof MainActivity)) return null;
+        GlobalMiniPlayerController mini = ((MainActivity) getActivity()).getGlobalMiniPlayer();
+        return mini != null ? mini.getMiniPlayerVideoView() : null;
+    }
+
+    private static boolean isVideoSource(@Nullable String source) {
+        return source != null && source.toLowerCase(java.util.Locale.ROOT).endsWith(".mp4");
+    }
+
+    private void updatePlayerSurfaceForSource() {
+        if (ivPlayerCover == null) return;
+        if (currentSourceIsVideo) {
+            ivPlayerCover.setVisibility(View.GONE);
+            if (pbVideoLoading != null) pbVideoLoading.setVisibility(View.VISIBLE);
+            // Ensure the shared video view is in flPlayerHero when full player is visible
+            if (!isHidden() && flPlayerHero != null) {
+                moveVideoFromMiniPlayer();
+            }
+            // Fixed height (same as cover art) so controls never shift.
+            // Full-width (no margins) for video — better rendering performance.
+            if (flPlayerHero != null && getContext() != null) {
+                int heroHeightPx = dpToPx(PLAYER_HERO_DEFAULT_HEIGHT_DP);
+                androidx.constraintlayout.widget.ConstraintLayout.LayoutParams p =
+                        (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) flPlayerHero.getLayoutParams();
+                if (p != null) {
+                    p.leftMargin = 0;
+                    p.rightMargin = 0;
+                    p.height = heroHeightPx;
+                    flPlayerHero.setLayoutParams(p);
+                }
+                flPlayerHero.setBackground(androidx.core.content.ContextCompat.getDrawable(getContext(), R.drawable.bg_player_cover_flat));
+            }
+            // Pure black backdrop for video
+            if (playerBackgroundContainer != null) {
+                playerBackgroundContainer.animate().cancel();
+                playerBackgroundContainer.setBackgroundColor(0xFF000000);
+                playerBackgroundContainer.setTag(R.id.tag_backdrop_top_color, 0xFF000000);
+            }
+        } else {
+            ivPlayerCover.setVisibility(View.VISIBLE);
+            ivPlayerCover.setClickable(true);
+            // Hide shared video view if it was reparented here
+            androidx.media3.ui.PlayerView sharedVideo = getSharedVideoView();
+            if (sharedVideo != null && sharedVideo.getParent() == flPlayerHero) {
+                sharedVideo.setVisibility(View.GONE);
+            }
+            if (pbVideoLoading != null) pbVideoLoading.setVisibility(View.GONE);
+        }
     }
 
     private boolean collapseToMiniMode(boolean animate) {
@@ -5841,6 +6092,11 @@ public class SongPlayerFragment extends Fragment {
         if (localExoMediaPlayer == null) {
             return;
         }
+        // Detach from the shared video view (used for both mini-player and full player)
+        androidx.media3.ui.PlayerView sharedVideo = getSharedVideoView();
+        if (sharedVideo != null) {
+            localExoMediaPlayer.detachPlayerView(sharedVideo);
+        }
         try {
             localExoMediaPlayer.release();
         } catch (Exception ignored) {
@@ -6143,6 +6399,176 @@ public class SongPlayerFragment extends Fragment {
         );
         playerBackgroundContainer.setBackground(darkGrad);
         playerBackgroundContainer.setTag(R.id.tag_backdrop_top_color, 0xFF0D0D0D);
+    }
+
+    /**
+     * Checks if a downloaded .mp4 video is static (single image) or has real motion.
+     * Compares two frames (at 0s and 500ms) downscaled to 64x64.
+     * Result is cached in SharedPreferences so subsequent plays skip the check.
+     *
+     * @param filePath path to the .mp4 file
+     * @param videoId  track videoId for cache key
+     * @param onRealVideo  called on main thread if the video has real motion
+     * @param onStaticVideo called on main thread if the video is a static image
+     */
+    private void checkVideoStaticAsync(
+            @NonNull String filePath,
+            @NonNull String videoId,
+            @NonNull Runnable onRealVideo,
+            @NonNull Runnable onStaticVideo
+    ) {
+        currentVideoStaticCheckId = videoId;
+
+        // Check cache first
+        if (isAdded()) {
+            android.content.SharedPreferences cache = requireContext()
+                    .getSharedPreferences(PREFS_VIDEO_STATIC_CACHE, Context.MODE_PRIVATE);
+            if (cache.contains(videoId)) {
+                boolean isStatic = cache.getBoolean(videoId, true);
+                if (isStatic) {
+                    onStaticVideo.run();
+                } else {
+                    onRealVideo.run();
+                }
+                return;
+            }
+        }
+
+        imageProcessingExecutor.execute(() -> {
+            boolean isStatic = false; // Default: benefit of the doubt → real video
+            android.media.MediaMetadataRetriever retriever = null;
+            try {
+                retriever = new android.media.MediaMetadataRetriever();
+                retriever.setDataSource(filePath);
+
+                // Get video duration to pick good sample points
+                String durationStr = retriever.extractMetadata(
+                        android.media.MediaMetadataRetriever.METADATA_KEY_DURATION);
+                long durationMs = 0;
+                try { durationMs = Long.parseLong(durationStr); } catch (Exception ignored) {}
+
+                // Sample 3 frames at 5%, 30%, 60% of duration for robust comparison
+                long timeUs0, timeUs1, timeUs2;
+                if (durationMs > 20_000) {
+                    timeUs0 = (long) (durationMs * 0.05) * 1000L;
+                    timeUs1 = (long) (durationMs * 0.30) * 1000L;
+                    timeUs2 = (long) (durationMs * 0.60) * 1000L;
+                } else if (durationMs > 5_000) {
+                    timeUs0 = 1_000_000L; // 1s
+                    timeUs1 = (long) (durationMs * 0.40) * 1000L;
+                    timeUs2 = (long) (durationMs * 0.75) * 1000L;
+                } else {
+                    timeUs0 = 0L;
+                    timeUs1 = Math.max(500_000L, (durationMs / 3) * 1000L);
+                    timeUs2 = Math.max(1_000_000L, (durationMs * 2 / 3) * 1000L);
+                }
+
+                // Use OPTION_CLOSEST_SYNC (fast keyframe seek) with wide time gaps
+                Bitmap frame0 = retriever.getFrameAtTime(timeUs0, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+                Bitmap frame1 = retriever.getFrameAtTime(timeUs1, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+                Bitmap frame2 = retriever.getFrameAtTime(timeUs2, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+
+                if (frame0 != null && frame1 != null && frame2 != null) {
+                    // Downscale to 64x64 for fast comparison
+                    Bitmap small0 = Bitmap.createScaledBitmap(frame0, 64, 64, true);
+                    Bitmap small1 = Bitmap.createScaledBitmap(frame1, 64, 64, true);
+                    Bitmap small2 = Bitmap.createScaledBitmap(frame2, 64, 64, true);
+
+                    int pixelCount = 64 * 64;
+                    long diff01 = 0, diff02 = 0;
+                    for (int y = 0; y < 64; y++) {
+                        for (int x = 0; x < 64; x++) {
+                            int p0 = small0.getPixel(x, y);
+                            int p1 = small1.getPixel(x, y);
+                            int p2 = small2.getPixel(x, y);
+                            diff01 += Math.abs(((p0 >> 16) & 0xFF) - ((p1 >> 16) & 0xFF));
+                            diff01 += Math.abs(((p0 >> 8) & 0xFF) - ((p1 >> 8) & 0xFF));
+                            diff01 += Math.abs((p0 & 0xFF) - (p1 & 0xFF));
+                            diff02 += Math.abs(((p0 >> 16) & 0xFF) - ((p2 >> 16) & 0xFF));
+                            diff02 += Math.abs(((p0 >> 8) & 0xFF) - ((p2 >> 8) & 0xFF));
+                            diff02 += Math.abs((p0 & 0xFF) - (p2 & 0xFF));
+                        }
+                    }
+                    double avgDiff01 = diff01 / (double) (pixelCount * 3);
+                    double avgDiff02 = diff02 / (double) (pixelCount * 3);
+                    // Static ONLY if ALL pairs show no motion (both < 1.0)
+                    isStatic = avgDiff01 < 1.0 && avgDiff02 < 1.0;
+
+                    Log.d(TAG, "checkVideoStaticAsync: videoId=" + videoId
+                            + " avgDiff01=" + String.format(java.util.Locale.US, "%.2f", avgDiff01)
+                            + " avgDiff02=" + String.format(java.util.Locale.US, "%.2f", avgDiff02)
+                            + " isStatic=" + isStatic
+                            + " t0=" + (timeUs0 / 1000) + "ms t1=" + (timeUs1 / 1000) + "ms t2=" + (timeUs2 / 1000) + "ms"
+                            + " duration=" + durationMs + "ms");
+
+                    small0.recycle();
+                    small1.recycle();
+                    small2.recycle();
+                    frame0.recycle();
+                    frame1.recycle();
+                    frame2.recycle();
+                } else {
+                    // Could not extract frames — assume real video (benefit of the doubt)
+                    Log.w(TAG, "checkVideoStaticAsync: null frames for videoId=" + videoId
+                            + " frame0=" + (frame0 != null) + " frame1=" + (frame1 != null) + " frame2=" + (frame2 != null));
+                    isStatic = false;
+                    if (frame0 != null) frame0.recycle();
+                    if (frame1 != null) frame1.recycle();
+                    if (frame2 != null) frame2.recycle();
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "checkVideoStaticAsync: error analyzing " + videoId, e);
+                isStatic = false; // On error, assume real video
+            } finally {
+                if (retriever != null) {
+                    try { retriever.release(); } catch (Exception ignored) {}
+                }
+            }
+
+            final boolean result = isStatic;
+            // Cache result
+            localProgressHandler.post(() -> {
+                if (!isAdded()) return;
+                requireContext().getSharedPreferences(PREFS_VIDEO_STATIC_CACHE, Context.MODE_PRIVATE)
+                        .edit().putBoolean(videoId, result).apply();
+
+                if (!TextUtils.equals(currentVideoStaticCheckId, videoId)) return;
+                if (result) {
+                    onStaticVideo.run();
+                } else {
+                    onRealVideo.run();
+                }
+            });
+        });
+    }
+
+    /**
+     * Called when the static check determines the video is just a static image.
+     * Hides the PlayerView, detaches the video surface, shows the cover art,
+     * and resets the hero layout to its normal cover art mode.
+     */
+    private void revertVideoToStaticCover() {
+        currentSourceIsVideo = false;
+        androidx.media3.ui.PlayerView sharedVideo = getSharedVideoView();
+        if (sharedVideo != null) {
+            sharedVideo.setVisibility(View.GONE);
+            if (localExoMediaPlayer != null) {
+                localExoMediaPlayer.detachPlayerView(sharedVideo);
+            }
+        }
+        if (pbVideoLoading != null) pbVideoLoading.setVisibility(View.GONE);
+        if (ivPlayerCover != null) {
+            ivPlayerCover.setVisibility(View.VISIBLE);
+            ivPlayerCover.setClickable(true);
+        }
+        // Reset hero to default cover art layout
+        resetPlayerHeroContainerHeight();
+        // Reload cover art and backdrop for the current track
+        if (!tracks.isEmpty() && currentIndex >= 0 && currentIndex < tracks.size()) {
+            PlayerTrack track = tracks.get(currentIndex);
+            loadPlayerCover(track, false, 1);
+            scheduleBackdropLoad(track, false);
+        }
     }
 
 }

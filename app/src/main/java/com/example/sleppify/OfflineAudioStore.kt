@@ -9,6 +9,7 @@ object OfflineAudioStore {
     private const val OFFLINE_AUDIO_DIR = "offline_audio"
     private const val OFFLINE_AUDIO_EXTENSION_WEBM = ".webm"
     private const val OFFLINE_AUDIO_EXTENSION = ".m4a"
+    private const val OFFLINE_VIDEO_EXTENSION = ".mp4"
     private const val LEGACY_OFFLINE_AUDIO_EXTENSION = ".mp3"
     private const val LEGACY_BIN_OFFLINE_AUDIO_EXTENSION = ".bin"
     private const val MIN_VALID_AUDIO_FILE_BYTES = 24L * 1024L
@@ -43,8 +44,26 @@ object OfflineAudioStore {
     }
 
     @JvmStatic
+    fun getOfflineVideoFile(context: Context, trackId: String): File {
+        val normalized = normalizeTrackId(trackId)
+        return File(getOfflineAudioDir(context), normalized + OFFLINE_VIDEO_EXTENSION)
+    }
+
+    @JvmStatic
+    fun hasOfflineVideo(context: Context, trackId: String): Boolean {
+        val normalized = normalizeTrackId(trackId)
+        val mp4 = File(getOfflineAudioDir(context), normalized + OFFLINE_VIDEO_EXTENSION)
+        return mp4.isFile && mp4.length() >= MIN_VALID_AUDIO_FILE_BYTES
+    }
+
+    @JvmStatic
     fun getExistingOfflineAudioFile(context: Context, trackId: String): File {
         val normalized = normalizeTrackId(trackId)
+
+        val mp4 = File(getOfflineAudioDir(context), normalized + OFFLINE_VIDEO_EXTENSION)
+        if (mp4.isFile && mp4.length() > 0L) {
+            return mp4
+        }
 
         val webm = File(getOfflineAudioDir(context), normalized + OFFLINE_AUDIO_EXTENSION_WEBM)
         if (webm.isFile && webm.length() > 0L) {
@@ -140,12 +159,16 @@ object OfflineAudioStore {
     fun deleteOfflineAudio(context: Context, trackId: String): Boolean {
         val normalized = normalizeTrackId(trackId)
         val dir = getOfflineAudioDir(context)
+        val mp4 = File(dir, normalized + OFFLINE_VIDEO_EXTENSION)
         val webm = File(dir, normalized + OFFLINE_AUDIO_EXTENSION_WEBM)
         val preferred = File(dir, normalized + OFFLINE_AUDIO_EXTENSION)
         val legacy = File(dir, normalized + LEGACY_OFFLINE_AUDIO_EXTENSION)
         val legacyBin = File(dir, normalized + LEGACY_BIN_OFFLINE_AUDIO_EXTENSION)
 
         var removedAny = false
+        if (mp4.exists()) {
+            removedAny = mp4.delete() || removedAny
+        }
         if (webm.exists()) {
             removedAny = webm.delete() || removedAny
         }
@@ -233,6 +256,11 @@ object OfflineAudioStore {
 
     private fun hasOfflineAudioOnDisk(context: Context, normalizedTrackId: String): Boolean {
         val dir = getOfflineAudioDir(context)
+
+        val mp4 = File(dir, normalizedTrackId + OFFLINE_VIDEO_EXTENSION)
+        if (mp4.isFile && mp4.length() >= MIN_VALID_AUDIO_FILE_BYTES) {
+            return true
+        }
 
         val webm = File(dir, normalizedTrackId + OFFLINE_AUDIO_EXTENSION_WEBM)
         if (webm.isFile && webm.length() >= MIN_VALID_AUDIO_FILE_BYTES) {

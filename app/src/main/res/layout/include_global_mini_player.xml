@@ -24,12 +24,37 @@
         android:paddingStart="12dp"
         android:paddingEnd="12dp">
 
-        <ImageView
-            android:id="@+id/ivGlobalMiniPlayerArt"
+        <FrameLayout
             android:layout_width="50dp"
-            android:layout_height="50dp"
-            android:background="@color/surface_high"
-            android:scaleType="centerCrop" />
+            android:layout_height="50dp">
+
+            <ImageView
+                android:id="@+id/ivGlobalMiniPlayerArt"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@color/surface_high"
+                android:scaleType="centerCrop" />
+
+            <androidx.media3.ui.PlayerView
+                android:id="@+id/miniPlayerVideoView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@android:color/black"
+                android:visibility="gone"
+                app:resize_mode="fit"
+                app:use_controller="false"
+                app:show_buffering="never"
+                app:surface_type="surface_view" />
+
+            <ProgressBar
+                android:id="@+id/pbMiniPlayerLoading"
+                android:layout_width="34dp"
+                android:layout_height="34dp"
+                android:layout_gravity="center"
+                android:indeterminate="true"
+                android:indeterminateTint="@android:color/white"
+                android:visibility="gone" />
+        </FrameLayout>
 
         <LinearLayout
             android:layout_width="0dp"

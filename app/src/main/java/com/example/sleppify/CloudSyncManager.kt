@@ -1433,6 +1433,7 @@ class CloudSyncManager private constructor(context: Context) {
         @JvmField val DOWNLOAD_QUALITY_HIGH = "high"
         @JvmField val DOWNLOAD_QUALITY_VERY_HIGH = "very_high"
 
+        @JvmField val KEY_DOWNLOAD_CANVAS_ENABLED = "download_canvas_enabled"
         @JvmField val KEY_MONO_AUDIO = "mono_audio_enabled"
         @JvmField val KEY_GAPLESS_PLAYBACK = "gapless_playback_enabled"
 

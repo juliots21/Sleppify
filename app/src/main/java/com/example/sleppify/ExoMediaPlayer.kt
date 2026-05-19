@@ -356,6 +356,22 @@ class ExoMediaPlayer {
         return exoPlayer?.audioSessionId ?: audioSessionId
     }
 
+    fun getExoPlayer(): Player? {
+        if (released) return null
+        return exoPlayer
+    }
+
+    fun attachPlayerView(playerView: androidx.media3.ui.PlayerView?) {
+        if (released) return
+        exoPlayer?.let { playerView?.player = it }
+    }
+
+    fun detachPlayerView(playerView: androidx.media3.ui.PlayerView?) {
+        if (playerView?.player === exoPlayer) {
+            playerView?.player = null
+        }
+    }
+
     fun release() {
         if (released) return
         released = true

@@ -207,6 +207,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         activeInstance = WeakReference(this)
         setContentView(R.layout.activity_main)
+        PlaybackLoadingBus.clearLoading()
 
         initViews()
         globalMiniPlayer = GlobalMiniPlayerController(this)
@@ -1609,28 +1610,33 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun openPlaylistFromPrincipal(playlistId: String, playlistName: String, thumbnailUrl: String) {
-        // Switch to Library module first, then open playlist detail
+        // Switch to Library module first, then open playlist detail.
+        // switchToMainModule posts its fragment transaction, so we must also post
+        // the PlaylistDetail addition to ensure correct ordering.
         suppressNavListener = true
         bottomNav.selectedItemId = R.id.nav_music
         suppressNavListener = false
         switchToMainModule(R.id.nav_music)
 
-        val accessToken = getSharedPreferences("player_state", Context.MODE_PRIVATE)
-            .getString("stream_last_youtube_access_token", "") ?: ""
-        val detail = PlaylistDetailFragment.newInstance(
-            playlistId,
-            playlistName.ifEmpty { "Playlist" },
-            "",
-            thumbnailUrl,
-            accessToken
-        )
-        val existingDetail = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL)
-        supportFragmentManager.beginTransaction().apply {
-            setReorderingAllowed(true)
-            if (existingDetail != null && existingDetail.isAdded) remove(existingDetail)
-            add(R.id.fragmentContainer, detail, TAG_PLAYLIST_DETAIL)
-            addToBackStack(TAG_PLAYLIST_DETAIL)
-            commit()
+        fragmentContainer.post {
+            if (isFinishing || isDestroyed) return@post
+            val accessToken = getSharedPreferences("player_state", Context.MODE_PRIVATE)
+                .getString("stream_last_youtube_access_token", "") ?: ""
+            val detail = PlaylistDetailFragment.newInstance(
+                playlistId,
+                playlistName.ifEmpty { "Playlist" },
+                "",
+                thumbnailUrl,
+                accessToken
+            )
+            val existingDetail = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL)
+            supportFragmentManager.beginTransaction().apply {
+                setReorderingAllowed(true)
+                if (existingDetail != null && existingDetail.isAdded) remove(existingDetail)
+                add(R.id.fragmentContainer, detail, TAG_PLAYLIST_DETAIL)
+                addToBackStack(TAG_PLAYLIST_DETAIL)
+                commitAllowingStateLoss()
+            }
         }
     }
 

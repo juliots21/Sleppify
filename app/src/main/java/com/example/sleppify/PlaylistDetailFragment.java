@@ -5777,6 +5777,7 @@ public class PlaylistDetailFragment extends Fragment
             if (holder.animatedEq != null) {
                 holder.animatedEq.setAnimating(shouldShowOverlay && isActuallyPlaying);
             }
+
         }
 
         @Override

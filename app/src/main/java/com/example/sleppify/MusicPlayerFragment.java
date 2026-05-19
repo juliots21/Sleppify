@@ -1952,7 +1952,11 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         if (!isAdded() || btnYoutubeLogin == null) {
             return;
         }
-        btnYoutubeLogin.setVisibility(View.GONE);
+        if (streamingOauthCompleted) {
+            btnYoutubeLogin.setVisibility(View.GONE);
+        } else {
+            btnYoutubeLogin.setVisibility(View.VISIBLE);
+        }
     }
     private boolean hasLoggedInStreamingAccount() {
         return streamingOauthCompleted;
