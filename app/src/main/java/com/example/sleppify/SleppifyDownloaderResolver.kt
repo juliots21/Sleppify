@@ -9,10 +9,11 @@ import java.net.URL
 import java.nio.charset.StandardCharsets
 
 /**
- * Downloads audio via two parallel Sleppify proxy servers.
+ * Downloads audio via three parallel Sleppify proxy servers.
  *
  * Server 0: sleppifydownloader.alwaysdata.net
  * Server 1: sleppifydownload2.alwaysdata.net
+ * Server 2: sleppifydownloader2.alwaysdata.net
  *
  * Supports resumable downloads via HTTP Range header — partial files
  * are continued from where they left off instead of restarting.
@@ -23,15 +24,17 @@ object SleppifyDownloaderResolver {
 
     private val ENDPOINTS = arrayOf(
         "https://sleppifydownloader.alwaysdata.net/api/download",
-        "https://sleppifydownload2.alwaysdata.net/api/download"
+        "https://sleppifydownload2.alwaysdata.net/api/download",
+        "https://sleppifydownloader2.alwaysdata.net/api/download"
     )
 
     private val VIDEO_ENDPOINTS = arrayOf(
         "https://sleppifydownloader.alwaysdata.net/api/video",
-        "https://sleppifydownload2.alwaysdata.net/api/video"
+        "https://sleppifydownload2.alwaysdata.net/api/video",
+        "https://sleppifydownloader2.alwaysdata.net/api/video"
     )
 
-    const val SERVER_COUNT = 2
+    const val SERVER_COUNT = 3
 
     private const val CONNECT_TIMEOUT_MS = 10000
     private const val READ_TIMEOUT_MS = 30000

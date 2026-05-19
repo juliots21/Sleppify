@@ -35,7 +35,6 @@ public final class GlobalMiniPlayerController implements PlaybackEventBus.Listen
     // Views (from activity_main.xml include)
     private final View llMiniPlayer;
     private final ImageView ivArt;
-    @Nullable private final androidx.media3.ui.PlayerView miniPlayerVideoView;
     private final android.widget.ProgressBar pbMiniLoading;
     private final TextView tvTitle;
     private final TextView tvSubtitle;
@@ -60,7 +59,6 @@ public final class GlobalMiniPlayerController implements PlaybackEventBus.Listen
         llMiniPlayer = activity.findViewById(R.id.llGlobalMiniPlayer);
         ivArt = activity.findViewById(R.id.ivGlobalMiniPlayerArt);
         pbMiniLoading = activity.findViewById(R.id.pbMiniPlayerLoading);
-        miniPlayerVideoView = activity.findViewById(R.id.miniPlayerVideoView);
         tvTitle = activity.findViewById(R.id.tvGlobalMiniPlayerTitle);
         tvSubtitle = activity.findViewById(R.id.tvGlobalMiniPlayerSubtitle);
         btnPlayPause = activity.findViewById(R.id.btnGlobalMiniPlayPause);
@@ -447,34 +445,7 @@ public final class GlobalMiniPlayerController implements PlaybackEventBus.Listen
         }
     }
 
-    // ── Video surface management ───────────────────────────────────────────
-
-    /**
-     * Attaches an ExoMediaPlayer's video output to the mini-player's PlayerView.
-     * Shows the mini video view and hides the artwork ImageView.
-     */
-    public void attachVideoSurface(@NonNull ExoMediaPlayer player) {
-        if (miniPlayerVideoView == null) return;
-        player.attachPlayerView(miniPlayerVideoView);
-        miniPlayerVideoView.setVisibility(View.VISIBLE);
-        if (ivArt != null) ivArt.setVisibility(View.GONE);
-        videoAttached = true;
-    }
-
-    /**
-     * Detaches video from the mini-player's PlayerView.
-     * Hides the mini video view and restores the artwork ImageView.
-     */
-    public void detachVideoSurface(@Nullable ExoMediaPlayer player) {
-        if (miniPlayerVideoView == null) return;
-        if (player != null) {
-            player.detachPlayerView(miniPlayerVideoView);
-        }
-        miniPlayerVideoView.setPlayer(null);
-        miniPlayerVideoView.setVisibility(View.GONE);
-        if (ivArt != null) ivArt.setVisibility(View.VISIBLE);
-        videoAttached = false;
-    }
+    // ── Video state (managed by VideoSurfaceRouter) ───────────────────────
 
     public boolean isVideoAttached() {
         return videoAttached;
@@ -485,58 +456,7 @@ public final class GlobalMiniPlayerController implements PlaybackEventBus.Listen
     }
 
     @Nullable
-    public androidx.media3.ui.PlayerView getMiniPlayerVideoView() {
-        return miniPlayerVideoView;
-    }
-
-    @Nullable
     public ImageView getArtView() {
         return ivArt;
-    }
-
-    /**
-     * Shows a black overlay + spinner in the mini-player while video static detection runs.
-     * Art is hidden, spinner is shown on a black background.
-     */
-    public void showVideoOverlay() {
-        videoOverlayActive = true;
-        if (ivArt != null) {
-            ivArt.animate().cancel();
-            ivArt.setAlpha(0f);
-        }
-        if (pbMiniLoading != null) pbMiniLoading.setVisibility(View.VISIBLE);
-        if (miniPlayerVideoView != null) miniPlayerVideoView.setVisibility(View.GONE);
-    }
-
-    /**
-     * Hides the overlay spinner when video is confirmed as real video.
-     * Called right before attachVideoSurface.
-     */
-    public void hideVideoOverlay() {
-        videoOverlayActive = false;
-        if (pbMiniLoading != null) pbMiniLoading.setVisibility(View.GONE);
-        if (ivArt != null) {
-            ivArt.animate().cancel();
-            ivArt.setAlpha(1f);
-        }
-    }
-
-    /**
-     * Reverts from video overlay state back to normal artwork display.
-     * Called when video is determined to be static.
-     */
-    public void revertVideoToArtwork() {
-        videoOverlayActive = false;
-        if (pbMiniLoading != null) pbMiniLoading.setVisibility(View.GONE);
-        if (miniPlayerVideoView != null) {
-            miniPlayerVideoView.setPlayer(null);
-            miniPlayerVideoView.setVisibility(View.GONE);
-        }
-        if (ivArt != null) {
-            ivArt.animate().cancel();
-            ivArt.setAlpha(1f);
-            ivArt.setVisibility(View.VISIBLE);
-        }
-        videoAttached = false;
     }
 }
