@@ -395,7 +395,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             for (RadioHistoryStore.RadioEntry radio : radios) {
                 if (!allCandidates.containsKey(radio.getRadioPlaylistId())) {
                     int radioCount = radio.getTracks().size();
-                    String radioSubtitle = "Radio · " + radioCount + (radioCount == 1 ? " canción" : " canciones");
+                    String radioSubtitle = "Radio \u2022 " + radioCount + (radioCount == 1 ? " canción" : " canciones");
                     allCandidates.put(radio.getRadioPlaylistId(), new YouTubeMusicService.TrackResult(
                             "playlist",
                             radio.getRadioPlaylistId(),

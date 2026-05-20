@@ -29,9 +29,6 @@ object ExoPlayerManager {
     private var sharedExoPlayer: ExoPlayer? = null
 
     @Volatile
-    private var monoProcessor: MonoAudioProcessor? = null
-
-    @Volatile
     private var appContextRef: Context? = null
 
     private val initLock = Any()
@@ -70,18 +67,7 @@ object ExoPlayerManager {
                             .setPrioritizeTimeOverSizeThresholds(true)
                             .build()
 
-                        monoProcessor = MonoAudioProcessor()
-
-                        val audioSink = DefaultAudioSink.Builder(appContext)
-                            .setAudioProcessors(arrayOf(monoProcessor!!))
-                            .build()
-
                         val renderersFactory = object : DefaultRenderersFactory(appContext) {
-                            override fun buildAudioSink(
-                                context: Context,
-                                enableFloatOutput: Boolean,
-                                enableAudioTrackPlaybackParams: Boolean
-                            ) = audioSink
                         }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
 
                         sharedExoPlayer = ExoPlayer.Builder(appContext, renderersFactory)

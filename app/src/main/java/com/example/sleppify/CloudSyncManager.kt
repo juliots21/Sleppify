@@ -138,7 +138,6 @@ class CloudSyncManager private constructor(context: Context) {
             string(KEY_OFFLINE_DOWNLOAD_QUALITY, DOWNLOAD_QUALITY_HIGH)
             bool(KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false)
             bool(KEY_OFFLINE_MODE_ENABLED, false)
-            bool(KEY_MONO_AUDIO, false)
         }
     }
 
@@ -1434,7 +1433,6 @@ class CloudSyncManager private constructor(context: Context) {
         @JvmField val DOWNLOAD_QUALITY_VERY_HIGH = "very_high"
 
         @JvmField val KEY_DOWNLOAD_CANVAS_ENABLED = "download_canvas_enabled"
-        @JvmField val KEY_MONO_AUDIO = "mono_audio_enabled"
         @JvmField val KEY_GAPLESS_PLAYBACK = "gapless_playback_enabled"
 
         private const val USERS_COLLECTION = "users"

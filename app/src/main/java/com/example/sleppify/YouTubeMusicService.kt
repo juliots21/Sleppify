@@ -1491,7 +1491,13 @@ class YouTubeMusicService @JvmOverloads constructor(
                     it.optJSONObject(it.length() - 1)?.optString("url", "") ?: ""
                 } ?: ""
 
-                tracks.add(TrackResult("video", videoId, title, artist, thumbUrl))
+                val duration = renderer.optJSONObject("lengthText")
+                    ?.optJSONArray("runs")?.optJSONObject(0)?.optString("text", "")
+                    ?: ""
+                // Encode duration in subtitle with tab separator for downstream parsing
+                val subtitleWithDuration = if (duration.isNotEmpty()) "$artist\t$duration" else artist
+
+                tracks.add(TrackResult("video", videoId, title, subtitleWithDuration, thumbUrl))
             }
         } catch (e: Exception) {
             Log.w("YouTubeMusicService", "parseMixTracks error: ${e.message}")

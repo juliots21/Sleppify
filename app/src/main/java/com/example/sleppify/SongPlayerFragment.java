@@ -13,9 +13,7 @@ import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.drawable.Drawable;
 import android.media.AudioAttributes;
-import android.media.AudioDeviceCallback;
 import android.media.AudioManager;
-import android.media.AudioDeviceInfo;
 import android.net.Uri;
 import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
@@ -172,11 +170,7 @@ public class SongPlayerFragment extends Fragment {
     private TextView tvActionFavoriteLabel;
     private TextView tvCurrentTime;
     private TextView tvTotalTime;
-    private TextView tvDeviceName;
-    private ImageView ivDeviceIcon;
-    @Nullable
-    private AudioDeviceCallback audioDeviceCallback;
-    private boolean audioDeviceCallbackRegistered = false;
+    private View llSimilarTrigger;
     private View llQueueTrigger;
     private View llPlayerNavBar;
     private ImageButton btnPlayerClose;
@@ -627,8 +621,10 @@ public class SongPlayerFragment extends Fragment {
             }
             return insets;
         });
-        tvDeviceName = view.findViewById(R.id.tvDeviceName);
-        ivDeviceIcon = view.findViewById(R.id.ivDeviceIcon);
+        llSimilarTrigger = view.findViewById(R.id.llSimilarTrigger);
+        if (llSimilarTrigger != null) {
+            llSimilarTrigger.setOnClickListener(v -> openRadioForCurrentTrack());
+        }
 
         // ✅ PHASE 1: Lightweight UI wiring only — runs during first frame, no heavy I/O
         view.post(() -> {
@@ -686,7 +682,6 @@ public class SongPlayerFragment extends Fragment {
             loadBackdropColorCache();
             loadPlaybackModesFromSettings();
             setupSocialActions();
-            setupAudioDeviceCallback();
             updatePlaybackModeButtons();
 
             hydrateTracksFromArgs();
@@ -835,7 +830,6 @@ public class SongPlayerFragment extends Fragment {
 
     @Override
     public void onDestroyView() {
-        cleanupAudioDeviceCallback();
         if (!isTemporaryPlayer) {
             persistPlaybackSnapshot(true);
         }
@@ -1390,10 +1384,6 @@ public class SongPlayerFragment extends Fragment {
         if (!isAdded() || tracks.isEmpty()) {
             return;
         }
-
-        // Sync mono audio setting before starting playback
-        boolean mono = settingsPrefs != null && settingsPrefs.getBoolean(CloudSyncManager.KEY_MONO_AUDIO, false);
-        MonoAudioProcessor.setEnabled(mono);
 
         // Safety: ensure no crossfade is active and no duplicate players exist
         cancelOfflineCrossfade();
@@ -3289,6 +3279,7 @@ public class SongPlayerFragment extends Fragment {
         if (actionRadio != null) actionRadio.setVisibility(isLocalFile ? View.GONE : View.VISIBLE);
         if (actionShare != null) actionShare.setVisibility(isLocalFile ? View.GONE : View.VISIBLE);
         if (actionDownloadTrack != null) actionDownloadTrack.setVisibility(isLocalFile ? View.GONE : View.VISIBLE);
+        if (llSimilarTrigger != null) llSimilarTrigger.setVisibility(isLocalFile ? View.GONE : View.VISIBLE);
 
         refreshSocialActionsForCurrentTrack(track);
         refreshFavoriteActionForCurrentTrack();
@@ -5285,84 +5276,6 @@ public class SongPlayerFragment extends Fragment {
                 ivQueueDragHandle = itemView.findViewById(R.id.ivQueueDragHandle);
             }
         }
-    }
-
-    private void updateDeviceInfo() {
-        if (!isAdded()) return;
-        AudioManager audioManager = (AudioManager) requireContext().getSystemService(Context.AUDIO_SERVICE);
-        if (audioManager == null) {
-            return;
-        }
-        String deviceName = "Este dispositivo";
-        int iconRes = R.drawable.ic_output_speaker;
-
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-            AudioDeviceInfo[] devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS);
-            for (AudioDeviceInfo device : devices) {
-                if (device.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || 
-                    device.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
-                    deviceName = device.getProductName().toString();
-                    iconRes = R.drawable.ic_output_bluetooth;
-                    break;
-                } else if (device.getType() == AudioDeviceInfo.TYPE_WIRED_HEADPHONES || 
-                           device.getType() == AudioDeviceInfo.TYPE_WIRED_HEADSET) {
-                    deviceName = "Auriculares";
-                    iconRes = R.drawable.ic_output_wired;
-                    break;
-                }
-            }
-        }
-        
-        if (tvDeviceName != null) tvDeviceName.setText(deviceName);
-        if (ivDeviceIcon != null) ivDeviceIcon.setImageResource(iconRes);
-    }
-
-    private void setupAudioDeviceCallback() {
-        if (!isAdded() || Build.VERSION.SDK_INT < Build.VERSION_CODES.M || audioDeviceCallbackRegistered) {
-            return;
-        }
-        AudioManager audioManager = (AudioManager) requireContext().getSystemService(Context.AUDIO_SERVICE);
-        if (audioManager == null) {
-            return;
-        }
-        if (audioDeviceCallback == null) {
-            audioDeviceCallback = new AudioDeviceCallback() {
-                @Override
-                public void onAudioDevicesAdded(AudioDeviceInfo[] addedDevices) {
-                    localProgressHandler.post(() -> {
-                        if (isAdded()) {
-                            updateDeviceInfo();
-                        }
-                    });
-                }
-
-                @Override
-                public void onAudioDevicesRemoved(AudioDeviceInfo[] removedDevices) {
-                    localProgressHandler.post(() -> {
-                        if (isAdded()) {
-                            updateDeviceInfo();
-                        }
-                    });
-                }
-            };
-        }
-        audioManager.registerAudioDeviceCallback(audioDeviceCallback, localProgressHandler);
-        audioDeviceCallbackRegistered = true;
-    }
-
-    private void cleanupAudioDeviceCallback() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || !audioDeviceCallbackRegistered) {
-            return;
-        }
-        Context context = getContext();
-        if (context == null) {
-            return;
-        }
-        AudioManager audioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
-        if (audioManager != null && audioDeviceCallback != null) {
-            audioManager.unregisterAudioDeviceCallback(audioDeviceCallback);
-        }
-        audioDeviceCallbackRegistered = false;
     }
 
     private void showPlayerOptionsSheet() {

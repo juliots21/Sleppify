@@ -1183,7 +1183,6 @@ class SearchFragment : Fragment() {
         if (bottomSheet != null) {
             val behavior = com.google.android.material.bottomsheet.BottomSheetBehavior.from(bottomSheet)
             behavior.skipCollapsed = true
-            behavior.state = com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
         }
     }
 

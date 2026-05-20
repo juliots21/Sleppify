@@ -22,10 +22,6 @@ class SleppifyApp : Application() {
         // Store app context so ExoPlayerManager can lazy-init on first use
         ExoPlayerManager.setAppContext(this)
 
-        // Restore mono audio setting (cheap, no I/O)
-        val settingsPrefs = getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, MODE_PRIVATE)
-        MonoAudioProcessor.enabled = settingsPrefs.getBoolean(CloudSyncManager.KEY_MONO_AUDIO, false)
-
         // Only run heavy initialization if the user already has a YouTube Music session.
         // On first install (no session), defer until after successful web login.
         if (hasExistingSession()) {

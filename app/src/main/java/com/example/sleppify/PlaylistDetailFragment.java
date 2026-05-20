@@ -610,6 +610,10 @@ public class PlaylistDetailFragment extends Fragment
             rvPlaylistContent.animate().cancel();
             rvPlaylistContent.setAlpha(0f);
         }
+        // Hide the activity-level loading overlay — PlaylistDetail has its own
+        if (getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).revealModuleContent();
+        }
         // No afectar el minireproductor durante el loading state
         if (playlistLoadingOverlay != null) {
             playlistLoadingOverlay.animate().cancel();
@@ -1484,11 +1488,20 @@ public class PlaylistDetailFragment extends Fragment
                     List<PlaylistTrack> mapped = new ArrayList<>();
                     for (YouTubeMusicService.TrackResult t : tracks) {
                         if (TextUtils.isEmpty(t.videoId)) continue;
+                        // Subtitle may contain artist\tduration from parseMixTracks
+                        String rawSub = t.subtitle == null ? "" : t.subtitle;
+                        String artist = rawSub;
+                        String duration = "--:--";
+                        int tabIdx = rawSub.indexOf('\t');
+                        if (tabIdx >= 0) {
+                            artist = rawSub.substring(0, tabIdx);
+                            duration = rawSub.substring(tabIdx + 1);
+                        }
                         mapped.add(new PlaylistTrack(
                                 t.videoId,
                                 t.title == null ? "" : t.title,
-                                t.subtitle == null ? "" : t.subtitle,
-                                "--:--",
+                                artist,
+                                duration,
                                 t.thumbnailUrl == null ? "" : t.thumbnailUrl
                         ));
                     }
@@ -3394,7 +3407,6 @@ public class PlaylistDetailFragment extends Fragment
             com.google.android.material.bottomsheet.BottomSheetBehavior<?> behavior =
                     com.google.android.material.bottomsheet.BottomSheetBehavior.from(bottomSheet);
             behavior.setSkipCollapsed(true);
-            behavior.setState(com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED);
         }
     }
 

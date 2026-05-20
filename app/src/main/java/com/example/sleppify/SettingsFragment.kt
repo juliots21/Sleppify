@@ -59,7 +59,6 @@ class SettingsFragment : Fragment() {
     private lateinit var ivYoutubeMusicStatus: ImageView
     private lateinit var swDownloadOnMobileData: MaterialSwitch
     private lateinit var swOfflineMode: MaterialSwitch
-    private lateinit var swMonoAudio: MaterialSwitch
     private lateinit var swGaplessPlayback: MaterialSwitch
     private lateinit var swDownloadCanvas: MaterialSwitch
     private lateinit var rowDownloadQuality: View
@@ -134,7 +133,6 @@ class SettingsFragment : Fragment() {
     private var lastOfflineCrossfadeSeconds = -1
     private var lastAllowMobileDataDownloads = false
     private var lastOfflineModeEnabled = false
-    private var lastMonoAudioEnabled = false
     private var lastDownloadQuality: String? = null
     private var lastDownloadCanvasEnabled = false
     private var lastStreamingQuality: String? = null
@@ -169,7 +167,6 @@ class SettingsFragment : Fragment() {
         ivYoutubeMusicStatus = v.findViewById(R.id.ivYoutubeMusicStatus)
         swDownloadOnMobileData = v.findViewById(R.id.swDownloadOnMobileData)
         swOfflineMode = v.findViewById(R.id.swOfflineMode)
-        swMonoAudio = v.findViewById(R.id.swMonoAudio)
         swGaplessPlayback = v.findViewById(R.id.swGaplessPlayback)
         swDownloadCanvas = v.findViewById(R.id.swDownloadCanvas)
         swLocalFiles = v.findViewById(R.id.swLocalFiles)
@@ -449,22 +446,18 @@ class SettingsFragment : Fragment() {
         val quality = normalizeQuality(settingsPrefs.getString(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_QUALITY, CloudSyncManager.DOWNLOAD_QUALITY_MEDIUM))
         val canvasEnabled = settingsPrefs.getBoolean(CloudSyncManager.KEY_DOWNLOAD_CANVAS_ENABLED, true)
         val streamingQuality = normalizeStreamingQuality(settingsPrefs.getString(CloudSyncManager.KEY_STREAMING_QUALITY, CloudSyncManager.STREAMING_QUALITY_MEDIUM))
-        val monoAudio = settingsPrefs.getBoolean(CloudSyncManager.KEY_MONO_AUDIO, false)
-
         if (hasSettingsSnapshot &&
             lastOfflineCrossfadeSeconds == crossfade &&
             lastAllowMobileDataDownloads == mobileDownloads && lastOfflineModeEnabled == offlineMode &&
             lastDownloadQuality == quality &&
             lastDownloadCanvasEnabled == canvasEnabled &&
-            lastStreamingQuality == streamingQuality &&
-            lastMonoAudioEnabled == monoAudio) return
+            lastStreamingQuality == streamingQuality) return
 
         hasSettingsSnapshot = true
         lastOfflineCrossfadeSeconds = crossfade
         lastAllowMobileDataDownloads = mobileDownloads; lastOfflineModeEnabled = offlineMode; lastDownloadQuality = quality
         lastDownloadCanvasEnabled = canvasEnabled
         lastStreamingQuality = streamingQuality
-        lastMonoAudioEnabled = monoAudio
 
         swDownloadOnMobileData.apply {
             setOnCheckedChangeListener(null)
@@ -481,22 +474,6 @@ class SettingsFragment : Fragment() {
             setOnCheckedChangeListener { _, c ->
                 settingsPrefs.edit().putBoolean(CloudSyncManager.KEY_OFFLINE_MODE_ENABLED, c).apply()
                 (activity as? MainActivity)?.notifyOfflineModeChanged()
-                renderSettingsState()
-            }
-        }
-
-        swMonoAudio.apply {
-            setOnCheckedChangeListener(null)
-            isChecked = monoAudio
-            setOnCheckedChangeListener { _, c ->
-                settingsPrefs.edit().putBoolean(CloudSyncManager.KEY_MONO_AUDIO, c).apply()
-                MonoAudioProcessor.enabled = c
-                // Force ExoPlayer audio pipeline reconfiguration so onConfigure() re-runs immediately
-                ExoPlayerManager.getSharedExoPlayer()?.let { player ->
-                    if (player.isPlaying || player.playbackState != androidx.media3.common.Player.STATE_IDLE) {
-                        player.seekTo(player.currentPosition)
-                    }
-                }
                 renderSettingsState()
             }
         }
