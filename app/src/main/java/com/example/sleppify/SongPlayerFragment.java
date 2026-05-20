@@ -186,6 +186,9 @@ public class SongPlayerFragment extends Fragment {
     private View actionRadio;
     private View actionShare;
     private View actionDownloadTrack;
+    private View actionSearchOnline;
+    private String lastSavedPlaylistKey = null;
+    private String lastSavedPlaylistName = null;
     private ImageView ivActionDownloadIcon;
     private TextView tvActionDownloadLabel;
 
@@ -602,6 +605,7 @@ public class SongPlayerFragment extends Fragment {
         actionRadio = view.findViewById(R.id.actionRadio);
         actionShare = view.findViewById(R.id.actionShare);
         actionDownloadTrack = view.findViewById(R.id.actionDownloadTrack);
+        actionSearchOnline = view.findViewById(R.id.actionSearchOnline);
         ivActionDownloadIcon = view.findViewById(R.id.ivActionDownloadIcon);
         tvActionDownloadLabel = view.findViewById(R.id.tvActionDownloadLabel);
         tvActionLikeCount = view.findViewById(R.id.tvActionLikeCount);
@@ -3068,6 +3072,7 @@ public class SongPlayerFragment extends Fragment {
         if (actionRadio != null) actionRadio.setVisibility(isLocalFile ? View.GONE : View.VISIBLE);
         if (actionShare != null) actionShare.setVisibility(isLocalFile ? View.GONE : View.VISIBLE);
         if (actionDownloadTrack != null) actionDownloadTrack.setVisibility(isLocalFile ? View.GONE : View.VISIBLE);
+        if (actionSearchOnline != null) actionSearchOnline.setVisibility(isLocalFile ? View.VISIBLE : View.GONE);
         if (llSimilarTrigger != null) llSimilarTrigger.setVisibility(isLocalFile ? View.GONE : View.VISIBLE);
 
         refreshSocialActionsForCurrentTrack(track);
@@ -3167,9 +3172,31 @@ public class SongPlayerFragment extends Fragment {
         if (actionDownloadTrack != null) {
             actionDownloadTrack.setOnClickListener(v -> toggleOfflineDownloadForCurrentTrack());
         }
+        if (actionSearchOnline != null) {
+            actionSearchOnline.setOnClickListener(v -> searchCurrentTrackOnline());
+        }
         refreshFavoriteActionForCurrentTrack();
         refreshDownloadChipState();
         observeManualDownloadWork();
+    }
+
+    private void searchCurrentTrackOnline() {
+        if (!isAdded() || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) return;
+        PlayerTrack track = tracks.get(currentIndex);
+        String query = "";
+        if (!TextUtils.isEmpty(track.title)) {
+            query = track.title;
+            if (!TextUtils.isEmpty(track.artist)) {
+                query += " " + track.artist;
+            }
+        }
+        if (TextUtils.isEmpty(query)) return;
+
+        // Collapse player and open search with the query
+        collapseToMiniMode(true);
+        if (getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).openSearchFragmentWithQuery(query);
+        }
     }
 
     private void observeManualDownloadWork() {
@@ -5124,6 +5151,11 @@ public class SongPlayerFragment extends Fragment {
         if (!isAdded() || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) return;
         PlayerTrack current = tracks.get(currentIndex);
         if (TextUtils.isEmpty(current.videoId)) return;
+        if (lastSavedPlaylistKey != null && lastSavedPlaylistName != null) {
+            addTrackToPlaylistByKey(lastSavedPlaylistKey, current);
+            showSavedInPlaylistBarPlayer(current, lastSavedPlaylistKey, lastSavedPlaylistName);
+            return;
+        }
         showSaveToPlaylistSheet(current, null);
     }
 
@@ -5149,6 +5181,8 @@ public class SongPlayerFragment extends Fragment {
         sheet.findViewById(R.id.btnSaveConfirm).setOnClickListener(v -> {
             saveDialog.dismiss();
             if (lastAddedKey[0] != null && lastAddedName[0] != null) {
+                lastSavedPlaylistKey = lastAddedKey[0];
+                lastSavedPlaylistName = lastAddedName[0];
                 showSavedInPlaylistBarPlayer(track, lastAddedKey[0], lastAddedName[0]);
             } else if (didRemove[0]) {
                 showRemovedFromPlaylistBarPlayer();
@@ -5305,6 +5339,43 @@ public class SongPlayerFragment extends Fragment {
             CustomPlaylistsStore.INSTANCE.addTrackToPlaylist(requireContext(), name,
                     track.videoId, title, artist, duration, imageUrl);
         }
+        maybeEnqueueOfflineDownloadForTrack(playlistKey, track.videoId, title, artist, duration);
+    }
+
+    private void maybeEnqueueOfflineDownloadForTrack(@NonNull String playlistKey, @NonNull String videoId,
+                                                      @NonNull String title, @NonNull String artist, @NonNull String duration) {
+        if (!isAdded() || TextUtils.isEmpty(videoId)) return;
+        // Resolve actual playlistId (for custom playlists the key IS the id used in prefs)
+        String playlistId = playlistKey;
+        android.content.SharedPreferences cachePrefs = requireContext().getSharedPreferences("streaming_cache", android.app.Activity.MODE_PRIVATE);
+        boolean offlineAuto = cachePrefs.getBoolean("playlist_offline_auto_" + playlistId, false);
+        if (!offlineAuto) return;
+        if (OfflineAudioStore.hasOfflineAudio(requireContext(), videoId)) return;
+        try {
+            androidx.work.Data inputData = new androidx.work.Data.Builder()
+                    .putString(OfflinePlaylistDownloadWorker.INPUT_PLAYLIST_ID, playlistId)
+                    .putString(OfflinePlaylistDownloadWorker.INPUT_PLAYLIST_TITLE, playlistId)
+                    .putStringArray(OfflinePlaylistDownloadWorker.INPUT_VIDEO_IDS, new String[]{videoId})
+                    .putStringArray(OfflinePlaylistDownloadWorker.INPUT_TITLES, new String[]{title})
+                    .putStringArray(OfflinePlaylistDownloadWorker.INPUT_ARTISTS, new String[]{artist})
+                    .putStringArray(OfflinePlaylistDownloadWorker.INPUT_DURATIONS, new String[]{duration})
+                    .putInt(OfflinePlaylistDownloadWorker.INPUT_ALREADY_OFFLINE_COUNT, 0)
+                    .putInt(OfflinePlaylistDownloadWorker.INPUT_TOTAL_WITH_VIDEO_ID, 1)
+                    .putBoolean(OfflinePlaylistDownloadWorker.INPUT_USER_INITIATED, true)
+                    .putBoolean(OfflinePlaylistDownloadWorker.INPUT_MANUAL_QUEUE, true)
+                    .build();
+            android.content.SharedPreferences prefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, android.content.Context.MODE_PRIVATE);
+            boolean allowMobile = prefs.getBoolean(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false);
+            androidx.work.Constraints constraints = new androidx.work.Constraints.Builder()
+                    .setRequiredNetworkType(allowMobile ? androidx.work.NetworkType.CONNECTED : androidx.work.NetworkType.UNMETERED)
+                    .build();
+            androidx.work.OneTimeWorkRequest request = new androidx.work.OneTimeWorkRequest.Builder(OfflinePlaylistDownloadWorker.class)
+                    .setInputData(inputData)
+                    .setConstraints(constraints)
+                    .addTag("offline_add_track_" + videoId)
+                    .build();
+            androidx.work.WorkManager.getInstance(requireContext()).enqueue(request);
+        } catch (Exception ignored) {}
     }
 
     private void removeTrackFromPlaylistByKey(@NonNull String playlistKey, @NonNull String videoId) {
@@ -5357,6 +5428,8 @@ public class SongPlayerFragment extends Fragment {
         btnChange.setPadding((int) (12 * density), 0, 0, 0);
         btnChange.setOnClickListener(v -> {
             rootView.removeView(bar);
+            lastSavedPlaylistKey = null;
+            lastSavedPlaylistName = null;
             showSaveToPlaylistSheet(track, playlistKey);
         });
         bar.addView(btnChange);

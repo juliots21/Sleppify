@@ -63,7 +63,6 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
     private RecyclerView rvMixes;
     private TextView tvMixesEmpty;
     private ShapeableImageView ivShortcutProfilePhoto;
-    private TextView tvShortcutChannelName;
     private TextView tvPersonalMixesLabel;
     private RecyclerView rvPersonalMixes;
     private View llCoversHeader;
@@ -87,7 +86,6 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
     private static final long NETWORK_REFRESH_THROTTLE_MS = 180000L; // 3 minutes
     private long lastMixesNetworkFetchTimeMs = 0L;
     private long lastCoversNetworkFetchTimeMs = 0L;
-    private long lastChannelFetchTimeMs = 0L;
 
     // Database and disk I/O caching to guarantee 60fps scrolling & zero lag
     private long lastShortcutsFetchTimeMs = 0L;
@@ -164,7 +162,6 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
         rvMixes = view.findViewById(R.id.rvMixes);
         tvMixesEmpty = view.findViewById(R.id.tvMixesEmpty);
         ivShortcutProfilePhoto = view.findViewById(R.id.ivShortcutProfilePhoto);
-        tvShortcutChannelName = view.findViewById(R.id.tvShortcutChannelName);
         tvPersonalMixesLabel = view.findViewById(R.id.tvPersonalMixesLabel);
         rvPersonalMixes = view.findViewById(R.id.rvPersonalMixes);
         llCoversHeader = view.findViewById(R.id.llCoversHeader);
@@ -196,7 +193,7 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
         if (isHidden()) return;
         refreshShortcuts();
         refreshMixes();
-        refreshChannelName();
+        loadGoogleProfilePhoto();
         refreshCovers();
         updateMiniPlayerUi();
         startMiniProgressTicker();
@@ -226,7 +223,6 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
         rvMixes = null;
         tvMixesEmpty = null;
         ivShortcutProfilePhoto = null;
-        tvShortcutChannelName = null;
         tvPersonalMixesLabel = null;
         rvPersonalMixes = null;
         llCoversHeader = null;
@@ -247,7 +243,7 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
                 if (isAdded() && !isHidden()) refreshShortcuts();
             }, 200);
             refreshMixes();
-            refreshChannelName();
+            loadGoogleProfilePhoto();
             refreshCovers();
             updateMiniPlayerUi();
             startMiniProgressTicker();
@@ -432,37 +428,28 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
         });
     }
 
-    private void refreshChannelName() {
-        long now = System.currentTimeMillis();
-        // Throttle to once every 10 minutes (600,000ms) to avoid profile API spam / cookie rate-limits
-        if (now - lastChannelFetchTimeMs < 600000L && tvShortcutChannelName != null && tvShortcutChannelName.getVisibility() == View.VISIBLE) {
-            return;
+    private void loadGoogleProfilePhoto() {
+        if (!isAdded() || ivShortcutProfilePhoto == null) return;
+        android.net.Uri photoUri = null;
+        com.google.firebase.auth.FirebaseUser user = com.google.firebase.auth.FirebaseAuth.getInstance().getCurrentUser();
+        if (user != null) {
+            photoUri = user.getPhotoUrl();
         }
-
-        String cookie = getCookieHeader();
-        if (cookie.isEmpty()) return;
-        youTubeMusicService.fetchYouTubeChannelName(cookie, new YouTubeMusicService.ChannelNameCallback() {
-            @Override
-            public void onSuccess(String channelName, String channelPhotoUrl) {
-                if (!isAdded()) return;
-                lastChannelFetchTimeMs = System.currentTimeMillis();
-                if (tvShortcutChannelName != null && !TextUtils.isEmpty(channelName)) {
-                    tvShortcutChannelName.setText(channelName);
-                    tvShortcutChannelName.setVisibility(View.VISIBLE);
-                }
-                if (ivShortcutProfilePhoto != null && !TextUtils.isEmpty(channelPhotoUrl)) {
-                    try {
-                        Glide.with(PrincipalFragment.this)
-                                .load(channelPhotoUrl)
-                                .circleCrop()
-                                .into(ivShortcutProfilePhoto);
-                    } catch (Exception ignored) {}
-                }
+        if (photoUri == null) {
+            String cached = requireContext().getSharedPreferences("streaming_cache", Context.MODE_PRIVATE)
+                    .getString("cached_google_profile_photo_url", "");
+            if (!TextUtils.isEmpty(cached)) {
+                photoUri = android.net.Uri.parse(cached);
             }
-
-            @Override
-            public void onError(String error) {}
-        });
+        }
+        if (photoUri != null) {
+            try {
+                Glide.with(this)
+                        .load(photoUri)
+                        .circleCrop()
+                        .into(ivShortcutProfilePhoto);
+            } catch (Exception ignored) {}
+        }
     }
 
     private void setupPersonalMixes() {
@@ -579,19 +566,8 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
     }
 
     private void onMixClicked(YouTubeMusicService.MixResult mix) {
-        String cookie = getCookieHeader();
-        if (cookie.isEmpty() || mix.playlistId.isEmpty()) return;
-
-        youTubeMusicService.fetchMixTracks(cookie, mix.playlistId, new YouTubeMusicService.MixTracksCallback() {
-            @Override
-            public void onSuccess(List<YouTubeMusicService.TrackResult> tracks) {
-                if (!isAdded() || tracks.isEmpty()) return;
-                playTrackList(tracks, 0);
-            }
-
-            @Override
-            public void onError(String error) {}
-        });
+        if (!isAdded() || mix.playlistId.isEmpty()) return;
+        openPlaylistDetailFromPrincipal(mix.playlistId, mix.title, mix.thumbnailUrl);
     }
 
     private void playTrackList(List<YouTubeMusicService.TrackResult> tracks, int startIndex) {
@@ -746,42 +722,40 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
 
         int safeIndex = Math.max(0, Math.min(startIndex, data.ids.size() - 1));
 
-        // Invalidate cache to get the actual current state
+        // Always bypass cache for fresh lookup
         cachedSongPlayer = null;
         lastCachedSongPlayerTime = 0;
 
-        SongPlayerFragment existingPlayer = findSongPlayerFragment();
+        // Direct lookup — no caching to avoid stale references
+        Fragment rawPlayer = getParentFragmentManager().findFragmentByTag(TAG_SONG_PLAYER);
+        SongPlayerFragment existingPlayer = rawPlayer instanceof SongPlayerFragment ? (SongPlayerFragment) rawPlayer : null;
+
         if (existingPlayer != null && existingPlayer.isAdded()) {
             existingPlayer.externalSetReturnTargetTag("module_principal");
             existingPlayer.externalReplaceQueue(data.ids, data.titles, data.artists, data.durations, data.images, safeIndex, true);
-            miniPlaying = true;
-            updateMiniPlayerUi();
-            startMiniProgressTicker();
-            return;
+        } else {
+            // Create new hidden player — use commitAllowingStateLoss to avoid silent abort
+            SongPlayerFragment playerFragment = SongPlayerFragment.newInstance(
+                    data.ids, data.titles, data.artists, data.durations, data.images, safeIndex, true
+            );
+            playerFragment.externalSetReturnTargetTag("module_principal");
+
+            getParentFragmentManager()
+                    .beginTransaction()
+                    .setReorderingAllowed(true)
+                    .add(R.id.playerContainer, playerFragment, TAG_SONG_PLAYER)
+                    .hide(playerFragment)
+                    .runOnCommit(() -> {
+                        cachedSongPlayer = null;
+                        lastCachedSongPlayerTime = 0;
+                        updateMiniPlayerUi();
+                        startMiniProgressTicker();
+                    })
+                    .commitAllowingStateLoss();
         }
 
-        if (getParentFragmentManager().isStateSaved()) return;
-
-        SongPlayerFragment playerFragment = SongPlayerFragment.newInstance(
-                data.ids, data.titles, data.artists, data.durations, data.images, safeIndex, true
-        );
-        playerFragment.externalSetReturnTargetTag("module_principal");
-
-        getParentFragmentManager()
-                .beginTransaction()
-                .setReorderingAllowed(true)
-                .add(R.id.playerContainer, playerFragment, TAG_SONG_PLAYER)
-                .hide(playerFragment)
-                .runOnCommit(() -> {
-                    cachedSongPlayer = null;
-                    lastCachedSongPlayerTime = 0;
-                    updateMiniPlayerUi();
-                    startMiniProgressTicker();
-                })
-                .commit();
-
+        // Show mini-player immediately with track info (instant feedback)
         miniPlaying = true;
-        // Show mini-player immediately with the track info we already have
         if (llMiniPlayer != null) {
             tvMiniPlayerTitle.setText(data.titles.get(safeIndex));
             tvMiniPlayerSubtitle.setText(data.artists.get(safeIndex));
@@ -797,6 +771,7 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
             }
             animateShowMiniPlayer();
         }
+        startMiniProgressTicker();
     }
 
     private void refreshShortcutEqIcons() {

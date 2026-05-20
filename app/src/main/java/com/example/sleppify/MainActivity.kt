@@ -940,6 +940,7 @@ class MainActivity : AppCompatActivity() {
 
     fun enterSettings() {
         if (inSettings) return
+        dismissSavedBar()
         if (bottomNav.selectedItemId == R.id.nav_music) markStreamingEntryAsLibrary()
 
         inSettings = true
@@ -1227,7 +1228,14 @@ class MainActivity : AppCompatActivity() {
         return supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER) as? SongPlayerFragment
     }
 
+    fun dismissSavedBar() {
+        val rootView = findViewById<android.view.ViewGroup>(android.R.id.content) ?: return
+        val bar = rootView.findViewWithTag<View>("saved_bar")
+        if (bar != null) rootView.removeView(bar)
+    }
+
     fun openSongPlayer() {
+        dismissSavedBar()
         val player = findSongPlayerFragment() ?: return
         if (player.isAdded) {
             globalMiniPlayer?.animateOut()
@@ -1267,6 +1275,18 @@ class MainActivity : AppCompatActivity() {
     private fun isPlaylistDetailVisible(): Boolean {
         val pd = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL) ?: return false
         return pd.isAdded && !pd.isHidden
+    }
+
+    fun openSearchFragmentWithQuery(query: String) {
+        dismissSavedBar()
+        openSearchFragment()
+        // Delay to ensure SearchFragment is fully attached and visible
+        fragmentContainer.postDelayed({
+            val sf = searchFragment as? SearchFragment
+            if (sf != null && sf.isAdded) {
+                sf.externalSearchQuery(query)
+            }
+        }, 400)
     }
 
     fun openSearchFragment() {

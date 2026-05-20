@@ -25,7 +25,7 @@
             android:paddingHorizontal="10dp"
             android:paddingBottom="16dp">
 
-            <!-- Section header: YT profile + Accesos directos -->
+            <!-- Section header: Google profile photo + Accesos directos -->
             <LinearLayout
                 android:id="@+id/llShortcutsHeader"
                 android:layout_width="match_parent"
@@ -44,34 +44,17 @@
                     android:scaleType="centerCrop"
                     app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Full" />
 
-                <LinearLayout
+                <TextView
+                    android:id="@+id/tvShortcutsLabel"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="10dp"
                     android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:id="@+id/tvShortcutChannelName"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:fontFamily="@font/inter_variable"
-                        android:textAllCaps="true"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="10sp"
-                        android:letterSpacing="0.06"
-                        tools:text="SLEPPY" />
-
-                    <TextView
-                        android:id="@+id/tvShortcutsLabel"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:fontFamily="@font/inter_variable"
-                        android:text="Accesos directos"
-                        android:textColor="@color/text_primary"
-                        android:textSize="17sp"
-                        android:textStyle="bold" />
-                </LinearLayout>
+                    android:fontFamily="@font/inter_variable"
+                    android:text="Accesos directos"
+                    android:textColor="@color/text_primary"
+                    android:textSize="17sp"
+                    android:textStyle="bold" />
 
                 <ImageView
                     android:id="@+id/ivShortcutsMore"
@@ -94,7 +77,7 @@
             <com.google.android.material.tabs.TabLayout
                 android:id="@+id/tabDotsShortcuts"
                 android:layout_width="wrap_content"
-                android:layout_height="16dp"
+                android:layout_height="24dp"
                 android:layout_gravity="center_horizontal"
                 android:layout_marginTop="4dp"
                 android:background="@android:color/transparent"
@@ -104,8 +87,8 @@
                 app:tabIndicatorHeight="0dp"
                 app:tabMaxWidth="8dp"
                 app:tabMinWidth="8dp"
-                app:tabPaddingEnd="3dp"
-                app:tabPaddingStart="3dp" />
+                app:tabPaddingEnd="5dp"
+                app:tabPaddingStart="5dp" />
 
             <!-- Section: Mixes para ti (generic) -->
             <TextView
@@ -217,7 +200,7 @@
             <com.google.android.material.tabs.TabLayout
                 android:id="@+id/tabDotsCovers"
                 android:layout_width="wrap_content"
-                android:layout_height="16dp"
+                android:layout_height="24dp"
                 android:layout_gravity="center_horizontal"
                 android:layout_marginTop="4dp"
                 android:background="@android:color/transparent"
@@ -227,8 +210,8 @@
                 app:tabIndicatorHeight="0dp"
                 app:tabMaxWidth="8dp"
                 app:tabMinWidth="8dp"
-                app:tabPaddingEnd="3dp"
-                app:tabPaddingStart="3dp"
+                app:tabPaddingEnd="5dp"
+                app:tabPaddingStart="5dp"
                 android:visibility="gone" />
 
         </LinearLayout>

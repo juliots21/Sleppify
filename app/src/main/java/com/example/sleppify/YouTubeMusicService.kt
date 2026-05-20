@@ -463,7 +463,7 @@ class YouTubeMusicService @JvmOverloads constructor(
                 val allResults = mutableListOf<TrackResult>()
                 val seenIds = mutableSetOf<String>()
                 for (title in trackTitles.take(5)) {
-                    val queries = listOf("$title remix", "$title cover")
+                    val queries = listOf("$title remix")
                     for (q in queries) {
                         try {
                             val results = performInnertubeSearch(cookieHeader, q, 5)

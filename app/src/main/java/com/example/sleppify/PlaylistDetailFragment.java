@@ -158,6 +158,8 @@ public class PlaylistDetailFragment extends Fragment
     private android.graphics.drawable.ColorDrawable toolbarBgDrawable;
     private long lastToolbarScrollUpdateMs = 0L;
 
+    private String lastSavedPlaylistKey = null;
+    private String lastSavedPlaylistName = null;
     private final YouTubeMusicService youTubeMusicService = new YouTubeMusicService();
     private final ExecutorService urlPrefetchExecutor = Executors.newFixedThreadPool(2);
     private final ExecutorService trackStateLookupExecutor = Executors.newFixedThreadPool(2);
@@ -3342,7 +3344,12 @@ public class PlaylistDetailFragment extends Fragment
         tvFav.setText("Añadir a playlist");
         btnFavorite.setOnClickListener(v -> {
             dialog.dismiss();
-            showSaveToPlaylistSheet(selectedTrack, null);
+            if (lastSavedPlaylistKey != null && lastSavedPlaylistName != null) {
+                addTrackToPlaylistByKey(lastSavedPlaylistKey, selectedTrack);
+                showSavedInPlaylistBar(selectedTrack, lastSavedPlaylistKey, lastSavedPlaylistName);
+            } else {
+                showSaveToPlaylistSheet(selectedTrack, null);
+            }
         });
 
         // Row: Iniciar radio (hidden for local files)
@@ -3438,6 +3445,8 @@ public class PlaylistDetailFragment extends Fragment
         sheet.findViewById(R.id.btnSaveConfirm).setOnClickListener(v -> {
             saveDialog.dismiss();
             if (lastAddedKey[0] != null && lastAddedName[0] != null) {
+                lastSavedPlaylistKey = lastAddedKey[0];
+                lastSavedPlaylistName = lastAddedName[0];
                 showSavedInPlaylistBar(track, lastAddedKey[0], lastAddedName[0]);
             } else if (didRemove[0]) {
                 String playlistName = resolveCurrentPlaylistName();
@@ -3606,6 +3615,42 @@ public class PlaylistDetailFragment extends Fragment
             CustomPlaylistsStore.INSTANCE.addTrackToPlaylist(requireContext(), name,
                     track.videoId, title, artist, duration, imageUrl);
         }
+        maybeEnqueueOfflineDownloadForAddedTrack(playlistKey, track.videoId, title, artist, duration);
+    }
+
+    private void maybeEnqueueOfflineDownloadForAddedTrack(@NonNull String playlistKey, @NonNull String videoId,
+                                                           @NonNull String title, @NonNull String artist, @NonNull String duration) {
+        if (!isAdded() || TextUtils.isEmpty(videoId)) return;
+        String playlistId = playlistKey;
+        android.content.SharedPreferences cachePrefs = requireContext().getSharedPreferences(PREFS_STREAMING_CACHE, android.app.Activity.MODE_PRIVATE);
+        boolean offlineAuto = cachePrefs.getBoolean(PREF_PLAYLIST_OFFLINE_AUTO_PREFIX + playlistId, false);
+        if (!offlineAuto) return;
+        if (OfflineAudioStore.hasOfflineAudio(requireContext(), videoId)) return;
+        try {
+            Data inputData = new Data.Builder()
+                    .putString(OfflinePlaylistDownloadWorker.INPUT_PLAYLIST_ID, playlistId)
+                    .putString(OfflinePlaylistDownloadWorker.INPUT_PLAYLIST_TITLE, playlistId)
+                    .putStringArray(OfflinePlaylistDownloadWorker.INPUT_VIDEO_IDS, new String[]{videoId})
+                    .putStringArray(OfflinePlaylistDownloadWorker.INPUT_TITLES, new String[]{title})
+                    .putStringArray(OfflinePlaylistDownloadWorker.INPUT_ARTISTS, new String[]{artist})
+                    .putStringArray(OfflinePlaylistDownloadWorker.INPUT_DURATIONS, new String[]{duration})
+                    .putInt(OfflinePlaylistDownloadWorker.INPUT_ALREADY_OFFLINE_COUNT, 0)
+                    .putInt(OfflinePlaylistDownloadWorker.INPUT_TOTAL_WITH_VIDEO_ID, 1)
+                    .putBoolean(OfflinePlaylistDownloadWorker.INPUT_USER_INITIATED, true)
+                    .putBoolean(OfflinePlaylistDownloadWorker.INPUT_MANUAL_QUEUE, true)
+                    .build();
+            SharedPreferences prefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE);
+            boolean allowMobile = prefs.getBoolean(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false);
+            Constraints constraints = new Constraints.Builder()
+                    .setRequiredNetworkType(allowMobile ? NetworkType.CONNECTED : NetworkType.UNMETERED)
+                    .build();
+            OneTimeWorkRequest request = new OneTimeWorkRequest.Builder(OfflinePlaylistDownloadWorker.class)
+                    .setInputData(inputData)
+                    .setConstraints(constraints)
+                    .addTag("offline_add_track_" + videoId)
+                    .build();
+            WorkManager.getInstance(requireContext()).enqueue(request);
+        } catch (Exception ignored) {}
     }
 
     private void removeTrackFromPlaylistByKey(@NonNull String playlistKey, @NonNull String videoId) {
@@ -3662,6 +3707,8 @@ public class PlaylistDetailFragment extends Fragment
         btnChange.setPadding((int) (12 * density), 0, 0, 0);
         btnChange.setOnClickListener(v -> {
             rootView.removeView(bar);
+            lastSavedPlaylistKey = null;
+            lastSavedPlaylistName = null;
             showSaveToPlaylistSheet(track, playlistKey);
         });
         bar.addView(btnChange);
