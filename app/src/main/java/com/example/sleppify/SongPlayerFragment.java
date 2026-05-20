@@ -121,9 +121,9 @@ public class SongPlayerFragment extends Fragment {
     private static final String TAG_PLAYLIST_DETAIL = "playlist_detail";
     private static final String TAG_MODULE_MUSIC = "module_music";
     private static final int MEDIA_SESSION_ARTWORK_MAX_SIZE_PX = 1400;
-    private static final int REPEAT_MODE_OFF = 0;
-    private static final int REPEAT_MODE_ALL = 1;
-    private static final int REPEAT_MODE_ONE = 2;
+    static final int REPEAT_MODE_OFF = 0;
+    static final int REPEAT_MODE_ALL = 1;
+    static final int REPEAT_MODE_ONE = 2;
     private static final long AUTOPLAY_RECOVERY_DELAY_MS = 1400L;
     private static final long TRACK_ERROR_RETRY_DELAY_MS = 750L;
     private static final int CONNECT_TIMEOUT_MS = 8000;
@@ -139,10 +139,6 @@ public class SongPlayerFragment extends Fragment {
     private static final String AUDIUS_API_BASE_URL = "https://discoveryprovider.audius.co/v1";
     private static final String AUDIUS_APP_NAME = "sleppify";
     private static final int AUDIUS_SEARCH_LIMIT = 6;
-    private static final int OFFLINE_CROSSFADE_MAX_SECONDS = 12;
-    private static final int OFFLINE_CROSSFADE_DEFAULT_SECONDS = 6;
-    private static final int OFFLINE_CROSSFADE_FIRST_STEP_MS = 500;
-    private static final int OFFLINE_CROSSFADE_STEP_MS = 40;
     private static final int PLAYER_HERO_DEFAULT_HEIGHT_DP = 370;
 
     private final List<PlayerTrack> tracks = new ArrayList<>();
@@ -230,7 +226,6 @@ public class SongPlayerFragment extends Fragment {
     private boolean playerEnterAnimationRunning = false;
     private int swipeDismissTouchSlopPx = 12;
     private int swipeDismissMinDistancePx = 120;
-    private int cachedCrossfadeDurationMs = -1;
     private int consecutiveStreamFailures = 0;
     @Nullable
     private ActivityResultLauncher<String> notificationPermissionLauncher;
@@ -309,6 +304,23 @@ public class SongPlayerFragment extends Fragment {
     private long localCrossfadeStartedAtMs = 0L;
     @Nullable
     private Runnable localCrossfadeTicker;
+    @NonNull
+    private final CrossfadeManager crossfadeManager = new CrossfadeManager();
+
+    private final CrossfadeManager.Callback crossfadeCallback = new CrossfadeManager.Callback() {
+        @Override
+        public void onCrossfadeFinished(@NonNull ExoMediaPlayer incomingPlayer, int nextIndex, boolean wasNetwork) {
+            handleCrossfadeFinished(incomingPlayer, nextIndex, wasNetwork);
+        }
+        @Override
+        public void onFadeOutFinished() {
+            // Fade-out-only finished with no next track — track ended
+        }
+        @Override
+        public void onCrossfadeFailed(int nextIndex) {
+            playCurrentTrack();
+        }
+    };
     private long lastPlaybackStartRequestAtMs = 0L;
     private long lastPrevPressAtMs = 0L;
     private static final long PREV_DOUBLE_TAP_WINDOW_MS = 3000L;
@@ -377,8 +389,28 @@ public class SongPlayerFragment extends Fragment {
                 int durationMs = Math.max(1, localExoMediaPlayer.getDuration());
 
                 accumulatedListenMs += PROGRESS_TICK_MS;
-                maybeStartOfflineCrossfade(positionMs, durationMs);
                 maybeStartGaplessPreBuffer(positionMs, durationMs);
+                crossfadeManager.onProgressTick(
+                        positionMs, durationMs,
+                        localExoMediaPlayer,
+                        isPlaying,
+                        localSourcePreparing,
+                        userSeeking,
+                        tracks,
+                        currentIndex,
+                        repeatMode,
+                        isNetworkAvailable(),
+                        gaplessPreBufferedPlayer,
+                        gaplessPreBufferedVideoId,
+                        prefetchedNextVideoId,
+                        prefetchedNextUrl
+                );
+                // If crossfade consumed the gapless player, clear our reference
+                if (crossfadeManager.isInProgress() && gaplessPreBufferedPlayer != null) {
+                    gaplessPreBufferedPlayer = null;
+                    gaplessPreBufferedVideoId = "";
+                    gaplessPreBufferTriggered = false;
+                }
 
                 int playerSeconds = positionMs / 1000;
 
@@ -678,7 +710,14 @@ public class SongPlayerFragment extends Fragment {
 
             playerStatePrefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
             settingsPrefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Activity.MODE_PRIVATE);
-            invalidateCrossfadeDurationCache();
+            crossfadeManager.attach(
+                    requireContext().getApplicationContext(),
+                    settingsPrefs,
+                    crossfadeCallback,
+                    (ctx, videoId) -> InnertubeResolver.resolveStreamUrl(ctx, videoId),
+                    streamResolverExecutor
+            );
+            crossfadeManager.invalidateDurationCache();
             loadBackdropColorCache();
             loadPlaybackModesFromSettings();
             setupSocialActions();
@@ -860,6 +899,7 @@ public class SongPlayerFragment extends Fragment {
             backPressedCallback.remove();
             backPressedCallback = null;
         }
+        crossfadeManager.destroy();
         settingsPrefs = null;
         flPlayerHero = null;
         streamResolverExecutor.shutdownNow();
@@ -1295,6 +1335,7 @@ public class SongPlayerFragment extends Fragment {
         }
 
         refreshNextUp();
+        invalidateNextTrackPreparations();
         persistPlaybackModePreferences();
         persistPlaybackSnapshot(false);
         updatePlaybackModeButtons();
@@ -1532,7 +1573,7 @@ public class SongPlayerFragment extends Fragment {
         if (!isAdded()) {
             return;
         }
-        if (localCrossfadeInProgress && localCrossfadeIncomingPlayer != null) {
+        if (crossfadeManager.isInProgress()) {
             return;
         }
         stopLocalProgressTicker();
@@ -1613,7 +1654,7 @@ public class SongPlayerFragment extends Fragment {
                 || !isGaplessPlaybackEnabled()
                 || localExoMediaPlayer == null
                 || localSourcePreparing
-                || localCrossfadeInProgress
+                || crossfadeManager.isInProgress()
                 || gaplessPreBufferTriggered
                 || !isPlaying
                 || usingOfflineSource) {
@@ -1727,6 +1768,13 @@ public class SongPlayerFragment extends Fragment {
             gaplessPreBufferedPlayer = null;
             gaplessPreBufferedVideoId = "";
         }
+    }
+
+    private void invalidateNextTrackPreparations() {
+        cancelGaplessPreBuffer();
+        prefetchedNextVideoId = null;
+        prefetchedNextUrl = null;
+        prefetchNextTrackStream();
     }
 
     private void attemptPlaybackFromSources(
@@ -1911,7 +1959,7 @@ public class SongPlayerFragment extends Fragment {
             if (requestToken != activePlaybackRequestToken) {
                 return;
             }
-            if (localCrossfadeInProgress && localCrossfadeIncomingPlayer != null) {
+            if (crossfadeManager.isInProgress()) {
                 return;
             }
             stopLocalProgressTicker();
@@ -2517,240 +2565,6 @@ public class SongPlayerFragment extends Fragment {
                 || capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN);
     }
 
-    private void maybeStartOfflineCrossfade(int positionMs, int durationMs) {
-        int crossfadeDurationMs = getOfflineCrossfadeDurationMs();
-        if (!isAdded()
-                || localExoMediaPlayer == null
-                || localSourcePreparing
-                || localCrossfadeInProgress
-                || userSeeking
-                || !isPlaying
-                || durationMs <= 0
-                || crossfadeDurationMs <= 0) {
-            return;
-        }
-
-        int remainingMs = Math.max(0, durationMs - Math.max(0, positionMs));
-        
-        // Safety: if we have very little time left (e.g. < 500ms) and no crossfade has started,
-        // it might be too late to prepare a new ExoMediaPlayer, but we should try anyway if remainingMs <= crossfadeDurationMs.
-        if (remainingMs > crossfadeDurationMs) {
-            return;
-        }
-
-        startOfflineCrossfadeTransition(crossfadeDurationMs);
-    }
-
-    private int getOfflineCrossfadeDurationMs() {
-        if (cachedCrossfadeDurationMs >= 0) {
-            return cachedCrossfadeDurationMs;
-        }
-        int seconds = OFFLINE_CROSSFADE_DEFAULT_SECONDS;
-        if (settingsPrefs != null) {
-            seconds = settingsPrefs.getInt(
-                    CloudSyncManager.KEY_OFFLINE_CROSSFADE_SECONDS,
-                    OFFLINE_CROSSFADE_DEFAULT_SECONDS
-            );
-        }
-        seconds = Math.max(0, Math.min(OFFLINE_CROSSFADE_MAX_SECONDS, seconds));
-        int result;
-        if (seconds <= 0) {
-            result = 0;
-        } else if (seconds == 1) {
-            result = OFFLINE_CROSSFADE_FIRST_STEP_MS;
-        } else {
-            result = seconds * 1000;
-        }
-        cachedCrossfadeDurationMs = result;
-        return result;
-    }
-
-    private void invalidateCrossfadeDurationCache() {
-        cachedCrossfadeDurationMs = -1;
-    }
-
-    private void startOfflineCrossfadeTransition(int crossfadeDurationMs) {
-        if (!isAdded() || localExoMediaPlayer == null || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) {
-            return;
-        }
-
-        ExoMediaPlayer outgoing = localExoMediaPlayer;
-        int nextIndex = resolveNextIndexForCompletionCrossfade();
-        if (nextIndex < 0 || nextIndex >= tracks.size()) {
-            startOfflineFadeOutOnly(outgoing, crossfadeDurationMs);
-            return;
-        }
-
-        PlayerTrack nextTrack = tracks.get(nextIndex);
-        if (nextTrack == null || TextUtils.isEmpty(nextTrack.videoId)) {
-            startOfflineFadeOutOnly(outgoing, crossfadeDurationMs);
-            return;
-        }
-
-        // Use gapless pre-buffered player if available for this next track
-        if (gaplessPreBufferedPlayer != null && TextUtils.equals(gaplessPreBufferedVideoId, nextTrack.videoId)) {
-            ExoMediaPlayer preBuffered = gaplessPreBufferedPlayer;
-            gaplessPreBufferedPlayer = null;
-            gaplessPreBufferedVideoId = "";
-            gaplessPreBufferTriggered = false;
-            executeAutomaticCrossfadeWithPlayer(outgoing, nextIndex, preBuffered, crossfadeDurationMs);
-            return;
-        }
-
-        // Try local device files first
-        if (isAdded() && LocalFilesStore.isLocalVideoId(nextTrack.videoId)) {
-            String contentUri = LocalFilesStore.getContentUriForVideoId(requireContext(), nextTrack.videoId);
-            if (contentUri != null && !contentUri.isEmpty()) {
-                executeAutomaticCrossfade(outgoing, nextIndex, contentUri, false, crossfadeDurationMs);
-                return;
-            }
-        }
-
-        // Try offline first
-        if (isAdded() && OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), nextTrack.videoId, nextTrack.duration)) {
-            File nextFile = OfflineAudioStore.getExistingOfflineAudioFile(requireContext(), nextTrack.videoId);
-            if (nextFile != null && nextFile.isFile() && nextFile.length() > 0L) {
-                executeAutomaticCrossfade(outgoing, nextIndex, nextFile.getAbsolutePath(), false, crossfadeDurationMs);
-                return;
-            }
-        }
-
-        // Try prefetched URL (already resolved)
-        if (TextUtils.equals(nextTrack.videoId, prefetchedNextVideoId) && !TextUtils.isEmpty(prefetchedNextUrl)) {
-            executeAutomaticCrossfade(outgoing, nextIndex, prefetchedNextUrl, true, crossfadeDurationMs);
-            return;
-        }
-
-        // Resolve online URL on background thread to avoid blocking UI
-        if (isNetworkAvailable()) {
-            final ExoMediaPlayer fadeOutgoing = outgoing;
-            final int fadeNextIndex = nextIndex;
-            final int fadeDuration = crossfadeDurationMs;
-            streamResolverExecutor.submit(() -> {
-                String resolved = InnertubeResolver.resolveStreamUrl(requireContext(), nextTrack.videoId);
-                localProgressHandler.post(() -> {
-                    if (!isAdded() || localExoMediaPlayer != fadeOutgoing) return;
-                    if (!TextUtils.isEmpty(resolved)) {
-                        executeAutomaticCrossfade(fadeOutgoing, fadeNextIndex, resolved, true, fadeDuration);
-                    } else {
-                        startOfflineFadeOutOnly(fadeOutgoing, fadeDuration);
-                    }
-                });
-            });
-            return;
-        }
-
-        startOfflineFadeOutOnly(outgoing, crossfadeDurationMs);
-    }
-
-    private void executeAutomaticCrossfade(ExoMediaPlayer outgoing, int nextIndex, String nextUrl, boolean nextIsNetwork, int crossfadeDurationMs) {
-        executeCrossfade(outgoing, nextIndex, nextUrl, nextIsNetwork, crossfadeDurationMs);
-    }
-
-    private void executeAutomaticCrossfadeWithPlayer(ExoMediaPlayer outgoing, int nextIndex, ExoMediaPlayer preBuffered, int crossfadeDurationMs) {
-        preBuffered.isCrossfadeComponent = true;
-        try {
-            preBuffered.setVolume(0f, 0f);
-            preBuffered.start();
-        } catch (Exception e) {
-            Log.e(TAG, "executeAutomaticCrossfadeWithPlayer: start failed", e);
-            releaseSingleExoMediaPlayer(preBuffered);
-            startOfflineFadeOutOnly(outgoing, crossfadeDurationMs);
-            return;
-        }
-
-        localCrossfadeIncomingPlayer = preBuffered;
-        localCrossfadeInProgress = true;
-        localCrossfadeIsNetwork = !usingOfflineSource;
-        localCrossfadeTargetIndex = nextIndex;
-        localCrossfadeStartedAtMs = SystemClock.elapsedRealtime();
-        outgoing.setOnCompletionListener(null);
-        localCrossfadeTicker = buildCrossfadeTicker(outgoing, crossfadeDurationMs);
-        localProgressHandler.post(localCrossfadeTicker);
-    }
-
-    private void executeCrossfade(ExoMediaPlayer outgoing, int nextIndex, String nextUrl, boolean nextIsNetwork, int crossfadeDurationMs) {
-        ExoMediaPlayer incoming = new ExoMediaPlayer(requireContext().getApplicationContext());
-        incoming.isCrossfadeComponent = true;
-        try {
-            incoming.setAudioAttributes(new AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build());
-            if (nextIsNetwork) {
-                Map<String, String> headers = new HashMap<>();
-                headers.put("User-Agent", STREAM_HTTP_USER_AGENT);
-                headers.put("Accept", "*/*");
-                String videoId = nextIndex >= 0 && nextIndex < tracks.size() && tracks.get(nextIndex) != null ? tracks.get(nextIndex).videoId : null;
-                Map<String, String> authHeaders = InnertubeResolver.getHeadersFor(videoId);
-                if (authHeaders != null) {
-                    headers.putAll(authHeaders);
-                }
-                incoming.setDataSource(requireContext().getApplicationContext(), Uri.parse(nextUrl), headers);
-            } else if (nextUrl.startsWith("content://")) {
-                incoming.setDataSource(requireContext().getApplicationContext(), Uri.parse(nextUrl), null);
-            } else {
-                incoming.setDataSource(nextUrl);
-            }
-            incoming.prepare();
-            incoming.setVolume(0f, 0f);
-            incoming.start();
-        } catch (Exception e) {
-            Log.e(TAG, "executeCrossfade: failed to prepare incoming player", e);
-            releaseSingleExoMediaPlayer(incoming);
-            if (nextIndex >= 0) {
-                playCurrentTrack();
-            } else {
-                startOfflineFadeOutOnly(outgoing, crossfadeDurationMs);
-            }
-            return;
-        }
-
-        localCrossfadeIncomingPlayer = incoming;
-        localCrossfadeInProgress = true;
-        localCrossfadeIsNetwork = nextIsNetwork;
-        localCrossfadeTargetIndex = nextIndex;
-        localCrossfadeStartedAtMs = SystemClock.elapsedRealtime();
-        outgoing.setOnCompletionListener(null);
-        localCrossfadeTicker = buildCrossfadeTicker(outgoing, crossfadeDurationMs);
-        localProgressHandler.post(localCrossfadeTicker);
-    }
-
-    @NonNull
-    private Runnable buildCrossfadeTicker(@NonNull ExoMediaPlayer outgoing, int crossfadeDurationMs) {
-        return new Runnable() {
-            @Override
-            public void run() {
-                if (!localCrossfadeInProgress || localExoMediaPlayer != outgoing) {
-                    return;
-                }
-                float progress = Math.min(1f, Math.max(0f,
-                        (SystemClock.elapsedRealtime() - localCrossfadeStartedAtMs) / (float) crossfadeDurationMs));
-                try { outgoing.setVolume(1f - progress, 1f - progress); } catch (Exception ignored) {}
-                if (localCrossfadeIncomingPlayer != null) {
-                    try { localCrossfadeIncomingPlayer.setVolume(progress, progress); } catch (Exception ignored) {}
-                }
-                if (progress >= 1f) {
-                    finalizeOfflineCrossfade(outgoing);
-                    return;
-                }
-                localProgressHandler.postDelayed(this, OFFLINE_CROSSFADE_STEP_MS);
-            }
-        };
-    }
-
-    private void startOfflineFadeOutOnly(@NonNull ExoMediaPlayer outgoing, int fadeDurationMs) {
-        if (localCrossfadeInProgress || localExoMediaPlayer != outgoing) {
-            return;
-        }
-        localCrossfadeIncomingPlayer = null;
-        localCrossfadeInProgress = true;
-        localCrossfadeTargetIndex = -1;
-        localCrossfadeStartedAtMs = SystemClock.elapsedRealtime();
-        localCrossfadeTicker = buildCrossfadeTicker(outgoing, Math.max(1, fadeDurationMs));
-        localProgressHandler.post(localCrossfadeTicker);
-    }
-
     private int resolveNextIndexForCompletionCrossfade() {
         if (tracks.isEmpty()) {
             return -1;
@@ -2771,11 +2585,8 @@ public class SongPlayerFragment extends Fragment {
         return -1;
     }
 
-    private void finalizeOfflineCrossfade(@NonNull ExoMediaPlayer outgoing) {
-        ExoMediaPlayer incoming = localCrossfadeIncomingPlayer;
-        int nextIndex = localCrossfadeTargetIndex;
-        boolean wasNetwork = localCrossfadeIsNetwork;
-
+    private void cancelOfflineCrossfade() {
+        crossfadeManager.cancelAndRestoreVolume(localExoMediaPlayer);
         localCrossfadeInProgress = false;
         localCrossfadeIsNetwork = false;
         localCrossfadeStartedAtMs = 0L;
@@ -2784,18 +2595,21 @@ public class SongPlayerFragment extends Fragment {
             localProgressHandler.removeCallbacks(localCrossfadeTicker);
             localCrossfadeTicker = null;
         }
-        localCrossfadeIncomingPlayer = null;
+        if (localCrossfadeIncomingPlayer != null) {
+            releaseSingleExoMediaPlayer(localCrossfadeIncomingPlayer);
+            localCrossfadeIncomingPlayer = null;
+        }
+        cancelGaplessPreBuffer();
+    }
 
-        releaseSingleExoMediaPlayer(outgoing);
-
-        if (incoming == null || nextIndex < 0 || nextIndex >= tracks.size()) {
+    private void handleCrossfadeFinished(@NonNull ExoMediaPlayer incoming, int nextIndex, boolean wasNetwork) {
+        if (!isAdded() || nextIndex < 0 || nextIndex >= tracks.size()) {
+            releaseSingleExoMediaPlayer(incoming);
             return;
         }
 
         localExoMediaPlayer = incoming;
-        if (localExoMediaPlayer != null) {
-            localExoMediaPlayer.isCrossfadeComponent = false;
-        }
+        localExoMediaPlayer.isCrossfadeComponent = false;
         usingOfflineSource = !wasNetwork;
         accumulatedListenMs = 0;
         gaplessPreBufferTriggered = false;
@@ -2855,34 +2669,9 @@ public class SongPlayerFragment extends Fragment {
         if (currentSourceIsVideo && currentVideoFilePath != null && localExoMediaPlayer != null) {
             videoRouter.onTrackStarted(localExoMediaPlayer, currentVideoFilePath, track.videoId);
         }
-        
+
         prefetchedNextVideoId = null;
         prefetchNextTrackStream();
-    }
-
-    private void cancelOfflineCrossfade() {
-        localCrossfadeInProgress = false;
-        localCrossfadeIsNetwork = false;
-        localCrossfadeStartedAtMs = 0L;
-        localCrossfadeTargetIndex = -1;
-        if (localCrossfadeTicker != null) {
-            localProgressHandler.removeCallbacks(localCrossfadeTicker);
-            localCrossfadeTicker = null;
-        }
-
-        if (localCrossfadeIncomingPlayer != null) {
-            releaseSingleExoMediaPlayer(localCrossfadeIncomingPlayer);
-            localCrossfadeIncomingPlayer = null;
-        }
-
-        if (localExoMediaPlayer != null) {
-            try {
-                localExoMediaPlayer.setVolume(1f, 1f);
-            } catch (Exception ignored) {
-            }
-        }
-
-        cancelGaplessPreBuffer();
     }
 
     private void startLocalProgressTicker() {
@@ -4228,6 +4017,7 @@ public class SongPlayerFragment extends Fragment {
         }
 
         refreshNextUp();
+        invalidateNextTrackPreparations();
         persistPlaybackSnapshot(false);
         syncMiniStateWithPlaylist();
     }
@@ -4257,6 +4047,7 @@ public class SongPlayerFragment extends Fragment {
         }
 
         refreshNextUp();
+        invalidateNextTrackPreparations();
         persistPlaybackSnapshot(false);
         syncMiniStateWithPlaylist();
     }
@@ -4396,7 +4187,7 @@ public class SongPlayerFragment extends Fragment {
             // Queue changed but current song is the same: lightweight sync only.
             // Do NOT call bindCurrentTrack or playCurrentTrack to avoid any lag/pause.
             refreshNextUp();
-            prefetchNextTrackStream();
+            invalidateNextTrackPreparations();
         }
         
         persistPlaybackSnapshot(false);
@@ -4932,8 +4723,8 @@ public class SongPlayerFragment extends Fragment {
 
         persistPlaybackSnapshot(false);
         
-        // CRITICAL: Clear prefetch cache because the "next" song has changed
-        prefetchedNextVideoId = null;
+        // CRITICAL: Invalidate gapless pre-buffer and prefetch because the "next" song has changed
+        invalidateNextTrackPreparations();
         
         syncMiniStateWithPlaylist();
     }
@@ -5106,7 +4897,7 @@ public class SongPlayerFragment extends Fragment {
         return String.format(Locale.US, "%02d:%02d", mins, secs);
     }
 
-    private static final class PlayerTrack {
+    static final class PlayerTrack {
         final String videoId;
         final String title;
         final String artist;

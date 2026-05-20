@@ -1453,6 +1453,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         val isNew = !target.isAdded
+        // Update immediately so any re-entrant calls see the correct module id
+        currentMainNavItemId = itemId
         // Show overlay immediately — post the heavy fragment work so this frame
         // is rendered before the FragmentManager blocks the UI thread.
         showModuleLoadingOverlay()
@@ -1481,7 +1483,6 @@ class MainActivity : AppCompatActivity() {
                 commitAllowingStateLoss()
             }
 
-            currentMainNavItemId = itemId
             isNavigating = false
 
             getSharedPreferences(PREFS_BOOTSTRAP, Context.MODE_PRIVATE)
@@ -1629,37 +1630,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
         return true
-    }
-
-    fun openPlaylistFromPrincipal(playlistId: String, playlistName: String, thumbnailUrl: String) {
-        // Switch to Library module first, then open playlist detail.
-        // switchToMainModule posts its fragment transaction, so we must also post
-        // the PlaylistDetail addition to ensure correct ordering.
-        suppressNavListener = true
-        bottomNav.selectedItemId = R.id.nav_music
-        suppressNavListener = false
-        switchToMainModule(R.id.nav_music)
-
-        fragmentContainer.post {
-            if (isFinishing || isDestroyed) return@post
-            val accessToken = getSharedPreferences("player_state", Context.MODE_PRIVATE)
-                .getString("stream_last_youtube_access_token", "") ?: ""
-            val detail = PlaylistDetailFragment.newInstance(
-                playlistId,
-                playlistName.ifEmpty { "Playlist" },
-                "",
-                thumbnailUrl,
-                accessToken
-            )
-            val existingDetail = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL)
-            supportFragmentManager.beginTransaction().apply {
-                setReorderingAllowed(true)
-                if (existingDetail != null && existingDetail.isAdded) remove(existingDetail)
-                add(R.id.fragmentContainer, detail, TAG_PLAYLIST_DETAIL)
-                addToBackStack(TAG_PLAYLIST_DETAIL)
-                commitAllowingStateLoss()
-            }
-        }
     }
 
     fun hideTopAppBarForSearch() {

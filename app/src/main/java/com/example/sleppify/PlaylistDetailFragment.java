@@ -3427,9 +3427,6 @@ public class PlaylistDetailFragment extends Fragment
         View sheet = LayoutInflater.from(ctx).inflate(R.layout.bottom_sheet_save_to_playlist, null);
         saveDialog.setContentView(sheet);
 
-        View parent = (View) sheet.getParent();
-        if (parent != null) parent.setBackgroundColor(Color.TRANSPARENT);
-
         ImageView ivClose = sheet.findViewById(R.id.ivSaveClose);
         ivClose.setOnClickListener(v -> saveDialog.dismiss());
 
@@ -3558,6 +3555,16 @@ public class PlaylistDetailFragment extends Fragment
         }
 
         saveDialog.show();
+
+        // Configure after show() so BottomSheetBehavior is attached and animation works
+        View parent = (View) sheet.getParent();
+        if (parent != null) parent.setBackgroundColor(Color.TRANSPARENT);
+        View bottomSheetSave = saveDialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+        if (bottomSheetSave != null) {
+            com.google.android.material.bottomsheet.BottomSheetBehavior<?> behavior =
+                    com.google.android.material.bottomsheet.BottomSheetBehavior.from(bottomSheetSave);
+            behavior.setSkipCollapsed(true);
+        }
     }
 
     private boolean isTrackInPlaylist(@NonNull Context ctx, @NonNull String videoId, @NonNull String playlistKey) {

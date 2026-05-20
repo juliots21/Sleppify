@@ -146,6 +146,9 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
     private static long tokenCacheUpdatedAtMs;
     private static long lastLibrarySyncAtMs;
     private static boolean streamingWarmupInFlight;
+    // Cached display library result to avoid redundant disk I/O on every navigation
+    private List<YouTubeMusicService.TrackResult> cachedDisplayLibrary = null;
+    private boolean displayLibraryDirty = true;
     // Cached network state to avoid repeated ConnectivityManager queries
     private boolean cachedNetworkAvailable;
     private long cachedNetworkAvailableAtMs;
@@ -317,8 +320,14 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
      * Builds the display list for the library: [Favoritos] + [Custom] + [YouTube playlists].
      * Does NOT mutate {@link #libraryTracks} â€” produces a fresh list each time.
      */
+    void markDisplayLibraryDirty() {
+        displayLibraryDirty = true;
+    }
     @NonNull
     private List<YouTubeMusicService.TrackResult> buildDisplayLibrary() {
+        if (!displayLibraryDirty && cachedDisplayLibrary != null) {
+            return new ArrayList<>(cachedDisplayLibrary);
+        }
         List<YouTubeMusicService.TrackResult> display = new ArrayList<>();
         Set<String> seenIds = new HashSet<>();
         List<String> pinnedIds = isAdded()
@@ -456,6 +465,8 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 ));
             }
         }
+        cachedDisplayLibrary = new ArrayList<>(display);
+        displayLibraryDirty = false;
         return display;
     }
     /**
@@ -496,9 +507,12 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                         existingIds.add(contentId);
                         changed = true;
                     }
-                    if (changed && activeScreen == ScreenMode.LIBRARY) {
-                        List<YouTubeMusicService.TrackResult> display = buildDisplayLibrary();
-                        if (adapter != null) adapter.submitResults(new ArrayList<>(display));
+                    if (changed) {
+                        displayLibraryDirty = true;
+                        if (activeScreen == ScreenMode.LIBRARY) {
+                            List<YouTubeMusicService.TrackResult> display = buildDisplayLibrary();
+                            if (adapter != null) adapter.submitResults(new ArrayList<>(display));
+                        }
                     }
                 } finally {
                     cloudPlaylistFetchInFlight = false;
@@ -1502,6 +1516,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 Log.i(TAG_STREAMING, "playlist_fetch success playlists=" + playlists.size());
                 libraryTracks.clear();
                 libraryTracks.addAll(mapPlaylistsToLibraryTracks(playlists));
+                displayLibraryDirty = true;
                 cacheLibraryForCurrentAccount(libraryTracks);
                 // Prefetch tracks on initial load. On pull-to-refresh, only prefetch
                 // if some playlists are still missing grid images (first-install catch-up).
@@ -1583,6 +1598,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         renderLibraryResults();
     }
     private void renderLibraryResults() {
+        displayLibraryDirty = true;
         libraryInlinePendingReveal = false;
         String inlineQuery = getLibraryInlineQuery();
         if (!TextUtils.isEmpty(inlineQuery)) {
@@ -2132,12 +2148,14 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         if (hasValidLibraryCache(accountKey) && libraryTracks.isEmpty()) {
             libraryTracks.clear();
             libraryTracks.addAll(new ArrayList<>(LIBRARY_CACHE));
+            displayLibraryDirty = true;
             return;
         }
         List<YouTubeMusicService.TrackResult> persisted = loadPersistedLibrary(accountKey);
         if (!persisted.isEmpty() && libraryTracks.isEmpty()) {
             libraryTracks.clear();
             libraryTracks.addAll(persisted);
+            displayLibraryDirty = true;
             LIBRARY_CACHE.clear();
             LIBRARY_CACHE.addAll(libraryTracks);
             libraryCacheAccountKey = accountKey;
@@ -2155,6 +2173,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         }
         libraryTracks.clear();
         libraryTracks.addAll(persisted);
+        displayLibraryDirty = true;
         LIBRARY_CACHE.clear();
         LIBRARY_CACHE.addAll(libraryTracks);
         libraryCacheAccountKey = accountKey;
@@ -3394,11 +3413,19 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             btnDeletePlaylist.setVisibility(View.GONE);
             btnRenamePlaylist.setVisibility(View.GONE);
         }
+        dialog.show();
+
+        // Configure after show() so BottomSheetBehavior is attached and animation works
         View parent = (View) view.getParent();
         if (parent != null) {
             parent.setBackgroundColor(android.graphics.Color.TRANSPARENT);
         }
-        dialog.show();
+        View bottomSheet = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+        if (bottomSheet != null) {
+            com.google.android.material.bottomsheet.BottomSheetBehavior<?> behavior =
+                    com.google.android.material.bottomsheet.BottomSheetBehavior.from(bottomSheet);
+            behavior.setSkipCollapsed(true);
+        }
     }
     private void showLibraryTrackOptions(@NonNull YouTubeMusicService.TrackResult track, @NonNull View anchor) {
         if (!isAdded()) return;
@@ -3474,11 +3501,19 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         view.findViewById(R.id.btnBsDownload).setVisibility(View.GONE);
         view.findViewById(R.id.btnBsAddToQueue).setVisibility(View.GONE);
         view.findViewById(R.id.btnBsPlayPlaylist).setVisibility(View.GONE);
+        dialog.show();
+
+        // Configure after show() so BottomSheetBehavior is attached and animation works
         View parent2 = (View) view.getParent();
         if (parent2 != null) {
             parent2.setBackgroundColor(android.graphics.Color.TRANSPARENT);
         }
-        dialog.show();
+        View bottomSheet2 = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+        if (bottomSheet2 != null) {
+            com.google.android.material.bottomsheet.BottomSheetBehavior<?> behavior =
+                    com.google.android.material.bottomsheet.BottomSheetBehavior.from(bottomSheet2);
+            behavior.setSkipCollapsed(true);
+        }
     }
     private void playPlaylistFromStart(@NonNull YouTubeMusicService.TrackResult playlistTrack) {
         if (!isAdded()) return;
@@ -5350,6 +5385,8 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         private final Set<String> playlistsCurrentlyDownloading = new HashSet<>();
         private long playlistOfflineStateGeneration;
         private boolean forceNextOfflineRecalculation = false;
+        private long lastFullOfflineInvalidateAtMs = 0L;
+        private static final long FULL_OFFLINE_INVALIDATE_THROTTLE_MS = 5000L;
         private boolean searchMode;
         MusicResultsAdapter(
                 @NonNull OnLibraryTrackClick onTrackClick,
@@ -5360,8 +5397,23 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             setHasStableIds(false);
         }
         void invalidatePlaylistOfflineState(@Nullable String playlistId) {
+            invalidatePlaylistOfflineState(playlistId, false);
+        }
+        void invalidatePlaylistOfflineState(@Nullable String playlistId, boolean force) {
             if (TextUtils.isEmpty(playlistId)) {
+                long now = android.os.SystemClock.elapsedRealtime();
+                if (!force && lastFullOfflineInvalidateAtMs > 0
+                        && (now - lastFullOfflineInvalidateAtMs) < FULL_OFFLINE_INVALIDATE_THROTTLE_MS) {
+                    // Throttled: just rebind existing cached states without heavy disk I/O
+                    if (!data.isEmpty()) {
+                        safeNotify(() -> notifyItemRangeChanged(0, data.size(), PAYLOAD_OFFLINE_STATE));
+                    }
+                    return;
+                }
+                lastFullOfflineInvalidateAtMs = now;
                 playlistOfflineStateGeneration++;
+                // Clear cache so async results always trigger UI notification
+                playlistOfflineCompleteCache.clear();
                 // Set flag to force recalculation from actual files during next submitResults
                 forceNextOfflineRecalculation = true;
                 long generation = playlistOfflineStateGeneration;
@@ -5830,12 +5882,15 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             boolean offlineAutoEnabled = isPersistedPlaylistOfflineAutoEnabled(playlistId);
             Boolean cachedState = playlistOfflineCompleteCache.get(playlistId);
             if (cachedState == null) {
-                requestPlaylistOfflineStateRefreshAsync(playlistId, playlistOfflineStateGeneration);
+                // Force recalculation from actual files — SharedPreferences may be stale after app restart
+                requestPlaylistOfflineStateRefreshAsync(playlistId, playlistOfflineStateGeneration, true);
             }
             boolean completeOffline;
             if (cachedState != null) {
                 completeOffline = cachedState;
             } else {
+                // While async calculation is in flight, use persisted state as best guess.
+                // The async callback will correct it and notify the item if different.
                 completeOffline = isPersistedPlaylistOfflineComplete(playlistId);
             }
 
