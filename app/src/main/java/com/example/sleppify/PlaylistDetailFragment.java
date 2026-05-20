@@ -3416,12 +3416,20 @@ public class PlaylistDetailFragment extends Fragment
             );
         });
 
+        dialog.show();
+
+        // Configure after show() so BottomSheetBehavior is attached and animation works
         View parent = (View) view.getParent();
         if (parent != null) {
             parent.setBackgroundColor(android.graphics.Color.TRANSPARENT);
         }
-
-        dialog.show();
+        View bottomSheet = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+        if (bottomSheet != null) {
+            com.google.android.material.bottomsheet.BottomSheetBehavior<?> behavior =
+                    com.google.android.material.bottomsheet.BottomSheetBehavior.from(bottomSheet);
+            behavior.setSkipCollapsed(true);
+            behavior.setState(com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED);
+        }
     }
 
     /**
@@ -3817,6 +3825,44 @@ public class PlaylistDetailFragment extends Fragment
                 .add(R.id.fragmentContainer, detailFragment, "playlist_detail")
                 .addToBackStack("playlist_detail")
                 .commit();
+
+        // Fetch radio tracks and save to RadioHistoryStore for library display
+        String cookie = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE)
+                .getString("stream_last_youtube_web_cookie", "");
+        if (cookie == null) cookie = "";
+        final String selectedVideoId = track.videoId;
+        final String selectedTitle = TextUtils.isEmpty(track.title) ? "Tema" : track.title;
+        final String selectedArtist = track.artist == null ? "" : track.artist;
+        final String selectedThumb = track.imageUrl == null ? "" : track.imageUrl;
+        final String finalRadioPlaylistId = radioPlaylistId;
+        youTubeMusicService.fetchMixTracks(cookie.trim(), radioPlaylistId, new YouTubeMusicService.MixTracksCallback() {
+            @Override
+            public void onSuccess(@NonNull java.util.List<YouTubeMusicService.TrackResult> radioTracks) {
+                if (radioTracks.isEmpty()) return;
+                java.util.List<RadioHistoryStore.RadioTrack> radioStoreTracks = new java.util.ArrayList<>();
+                radioStoreTracks.add(new RadioHistoryStore.RadioTrack(
+                        selectedVideoId, selectedTitle, selectedArtist, selectedThumb));
+                for (YouTubeMusicService.TrackResult t : radioTracks) {
+                    if (TextUtils.isEmpty(t.videoId) || TextUtils.equals(t.videoId, selectedVideoId)) continue;
+                    radioStoreTracks.add(new RadioHistoryStore.RadioTrack(
+                            t.videoId,
+                            TextUtils.isEmpty(t.title) ? "" : t.title,
+                            t.subtitle == null ? "" : t.subtitle,
+                            t.thumbnailUrl == null ? "" : t.thumbnailUrl));
+                }
+                Context ctx = getContext();
+                if (ctx == null) ctx = requireActivity().getApplicationContext();
+                RadioHistoryStore.INSTANCE.saveRadio(ctx, finalRadioPlaylistId, selectedTitle, selectedThumb, radioStoreTracks);
+                if (getActivity() instanceof MainActivity) {
+                    ((MainActivity) getActivity()).refreshMusicLibrary();
+                }
+            }
+
+            @Override
+            public void onError(@NonNull String error) {
+                // Radio fetch failed — no action needed
+            }
+        });
     }
 
     private void queueTrackAtEnd(int position) {
