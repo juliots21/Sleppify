@@ -19,6 +19,9 @@ class SleppifyApp : Application() {
 
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
 
+        // Store app context so ExoPlayerManager can lazy-init on first use
+        ExoPlayerManager.setAppContext(this)
+
         // Restore mono audio setting (cheap, no I/O)
         val settingsPrefs = getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, MODE_PRIVATE)
         MonoAudioProcessor.enabled = settingsPrefs.getBoolean(CloudSyncManager.KEY_MONO_AUDIO, false)
@@ -31,7 +34,8 @@ class SleppifyApp : Application() {
     }
 
     /**
-     * Performs all heavy initialization: ProviderInstaller, Glide, ExoPlayer, NewPipe.
+     * Performs heavy initialization: Glide (main thread), ProviderInstaller + NewPipe (background).
+     * ExoPlayer is lazy-initialized on first use via [ExoPlayerManager.getSharedExoPlayer].
      * Called immediately on startup if session exists, or after first login otherwise.
      * Safe to call multiple times — guards with [heavyInitDone].
      */
@@ -46,23 +50,21 @@ class SleppifyApp : Application() {
             heavyInitDone = true
         }
 
-        try {
-            com.google.android.gms.security.ProviderInstaller.installIfNeeded(this)
-        } catch (e: Exception) {
-            Log.w("SleppifyApp", "ProviderInstaller failed", e)
-        }
-
-        // Pre-warm Glide
+        // Pre-warm Glide (fast, recommended on main thread)
         try {
             com.bumptech.glide.Glide.get(this)
         } catch (e: Exception) {}
 
-        // Pre-initialize ExoPlayer to reduce playback startup latency
-        ExoPlayerManager.initialize(this)
+        // ExoPlayer is now lazy-initialized on first use via ExoPlayerManager.getSharedExoPlayer()
+        // — no need to block the main thread here.
 
-        // Pre-initialize NewPipeExtractor on a background thread so the first
-        // stream resolution doesn't pay the cold-start penalty (~500-800ms).
+        // Heavy background work: ProviderInstaller + NewPipeExtractor
         Executors.newSingleThreadExecutor().execute {
+            try {
+                com.google.android.gms.security.ProviderInstaller.installIfNeeded(this)
+            } catch (e: Exception) {
+                Log.w("SleppifyApp", "ProviderInstaller failed", e)
+            }
             try {
                 org.schabi.newpipe.extractor.NewPipe.init(NewPipeHttpDownloader.getInstance())
             } catch (e: Exception) {

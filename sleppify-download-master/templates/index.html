@@ -36,7 +36,7 @@
 <body>
     <div class="container">
         <h1>Sleppify Download Tester</h1>
-        <p class="subtitle">Prueba el endpoint /api/download — diagnostica errores y descarga audio</p>
+        <p class="subtitle">Prueba el endpoint /api/video — diagnostica errores y descarga video</p>
 
         <div class="health-info" id="healthInfo">Verificando servidor...</div>
 
@@ -159,12 +159,12 @@
             clearLog();
             setStatus('Descargando...', 'yellow');
             log('[DOWNLOAD] URL: ' + url, 'info');
-            log('[DOWNLOAD] Enviando a /api/download...', 'info');
+            log('[DOWNLOAD] Enviando a /api/video...', 'info');
             log('');
 
             const start = Date.now();
             try {
-                const r = await fetch('/api/download', {
+                const r = await fetch('/api/video', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({url})

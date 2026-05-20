@@ -197,6 +197,7 @@ public class PlaylistDetailFragment extends Fragment
     private String headerPlaylistThumbnail = "";
     @NonNull
     private List<String> headerGridUrls = new ArrayList<>();
+    private boolean isRadioContext;
     private int pendingTracksTokenRetry;
     private int playlistTracksRequestedLimit = PLAYLIST_TRACKS_INITIAL_FETCH_LIMIT;
     private boolean playlistTracksLoadMoreInFlight;
@@ -313,6 +314,10 @@ public class PlaylistDetailFragment extends Fragment
             );
         }
         currentPlaylistId = playlistId;
+        isRadioContext = playlistId.startsWith("RDAMVM") || playlistId.startsWith("RDEM") || playlistId.startsWith("RDTMAK");
+        if (isRadioContext && playlistTitle.startsWith("Radio: ")) {
+            playlistTitle = playlistTitle.substring(7);
+        }
         currentPlaylistTitle = playlistTitle;
         currentPlaylistSubtitle = playlistSubtitle;
         currentPlaylistThumbnail = playlistThumbnail;
@@ -998,7 +1003,7 @@ public class PlaylistDetailFragment extends Fragment
     }
 
     private void loadTrackArt(@NonNull ImageView target, @Nullable String imageUrl) {
-        loadTrackArt(target, imageUrl, com.bumptech.glide.Priority.NORMAL);
+        loadTrackArt(target, imageUrl, com.bumptech.glide.Priority.HIGH);
     }
 
     private void loadTrackArt(
@@ -1345,8 +1350,33 @@ public class PlaylistDetailFragment extends Fragment
         String effectiveAccessToken = resolveYoutubeAccessToken(accessToken);
         int requestedLimit = resolveTrackFetchLimit(forceRefresh, loadMore);
 
+        boolean localFilesContext = isLocalFilesContext(playlistId);
         boolean favoritesContext = isFavoritesPlaylistContext(playlistId);
         boolean customContext = isCustomPlaylistContext(playlistId);
+
+        // Local files — load from device MediaStore cache
+        if (localFilesContext) {
+            playlistTracksLoadMoreInFlight = false;
+            playlistTracksCanLoadMore = false;
+            if (!isAdded()) return;
+            List<LocalFilesStore.LocalTrack> localTracks = LocalFilesStore.getCachedFiles(requireContext());
+            if (localTracks.isEmpty() && forceRefresh) {
+                localTracks = LocalFilesStore.scanLocalFiles(requireContext());
+                LocalFilesStore.cacheFiles(requireContext(), localTracks);
+            }
+            List<PlaylistTrack> mapped = new ArrayList<>(localTracks.size());
+            for (LocalFilesStore.LocalTrack t : localTracks) {
+                mapped.add(new PlaylistTrack(
+                        t.getVideoId(),
+                        t.getTitle(),
+                        t.getArtist(),
+                        t.getDuration(),
+                        t.getAlbumArtUri()
+                ));
+            }
+            renderTracks(mapped, playlistId, false);
+            return;
+        }
 
         List<PlaylistTrack> cachedTracks = sanitizeTracksForPlaylist(
                 playlistId,
@@ -1456,6 +1486,54 @@ public class PlaylistDetailFragment extends Fragment
         }
 
         notifyHeaderChanged();
+
+        // Radio/Mix playlists (RDAMVM, RDEM, RDTMAK) use InnerTube API with cookie
+        if (playlistId.startsWith("RDAMVM") || playlistId.startsWith("RDEM") || playlistId.startsWith("RDTMAK")) {
+            String cookie = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE)
+                    .getString("stream_last_youtube_web_cookie", "");
+            if (cookie == null) cookie = "";
+            youTubeMusicService.fetchMixTracks(cookie.trim(), playlistId, new YouTubeMusicService.MixTracksCallback() {
+                @Override
+                public void onSuccess(@NonNull List<YouTubeMusicService.TrackResult> tracks) {
+                    if (!isAdded()) return;
+                    playlistTracksLoadMoreInFlight = false;
+                    playlistTracksCanLoadMore = false;
+                    List<PlaylistTrack> mapped = new ArrayList<>();
+                    for (YouTubeMusicService.TrackResult t : tracks) {
+                        if (TextUtils.isEmpty(t.videoId)) continue;
+                        mapped.add(new PlaylistTrack(
+                                t.videoId,
+                                t.title == null ? "" : t.title,
+                                t.subtitle == null ? "" : t.subtitle,
+                                "--:--",
+                                t.thumbnailUrl == null ? "" : t.thumbnailUrl
+                        ));
+                    }
+                    if (mapped.isEmpty()) {
+                        revealPlaylistContentIfNeeded(true);
+                        return;
+                    }
+                    cacheTracks(playlistId, mapped, true);
+                    renderTracks(mapped, playlistId, false);
+                }
+
+                @Override
+                public void onError(@NonNull String error) {
+                    if (!isAdded()) return;
+                    playlistTracksLoadMoreInFlight = false;
+                    // Try loading from cache if available
+                    List<PlaylistTrack> cached = sanitizeTracksForPlaylist(
+                            playlistId, loadCachedTracks(playlistId));
+                    if (!cached.isEmpty()) {
+                        renderTracks(cached, playlistId, true);
+                        return;
+                    }
+                    revealPlaylistContentIfNeeded(true);
+                }
+            });
+            return;
+        }
+
         youTubeMusicService.fetchPlaylistTracks(effectiveAccessToken, playlistId, requestedLimit, new YouTubeMusicService.PlaylistTracksCallback() {
             @Override
             public void onSuccess(@NonNull List<YouTubeMusicService.PlaylistTrackResult> tracks) {
@@ -1771,6 +1849,7 @@ public class PlaylistDetailFragment extends Fragment
 
     @NonNull
     private String resolvePlaylistType(@NonNull String playlistId) {
+        if (isLocalFilesContext(playlistId)) return "local_files";
         if (isFavoritesPlaylistContext(playlistId)) return "favorites";
         if (isCustomPlaylistContext(playlistId)) return "custom";
         return "youtube";
@@ -2433,6 +2512,10 @@ public class PlaylistDetailFragment extends Fragment
         return playlistId.startsWith(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX);
     }
 
+    private boolean isLocalFilesContext(@NonNull String playlistId) {
+        return LocalFilesStore.PLAYLIST_ID.equals(playlistId);
+    }
+
     public void externalRefreshFavoritesIfActive() {
         externalRefreshFavoritesIfActive(null);
     }
@@ -2520,6 +2603,34 @@ public class PlaylistDetailFragment extends Fragment
         boolean isYouTubePlaylist = !isFavoritesPlaylistContext(playlistId)
                 && !isCustomPlaylistContext(playlistId)
                 && !isLikedPlaylistContext(playlistId);
+
+        // Radio playlists: skip 2x2 grid, use single thumbnail image
+        if (isRadioContext) {
+            headerGridUrls = new ArrayList<>();
+            trackAdapter.submitTracks(currentTracks);
+            rebuildPlaybackQueue();
+            prefetchStreamUrlsForTracks(currentTracks, 5);
+            int totalSeconds = 0;
+            for (PlaylistTrack track : currentTracks) {
+                totalSeconds += parseDurationSeconds(track.duration);
+            }
+            currentMeta = new PlaylistMeta(
+                currentMeta.ownerLabel,
+                currentTracks.size(),
+                formatTotalDuration(totalSeconds),
+                currentMeta.visibilityLabel,
+                currentMeta.ageLabel
+            );
+            headerPlaylistInfo = buildPlaylistInfoLine(currentMeta, currentTracks.size());
+            notifyHeaderChanged();
+            maybeUpdateOfflineReadyState();
+            if (currentTracks.isEmpty()) {
+                currentTrackIndex = -1;
+                miniPlaying = false;
+            }
+            revealPlaylistContentIfNeeded(true);
+            return;
+        }
 
         // For YouTube playlists, use persisted grid URLs so the 2x2 never changes
         List<String> gridUrls = null;
@@ -2609,13 +2720,13 @@ public class PlaylistDetailFragment extends Fragment
             return;
         }
 
-        // Collect URLs to preload: grid URLs + first 6 track thumbnails
+        // Collect URLs to preload: grid URLs + first 12 track thumbnails
         List<String> gridUrls = new ArrayList<>();
         for (String gridUrl : headerGridUrls) {
             if (!TextUtils.isEmpty(gridUrl)) gridUrls.add(gridUrl.trim());
         }
         List<String> trackUrls = new ArrayList<>();
-        int trackLimit = Math.min(currentTracks.size(), 6);
+        int trackLimit = Math.min(currentTracks.size(), 8);
         for (int i = 0; i < trackLimit; i++) {
             PlaylistTrack t = currentTracks.get(i);
             if (t != null && !TextUtils.isEmpty(t.imageUrl)) {
@@ -2689,6 +2800,7 @@ public class PlaylistDetailFragment extends Fragment
                     .transform(SHARED_YT_CROP)
                     .format(DecodeFormat.PREFER_RGB_565)
                     .diskCacheStrategy(DiskCacheStrategy.ALL)
+                    .priority(com.bumptech.glide.Priority.HIGH)
                     .override(trackPx, trackPx)
                     .listener(revealListener)
                     .preload();
@@ -3133,7 +3245,9 @@ public class PlaylistDetailFragment extends Fragment
 
         Context context = requireContext();
         PlaylistTrack selectedTrack = currentTracks.get(position);
+        boolean isLocalFilesPlaylist = isLocalFilesContext(currentPlaylistId);
         boolean hasOfflineAudio = !TextUtils.isEmpty(selectedTrack.videoId)
+            && !isLocalFilesPlaylist
             && OfflineAudioStore.hasValidatedOfflineAudio(context, selectedTrack.videoId, selectedTrack.duration);
 
         com.google.android.material.bottomsheet.BottomSheetDialog dialog = new com.google.android.material.bottomsheet.BottomSheetDialog(context);
@@ -3146,7 +3260,13 @@ public class PlaylistDetailFragment extends Fragment
         
         tvTitle.setText(TextUtils.isEmpty(selectedTrack.title) ? "Tema" : selectedTrack.title);
         tvSubtitle.setText(TextUtils.isEmpty(selectedTrack.artist) ? "Artista" : selectedTrack.artist);
-        loadArtworkInto(ivArt, selectedTrack.imageUrl);
+        if (isLocalFilesPlaylist && LocalFilesStore.isLocalVideoId(selectedTrack.videoId)) {
+            ivArt.setScaleType(ImageView.ScaleType.CENTER);
+            ivArt.setBackgroundColor(ContextCompat.getColor(context, R.color.surface_high));
+            ivArt.setImageResource(R.drawable.ic_music);
+        } else {
+            loadArtworkInto(ivArt, selectedTrack.imageUrl);
+        }
         ImageView ivBsOffline = view.findViewById(R.id.ivBsOfflineState);
         if (ivBsOffline != null) {
             ivBsOffline.setVisibility(hasOfflineAudio ? View.VISIBLE : View.GONE);
@@ -3172,8 +3292,8 @@ public class PlaylistDetailFragment extends Fragment
             onTrackSelected(position);
         });
 
-        // Slot 2 (top): Descargar / Eliminar descarga
-        btnAddPrimary.setVisibility(View.VISIBLE);
+        // Slot 2 (top): Descargar / Eliminar descarga (hidden for local files)
+        btnAddPrimary.setVisibility(isLocalFilesPlaylist ? View.GONE : View.VISIBLE);
         if (hasOfflineAudio) {
             ivAddPrimary.setImageResource(R.drawable.ic_delete_modern);
             tvAddPrimary.setText("Eliminar\ndescarga");
@@ -3190,8 +3310,8 @@ public class PlaylistDetailFragment extends Fragment
             }
         });
 
-        // Slot 3 (top): Compartir
-        btnShare.setVisibility(View.VISIBLE);
+        // Slot 3 (top): Compartir (hidden for local files)
+        btnShare.setVisibility(isLocalFilesPlaylist ? View.GONE : View.VISIBLE);
         ivShare.setImageResource(R.drawable.ic_playlist_share);
         tvShare.setText("Compartir");
         btnShare.setOnClickListener(v -> {
@@ -3229,15 +3349,15 @@ public class PlaylistDetailFragment extends Fragment
             showSaveToPlaylistSheet(selectedTrack, null);
         });
 
-        // Row: Iniciar radio
-        btnPlay.setVisibility(View.VISIBLE);
+        // Row: Iniciar radio (hidden for local files)
+        btnPlay.setVisibility(isLocalFilesPlaylist ? View.GONE : View.VISIBLE);
         ImageView ivRadio = btnPlay.findViewById(R.id.ivBsPlay);
         TextView tvRadio = btnPlay.findViewById(R.id.tvBsPlayLabel);
         ivRadio.setImageResource(R.drawable.ic_bs_radio);
         tvRadio.setText("Iniciar radio");
         btnPlay.setOnClickListener(v -> {
             dialog.dismiss();
-            android.widget.Toast.makeText(requireContext(), "Próximamente", android.widget.Toast.LENGTH_SHORT).show();
+            startRadioForTrack(selectedTrack);
         });
 
         // Row: Agregar a la fila
@@ -3268,9 +3388,9 @@ public class PlaylistDetailFragment extends Fragment
             btnDownload.setVisibility(View.GONE);
         }
 
-        // Row: Reemplazar
+        // Row: Reemplazar (hidden for local files)
         View btnReplace = view.findViewById(R.id.btnBsReplace);
-        btnReplace.setVisibility(View.VISIBLE);
+        btnReplace.setVisibility(isLocalFilesPlaylist ? View.GONE : View.VISIBLE);
         ImageView ivReplace = view.findViewById(R.id.ivBsReplace);
         TextView tvReplace = view.findViewById(R.id.tvBsReplace);
         ivReplace.setImageResource(R.drawable.ic_player_repeat);
@@ -3670,6 +3790,35 @@ public class PlaylistDetailFragment extends Fragment
         
     }
 
+    private void startRadioForTrack(@NonNull PlaylistTrack track) {
+        if (!isAdded() || TextUtils.isEmpty(track.videoId)) return;
+        if (getParentFragmentManager().isStateSaved()) return;
+        String radioPlaylistId = "RDAMVM" + track.videoId;
+        String radioTitle = "Radio: " + (TextUtils.isEmpty(track.title) ? "Tema" : track.title);
+        String accessToken = resolveYoutubeAccessToken("");
+        PlaylistDetailFragment detailFragment = PlaylistDetailFragment.newInstance(
+                radioPlaylistId,
+                radioTitle,
+                track.artist == null ? "" : track.artist,
+                track.imageUrl == null ? "" : track.imageUrl,
+                accessToken
+        );
+        if (getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).showModuleLoadingOverlay();
+        }
+        androidx.fragment.app.Fragment existingDetail = getParentFragmentManager().findFragmentByTag("playlist_detail");
+        androidx.fragment.app.FragmentTransaction transaction = getParentFragmentManager()
+                .beginTransaction()
+                .setReorderingAllowed(true);
+        if (existingDetail != null && existingDetail.isAdded() && existingDetail != this) {
+            transaction.remove(existingDetail);
+        }
+        transaction
+                .add(R.id.fragmentContainer, detailFragment, "playlist_detail")
+                .addToBackStack("playlist_detail")
+                .commit();
+    }
+
     private void queueTrackAtEnd(int position) {
         if (!isAdded() || position < 0 || position >= currentTracks.size()) {
             return;
@@ -3831,6 +3980,9 @@ public class PlaylistDetailFragment extends Fragment
             
             return;
         }
+
+        // Local device files don't need downloading
+        if (LocalFilesStore.isLocalVideoId(track.videoId)) return;
 
         if (OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), track.videoId, track.duration)) {
             
@@ -4953,6 +5105,35 @@ public class PlaylistDetailFragment extends Fragment
                 holder.ivPlaylistBackdrop.setBackground(null);
                 PlaylistGridArtLoader.load(holder.ivPlaylistCover, headerGridUrls, 800);
                 PlaylistGridArtLoader.load(holder.ivPlaylistBackdrop, headerGridUrls, 320);
+            } else if (isLocalFilesContext(currentPlaylistId)) {
+                // Local files: white folder icon on black background (same as library row)
+                holder.ivPlaylistCover.setPadding(0, 0, 0, 0);
+                holder.ivPlaylistCover.setScaleType(ImageView.ScaleType.CENTER);
+                holder.ivPlaylistCover.setBackgroundColor(android.graphics.Color.BLACK);
+                holder.ivPlaylistCover.setColorFilter(null);
+                holder.ivPlaylistCover.setImageResource(R.drawable.ic_folder_white);
+                holder.ivPlaylistBackdrop.setBackground(null);
+                holder.ivPlaylistBackdrop.setImageDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.BLACK));
+            } else if (isRadioContext && !TextUtils.isEmpty(headerPlaylistThumbnail)) {
+                // Radio context: single thumbnail image from the originating track
+                holder.ivPlaylistCover.setPadding(0, 0, 0, 0);
+                holder.ivPlaylistCover.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                holder.ivPlaylistCover.setBackground(null);
+                holder.ivPlaylistCover.setColorFilter(null);
+                holder.ivPlaylistBackdrop.setBackground(null);
+                Glide.with(holder.itemView)
+                        .load(headerPlaylistThumbnail.trim())
+                        .diskCacheStrategy(DiskCacheStrategy.ALL)
+                        .priority(com.bumptech.glide.Priority.HIGH)
+                        .override(800, 800)
+                        .transition(DrawableTransitionOptions.withCrossFade(200))
+                        .into(holder.ivPlaylistCover);
+                Glide.with(holder.itemView)
+                        .load(headerPlaylistThumbnail.trim())
+                        .diskCacheStrategy(DiskCacheStrategy.ALL)
+                        .override(320, 320)
+                        .transition(DrawableTransitionOptions.withCrossFade(200))
+                        .into(holder.ivPlaylistBackdrop);
             } else {
                 // Grey placeholder until track data arrives and grid can be built
                 holder.ivPlaylistCover.setPadding(0, 0, 0, 0);
@@ -4986,6 +5167,12 @@ public class PlaylistDetailFragment extends Fragment
         }
 
         private void bindOfflineState(@NonNull HeaderViewHolder holder) {
+            if (isLocalFilesContext(currentPlaylistId)) {
+                holder.btnDownload.setVisibility(View.GONE);
+                holder.btnEditPlaylist.setVisibility(View.GONE);
+                holder.btnSharePlaylist.setVisibility(View.GONE);
+                return;
+            }
             boolean offlineAutoEnabled = isCurrentPlaylistOfflineAutoEnabled();
             boolean completeOffline = isPersistedOfflineCompleteStateForCurrentPlaylist();
             holder.btnEditPlaylist.setVisibility(View.VISIBLE);
@@ -5800,13 +5987,22 @@ public class PlaylistDetailFragment extends Fragment
             // Image loading: during a fast fling show a grey placeholder only.
             // Glide requests are paused by the scroll listener during flings and resumed
             // at idle — Glide will then automatically complete pending loads for visible items.
+            boolean isLocalTrack = LocalFilesStore.isLocalVideoId(track.videoId);
             if (isFastScrolling) {
                 // During drag, clear the stale image from the recycled holder immediately
                 // so the wrong track's art doesn't show. reloadImagesForRange will load
                 // the correct image at SCROLL_STATE_IDLE.
                 Glide.with(context).clear(holder.ivTrackArt);
                 holder.ivTrackArt.setImageDrawable(null);
+            } else if (isLocalTrack) {
+                // Local files: always music note icon on grey background
+                Glide.with(context).clear(holder.ivTrackArt);
+                holder.ivTrackArt.setScaleType(ImageView.ScaleType.CENTER);
+                holder.ivTrackArt.setBackgroundColor(ContextCompat.getColor(context, R.color.surface_high));
+                holder.ivTrackArt.setImageResource(R.drawable.ic_music);
             } else {
+                holder.ivTrackArt.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                holder.ivTrackArt.setBackgroundColor(android.graphics.Color.TRANSPARENT);
                 loadTrackArt(holder.ivTrackArt, track.imageUrl, com.bumptech.glide.Priority.HIGH);
             }
 

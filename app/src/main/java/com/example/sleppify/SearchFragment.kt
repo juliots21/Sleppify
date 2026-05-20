@@ -1127,7 +1127,7 @@ class SearchFragment : Fragment() {
         tvRadio.text = "Iniciar radio"
         btnPlay.setOnClickListener {
             dialog.dismiss()
-            Toast.makeText(ctx, "Próximamente", Toast.LENGTH_SHORT).show()
+            startRadioForTrack(track)
         }
 
         // Row: Agregar a la fila
@@ -1540,6 +1540,24 @@ class SearchFragment : Fragment() {
             putExtra(Intent.EXTRA_TEXT, "https://youtu.be/${track.videoId}")
         }
         startActivity(Intent.createChooser(shareIntent, "Compartir"))
+    }
+
+    private fun startRadioForTrack(track: YouTubeMusicService.TrackResult) {
+        val videoId = track.videoId ?: return
+        if (videoId.isEmpty()) return
+        val radioPlaylistId = "RDAMVM$videoId"
+        val radioTitle = "Radio: ${track.title?.takeIf { it.isNotEmpty() } ?: "Tema"}"
+        val intent = Intent(requireContext(), MainActivity::class.java).apply {
+            action = MainActivity.ACTION_PLAY_FROM_SEARCH
+            putExtra(EXTRA_RESULT_TYPE, "playlist")
+            putExtra(EXTRA_RESULT_CONTENT_ID, radioPlaylistId)
+            putExtra(EXTRA_RESULT_TITLE, radioTitle)
+            putExtra(EXTRA_RESULT_SUBTITLE, track.subtitle ?: "")
+            putExtra(EXTRA_RESULT_THUMBNAIL, track.thumbnailUrl ?: "")
+        }
+        if (requireActivity() is MainActivity) {
+            (requireActivity() as MainActivity).handlePlayFromSearchIntent(intent)
+        }
     }
 
     private fun setSearchLoadingState(loading: Boolean, msg: String) {

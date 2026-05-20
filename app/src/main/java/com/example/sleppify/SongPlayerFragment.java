@@ -193,6 +193,7 @@ public class SongPlayerFragment extends Fragment {
     private View actionComments;
     private View actionFavorite;
     private ImageView ivActionFavoriteIcon;
+    private View actionRadio;
     private View actionShare;
     private View actionRemoveFromPlaylist;
     private View actionDownloadTrack;
@@ -572,6 +573,7 @@ public class SongPlayerFragment extends Fragment {
         actionDislike = view.findViewById(R.id.actionDislike);
         actionComments = view.findViewById(R.id.actionComments);
         actionFavorite = view.findViewById(R.id.actionFavorite);
+        actionRadio = view.findViewById(R.id.actionRadio);
         actionShare = view.findViewById(R.id.actionShare);
         actionDownloadTrack = view.findViewById(R.id.actionDownloadTrack);
         ivActionDownloadIcon = view.findViewById(R.id.ivActionDownloadIcon);
@@ -1463,7 +1465,8 @@ public class SongPlayerFragment extends Fragment {
 
         // ✅ FAST-PATH: check offline on the main thread immediately — no executor queue wait.
         // OfflineAudioStore.hasOfflineAudio is a simple SharedPrefs/file existence check.
-        boolean hasOfflineLocal = OfflineAudioStore.hasOfflineAudio(requireContext(), track.videoId);
+        boolean hasOfflineLocal = LocalFilesStore.isLocalVideoId(track.videoId)
+                || OfflineAudioStore.hasOfflineAudio(requireContext(), track.videoId);
         if (hasOfflineLocal) {
             PlaybackLoadingBus.clearLoading();
             List<String> directSources = buildDirectSourceCandidates(track);
@@ -1595,7 +1598,8 @@ public class SongPlayerFragment extends Fragment {
         PlayerTrack nextTrack = tracks.get(nextIndex);
         if (nextTrack == null || TextUtils.isEmpty(nextTrack.videoId)) return;
 
-        // Skip if already offline
+        // Skip if local device file or already offline
+        if (LocalFilesStore.isLocalVideoId(nextTrack.videoId)) return;
         if (isAdded() && OfflineAudioStore.hasOfflineAudio(requireContext(), nextTrack.videoId)) {
             return;
         }
@@ -1645,7 +1649,8 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
-        // Skip if already offline (offline playback is already instant)
+        // Skip if local device file or already offline (offline playback is already instant)
+        if (LocalFilesStore.isLocalVideoId(nextTrack.videoId)) return;
         if (OfflineAudioStore.hasOfflineAudio(requireContext(), nextTrack.videoId)) {
             return;
         }
@@ -2007,6 +2012,8 @@ public class SongPlayerFragment extends Fragment {
                     headers.putAll(authHeaders);
                 }
                 player.setDataSource(playbackAppContext, Uri.parse(source), headers);
+            } else if (source.startsWith("content://") && isAdded()) {
+                player.setDataSource(playbackAppContext, Uri.parse(source), null);
             } else {
                 player.setDataSource(source);
             }
@@ -2082,6 +2089,15 @@ public class SongPlayerFragment extends Fragment {
     @NonNull
     private List<String> buildDirectSourceCandidates(@NonNull PlayerTrack track) {
         LinkedHashSet<String> orderedSources = new LinkedHashSet<>();
+
+        // Local device files — use content URI directly
+        if (isAdded() && LocalFilesStore.isLocalVideoId(track.videoId)) {
+            String contentUri = LocalFilesStore.getContentUriForVideoId(requireContext(), track.videoId);
+            if (contentUri != null && !contentUri.isEmpty()) {
+                orderedSources.add(contentUri);
+            }
+            return new ArrayList<>(orderedSources);
+        }
 
         if (isAdded()
                 && OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), track.videoId, track.duration)) {
@@ -2594,6 +2610,15 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
+        // Try local device files first
+        if (isAdded() && LocalFilesStore.isLocalVideoId(nextTrack.videoId)) {
+            String contentUri = LocalFilesStore.getContentUriForVideoId(requireContext(), nextTrack.videoId);
+            if (contentUri != null && !contentUri.isEmpty()) {
+                executeAutomaticCrossfade(outgoing, nextIndex, contentUri, false, crossfadeDurationMs);
+                return;
+            }
+        }
+
         // Try offline first
         if (isAdded() && OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), nextTrack.videoId, nextTrack.duration)) {
             File nextFile = OfflineAudioStore.getExistingOfflineAudioFile(requireContext(), nextTrack.videoId);
@@ -2675,6 +2700,8 @@ public class SongPlayerFragment extends Fragment {
                     headers.putAll(authHeaders);
                 }
                 incoming.setDataSource(requireContext().getApplicationContext(), Uri.parse(nextUrl), headers);
+            } else if (nextUrl.startsWith("content://")) {
+                incoming.setDataSource(requireContext().getApplicationContext(), Uri.parse(nextUrl), null);
             } else {
                 incoming.setDataSource(nextUrl);
             }
@@ -3346,6 +3373,9 @@ public class SongPlayerFragment extends Fragment {
         if (actionFavorite != null) {
             actionFavorite.setOnClickListener(v -> showSaveToPlaylistSheetFromPlayer());
         }
+        if (actionRadio != null) {
+            actionRadio.setOnClickListener(v -> openRadioForCurrentTrack());
+        }
         if (actionShare != null) {
             actionShare.setOnClickListener(v -> shareCurrentTrack());
         }
@@ -3606,6 +3636,39 @@ public class SongPlayerFragment extends Fragment {
         shareIntent.setType("text/plain");
         shareIntent.putExtra(android.content.Intent.EXTRA_TEXT, shareText);
         startActivity(android.content.Intent.createChooser(shareIntent, "Compartir"));
+    }
+
+    private void openRadioForCurrentTrack() {
+        if (!isAdded() || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) return;
+        if (getParentFragmentManager().isStateSaved()) return;
+        PlayerTrack track = tracks.get(currentIndex);
+        if (TextUtils.isEmpty(track.videoId)) return;
+        String radioPlaylistId = "RDAMVM" + track.videoId;
+        String radioTitle = TextUtils.isEmpty(track.title) ? "Radio" : track.title;
+        SharedPreferences prefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
+        String accessToken = safeValue(prefs.getString(PREF_LAST_YOUTUBE_ACCESS_TOKEN, ""));
+        PlaylistDetailFragment detailFragment = PlaylistDetailFragment.newInstance(
+                radioPlaylistId,
+                radioTitle,
+                TextUtils.isEmpty(track.artist) ? "" : track.artist,
+                TextUtils.isEmpty(track.imageUrl) ? "" : track.imageUrl,
+                accessToken
+        );
+        if (getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).showModuleLoadingOverlay();
+        }
+        androidx.fragment.app.FragmentManager fm = getParentFragmentManager();
+        Fragment existingDetail = fm.findFragmentByTag(TAG_PLAYLIST_DETAIL);
+        androidx.fragment.app.FragmentTransaction transaction = fm.beginTransaction()
+                .setReorderingAllowed(true);
+        if (existingDetail != null && existingDetail.isAdded() && existingDetail != this) {
+            transaction.remove(existingDetail);
+        }
+        transaction
+                .hide(this)
+                .add(R.id.fragmentContainer, detailFragment, TAG_PLAYLIST_DETAIL)
+                .addToBackStack(TAG_PLAYLIST_DETAIL)
+                .commit();
     }
 
     private void refreshDownloadChipState() {

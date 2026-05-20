@@ -446,6 +446,13 @@ class MainActivity : AppCompatActivity() {
         runDeferredResumeWork()
     }
 
+    fun refreshMusicLibrary() {
+        val music = supportFragmentManager.findFragmentByTag(TAG_MODULE_MUSIC)
+        if (music is MusicPlayerFragment && music.isAdded) {
+            music.refreshLibraryUi()
+        }
+    }
+
     fun onAllDownloadsDeleted() {
         val music = supportFragmentManager.findFragmentByTag(TAG_MODULE_MUSIC)
         if (music is MusicPlayerFragment && music.isAdded) {

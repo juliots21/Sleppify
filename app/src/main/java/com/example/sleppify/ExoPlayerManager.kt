@@ -14,8 +14,8 @@ import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.MediaCodecAudioRenderer
 
 /**
- * Singleton manager para una instancia compartida de ExoPlayer que reduce la latencia de inicio.
- * Pre-inicializa ExoPlayer al iniciar la app y lo proporciona a las instancias de ExoMediaPlayer.
+ * Singleton manager para una instancia compartida de ExoPlayer.
+ * Lazy-initializes on first call to [getSharedExoPlayer] to avoid blocking cold start.
  */
 @UnstableApi
 object ExoPlayerManager {
@@ -31,10 +31,14 @@ object ExoPlayerManager {
     @Volatile
     private var monoProcessor: MonoAudioProcessor? = null
 
+    @Volatile
+    private var appContextRef: Context? = null
+
     private val initLock = Any()
 
     /**
-     * Inicializa la instancia compartida de ExoPlayer. Debe llamarse temprano al iniciar la app.
+     * Inicializa la instancia compartida de ExoPlayer.
+     * Safe to call from any thread — ExoPlayer is built on the main Looper.
      */
     fun initialize(@NonNull context: Context) {
         if (!initialized) {
@@ -42,6 +46,7 @@ object ExoPlayerManager {
                 if (!initialized) {
                     try {
                         val appContext = context.applicationContext
+                        appContextRef = appContext
                         val audioAttributes = AudioAttributes.Builder()
                             .setUsage(C.USAGE_MEDIA)
                             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
@@ -96,11 +101,26 @@ object ExoPlayerManager {
 
     /**
      * Obtiene la instancia compartida de ExoPlayer.
-     * Retorna null si la inicialización falló o no ha sido llamada aún.
+     * Lazy-initializes on first call if a context was previously provided via [initialize]
+     * or [setAppContext]. Returns null only if initialization failed.
      */
     @Nullable
     fun getSharedExoPlayer(): ExoPlayer? {
+        if (!initialized) {
+            val ctx = appContextRef
+            if (ctx != null) {
+                initialize(ctx)
+            }
+        }
         return sharedExoPlayer
+    }
+
+    /**
+     * Stores the app context for deferred lazy initialization.
+     * Call early (e.g. Application.onCreate) so [getSharedExoPlayer] can self-init later.
+     */
+    fun setAppContext(@NonNull context: Context) {
+        appContextRef = context.applicationContext
     }
 
     /**

@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.StatFs
@@ -78,6 +79,7 @@ class SettingsFragment : Fragment() {
     private lateinit var vStorageFree: View
     private lateinit var btnDeleteSettingsCache: MaterialButton
     private lateinit var btnDeleteAllDownloads: MaterialButton
+    private lateinit var swLocalFiles: MaterialSwitch
 
     private val settingsPrefs: SharedPreferences by lazy { 
         requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE) 
@@ -89,6 +91,21 @@ class SettingsFragment : Fragment() {
     
     private val authManager: AuthManager by lazy { AuthManager.getInstance(requireContext()) }
     
+    private val audioPermissionLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            LocalFilesStore.setEnabled(requireContext(), true)
+            scanAndCacheLocalFiles()
+            renderLocalFilesSwitch()
+            (activity as? MainActivity)?.refreshMusicLibrary()
+        } else {
+            LocalFilesStore.setEnabled(requireContext(), false)
+            renderLocalFilesSwitch()
+            Toast.makeText(requireContext(), "Se necesita permiso para acceder a la música", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private val webSessionLauncher = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == android.app.Activity.RESULT_OK) {
             val data = result.data
@@ -155,6 +172,7 @@ class SettingsFragment : Fragment() {
         swMonoAudio = v.findViewById(R.id.swMonoAudio)
         swGaplessPlayback = v.findViewById(R.id.swGaplessPlayback)
         swDownloadCanvas = v.findViewById(R.id.swDownloadCanvas)
+        swLocalFiles = v.findViewById(R.id.swLocalFiles)
         rowDownloadQuality = v.findViewById(R.id.rowDownloadQuality)
         rowStreamingQuality = v.findViewById(R.id.rowStreamingQuality)
         rowOpenEqualizer = v.findViewById(R.id.rowOpenEqualizer)
@@ -187,6 +205,37 @@ class SettingsFragment : Fragment() {
         btnDeleteAllDownloads.setOnClickListener { showDeleteAllDownloadsConfirmation() }
         updateDeleteCacheButtonState()
         updateDeleteDownloadsButtonState()
+        renderLocalFilesSwitch()
+    }
+
+    private fun renderLocalFilesSwitch() {
+        val enabled = LocalFilesStore.isEnabled(requireContext())
+        swLocalFiles.setOnCheckedChangeListener(null)
+        swLocalFiles.isChecked = enabled
+        swLocalFiles.setOnCheckedChangeListener { _, checked ->
+            if (checked) {
+                requestAudioPermissionAndEnable()
+            } else {
+                LocalFilesStore.setEnabled(requireContext(), false)
+                (activity as? MainActivity)?.refreshMusicLibrary()
+            }
+        }
+    }
+
+    private fun requestAudioPermissionAndEnable() {
+        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            android.Manifest.permission.READ_MEDIA_AUDIO
+        } else {
+            android.Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+        audioPermissionLauncher.launch(permission)
+    }
+
+    private fun scanAndCacheLocalFiles() {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            val tracks = LocalFilesStore.scanLocalFiles(requireContext())
+            LocalFilesStore.cacheFiles(requireContext(), tracks)
+        }
     }
 
     override fun onResume() {

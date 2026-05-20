@@ -321,8 +321,11 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
     private List<YouTubeMusicService.TrackResult> buildDisplayLibrary() {
         List<YouTubeMusicService.TrackResult> display = new ArrayList<>();
         Set<String> seenIds = new HashSet<>();
+        List<String> pinnedIds = isAdded()
+                ? RadioHistoryStore.INSTANCE.getPinnedPlaylistIds(requireContext())
+                : new ArrayList<>();
         if (isAdded()) {
-            // 1. MÃºsica que te gustÃ³ (Liked) â€” always first
+            // 1. Música que te gustó (Liked) — always first
             YouTubeMusicService.TrackResult likedTrack = null;
             for (YouTubeMusicService.TrackResult item : libraryTracks) {
                 if (item != null && isLikedPlaylistStyle(item)) {
@@ -334,7 +337,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 display.add(likedTrack);
                 seenIds.add(likedTrack.contentId == null ? "" : likedTrack.contentId);
             }
-            // 2. Favoritos â€” always second
+            // 2. Favoritos — always second
             List<FavoritesPlaylistStore.FavoriteTrack> favorites = FavoritesPlaylistStore.loadFavorites(requireContext());
             int count = favorites.size();
             String subtitle = FavoritesPlaylistStore.buildSubtitle(count);
@@ -354,12 +357,17 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             );
             display.add(favoritesTrack);
             seenIds.add(FavoritesPlaylistStore.PLAYLIST_ID);
-            // 3. Custom playlists
+
+            // 3. Pinned items (in pin order) — after Liked & Favoritos
+            // Collect all candidate items (custom playlists, YouTube playlists, radios)
+            Map<String, YouTubeMusicService.TrackResult> allCandidates = new java.util.LinkedHashMap<>();
+
+            // Custom playlists
             List<String> customPlaylists = CustomPlaylistsStore.INSTANCE.getAllPlaylistNames(requireContext());
             for (String customName : customPlaylists) {
                 List<FavoritesPlaylistStore.FavoriteTrack> customTracks = CustomPlaylistsStore.INSTANCE.getTracksFromPlaylist(requireContext(), customName);
                 int countCustom = customTracks.size();
-                String customSubtitle = countCustom == 1 ? "1 canci\u00f3n" : countCustom + " canciones";
+                String customSubtitle = countCustom == 1 ? "1 canción" : countCustom + " canciones";
                 String customThumb = "";
                 for (FavoritesPlaylistStore.FavoriteTrack t : customTracks) {
                     if (!TextUtils.isEmpty(t.imageUrl)) {
@@ -368,18 +376,84 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                     }
                 }
                 String contentId = CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX + customName;
-                display.add(new YouTubeMusicService.TrackResult(
+                allCandidates.put(contentId, new YouTubeMusicService.TrackResult(
                         "playlist", contentId, customName, customSubtitle, customThumb
                 ));
-                seenIds.add(contentId);
             }
-        }
-        // 3. YouTube playlists (from API / cache) â€” skip any already injected above
-        for (YouTubeMusicService.TrackResult item : libraryTracks) {
-            if (item == null) continue;
-            String cid = item.contentId == null ? "" : item.contentId;
-            if (seenIds.add(cid)) {
-                display.add(item);
+
+            // YouTube playlists
+            for (YouTubeMusicService.TrackResult item : libraryTracks) {
+                if (item == null) continue;
+                String cid = item.contentId == null ? "" : item.contentId;
+                if (!seenIds.contains(cid) && !allCandidates.containsKey(cid)) {
+                    allCandidates.put(cid, item);
+                }
+            }
+
+            // Radio history entries
+            List<RadioHistoryStore.RadioEntry> radios = RadioHistoryStore.INSTANCE.getRadios(requireContext());
+            for (RadioHistoryStore.RadioEntry radio : radios) {
+                if (!allCandidates.containsKey(radio.getRadioPlaylistId())) {
+                    int radioCount = radio.getTracks().size();
+                    String radioSubtitle = "Radio · " + radioCount + (radioCount == 1 ? " canción" : " canciones");
+                    allCandidates.put(radio.getRadioPlaylistId(), new YouTubeMusicService.TrackResult(
+                            "playlist",
+                            radio.getRadioPlaylistId(),
+                            radio.getSongTitle() + " Radio",
+                            radioSubtitle,
+                            radio.getSongThumbnail()
+                    ));
+                }
+            }
+
+            // Insert pinned items first (in pin order)
+            for (String pinnedId : pinnedIds) {
+                if (seenIds.contains(pinnedId)) continue;
+                YouTubeMusicService.TrackResult candidate = allCandidates.get(pinnedId);
+                if (candidate != null) {
+                    display.add(candidate);
+                    seenIds.add(pinnedId);
+                }
+            }
+
+            // Then non-pinned custom playlists
+            for (String customName : customPlaylists) {
+                String contentId = CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX + customName;
+                if (seenIds.add(contentId)) {
+                    YouTubeMusicService.TrackResult candidate = allCandidates.get(contentId);
+                    if (candidate != null) display.add(candidate);
+                }
+            }
+
+            // Then non-pinned YouTube playlists
+            for (YouTubeMusicService.TrackResult item : libraryTracks) {
+                if (item == null) continue;
+                String cid = item.contentId == null ? "" : item.contentId;
+                if (seenIds.add(cid)) {
+                    display.add(item);
+                }
+            }
+
+            // Then non-pinned radios at the end
+            for (RadioHistoryStore.RadioEntry radio : radios) {
+                if (seenIds.add(radio.getRadioPlaylistId())) {
+                    YouTubeMusicService.TrackResult candidate = allCandidates.get(radio.getRadioPlaylistId());
+                    if (candidate != null) display.add(candidate);
+                }
+            }
+
+            // Local files playlist — always last if enabled
+            if (LocalFilesStore.isEnabled(requireContext())) {
+                List<LocalFilesStore.LocalTrack> localTracks = LocalFilesStore.getCachedFiles(requireContext());
+                int localCount = localTracks.size();
+                String localSubtitle = localCount == 1 ? "1 canción" : localCount + " canciones";
+                display.add(new YouTubeMusicService.TrackResult(
+                        "playlist",
+                        LocalFilesStore.PLAYLIST_ID,
+                        "Archivos locales",
+                        localSubtitle,
+                        ""
+                ));
             }
         }
         return display;
@@ -2406,17 +2480,30 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 public void onSuccess(@NonNull List<YouTubeMusicService.PlaylistTrackResult> tracks) {
                     if (isAdded() && !tracks.isEmpty()) {
                         cachePlaylistTracksForOffline(targetPlaylistId, tracks);
-                        // Only invalidate grid for Favorites/custom playlists; YouTube grids are immutable
                         boolean isYtPlaylist = !FavoritesPlaylistStore.PLAYLIST_ID.equals(targetPlaylistId)
                                 && !targetPlaylistId.startsWith("custom_");
-                        if (!isYtPlaylist || !playlistGridUrlsCache.containsKey(targetPlaylistId)) {
+                        // Eagerly resolve grid URLs from freshly cached tracks so the
+                        // 2x2 grid is available immediately when the adapter rebinds.
+                        boolean gridJustResolved = false;
+                        if (!playlistGridUrlsCache.containsKey(targetPlaylistId)) {
+                            playlistGridUrlsCache.remove(targetPlaylistId);
+                            List<String> resolved = resolvePlaylistGridUrls(targetPlaylistId);
+                            gridJustResolved = resolved.size() >= 4;
+                        } else if (!isYtPlaylist) {
                             playlistGridUrlsCache.remove(targetPlaylistId);
                         }
+                        final boolean needsFullRebind = gridJustResolved;
                         // Refresh adapter immediately per-playlist as soon as data is cached
                         mainHandler.post(() -> {
                             if (isAdded() && activeScreen == ScreenMode.LIBRARY && adapter != null) {
-                                List<YouTubeMusicService.TrackResult> display = buildDisplayLibrary();
-                                adapter.submitResults(new ArrayList<>(display));
+                                if (needsFullRebind) {
+                                    // Grid just became available — force full rebind so DiffUtil
+                                    // doesn't skip the ViewHolder that was showing a placeholder.
+                                    adapter.notifyDataSetChanged();
+                                } else {
+                                    List<YouTubeMusicService.TrackResult> display = buildDisplayLibrary();
+                                    adapter.submitResults(new ArrayList<>(display));
+                                }
                             }
                             onLibraryGridPrefetchComplete();
                         });
@@ -3125,6 +3212,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
     private void showPlaylistActionTooltip(@NonNull View anchor, @NonNull YouTubeMusicService.TrackResult track) {
         if (!isAdded()) return;
         String playlistId = track.contentId == null ? "" : track.contentId.trim();
+        boolean isLocalFilesPlaylist = LocalFilesStore.PLAYLIST_ID.equals(playlistId);
         boolean isOfflineEnabled = isPersistedPlaylistOfflineAutoEnabled(playlistId);
         com.google.android.material.bottomsheet.BottomSheetDialog dialog = new com.google.android.material.bottomsheet.BottomSheetDialog(requireContext());
         View view = LayoutInflater.from(requireContext()).inflate(R.layout.bottom_sheet_track_options, null);
@@ -3134,7 +3222,13 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         ImageView ivArt = view.findViewById(R.id.ivBsTrackArt);
         tvTitle.setText(track.title);
         tvSubtitle.setText(searchTypeLabel(track));
-        loadArtworkInto(ivArt, track.thumbnailUrl);
+        if (isLocalFilesPlaylist) {
+            ivArt.setScaleType(android.widget.ImageView.ScaleType.CENTER);
+            ivArt.setBackgroundColor(android.graphics.Color.BLACK);
+            ivArt.setImageResource(R.drawable.ic_folder_white);
+        } else {
+            loadArtworkInto(ivArt, track.thumbnailUrl);
+        }
         // Top 3 buttons: Play, Share, Download/Delete Downloads
         View btnPlayNext = view.findViewById(R.id.btnBsPlayNext);
         View btnAddPrimary = view.findViewById(R.id.btnBsAddPrimary);
@@ -3153,16 +3247,16 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             dialog.dismiss();
             playPlaylistFromStart(track);
         });
-        // Button 2: Compartir
-        btnShare.setVisibility(View.VISIBLE);
+        // Button 2: Compartir (hidden for local files)
+        btnShare.setVisibility(isLocalFilesPlaylist ? View.GONE : View.VISIBLE);
         ivShare.setImageResource(R.drawable.ic_playlist_share);
         tvShare.setText("Compartir");
         btnShare.setOnClickListener(v -> {
             dialog.dismiss();
             shareTrackResult(track);
         });
-        // Button 3: Descargar o Eliminar descargas
-        btnAddPrimary.setVisibility(View.VISIBLE);
+        // Button 3: Descargar o Eliminar descargas (hidden for local files)
+        btnAddPrimary.setVisibility(isLocalFilesPlaylist ? View.GONE : View.VISIBLE);
         if (isOfflineEnabled) {
             ivAddPrimary.setImageResource(R.drawable.ic_download_bold);
             tvAddPrimary.setText("Eliminar\ndescargas");
@@ -3178,12 +3272,70 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 enqueuePlaylistOfflineDownload(track);
             });
         }
-        // Hide other buttons
-        view.findViewById(R.id.btnBsPlay).setVisibility(View.GONE);
+        // --- List actions below the top 3 buttons ---
+        // 4. Reproducir a continuación
+        View btnPlayPlaylist = view.findViewById(R.id.btnBsPlayPlaylist);
+        btnPlayPlaylist.setVisibility(View.VISIBLE);
+        ImageView ivPlayPlaylist = view.findViewById(R.id.ivBsPlayPlaylist);
+        TextView tvPlayPlaylist = view.findViewById(R.id.tvBsPlayPlaylist);
+        ivPlayPlaylist.setImageResource(R.drawable.ic_bs_play_next_yt);
+        tvPlayPlaylist.setText("Reproducir a continuación");
+        btnPlayPlaylist.setOnClickListener(v -> {
+            dialog.dismiss();
+            enqueuePlaylistTracksNext(track);
+        });
+
+        // 5. Agregar a la fila
+        View btnAddToQueue = view.findViewById(R.id.btnBsAddToQueue);
+        btnAddToQueue.setVisibility(View.VISIBLE);
+        ImageView ivAddToQueue = view.findViewById(R.id.ivBsAddToQueue);
+        TextView tvAddToQueue = view.findViewById(R.id.tvBsAddToQueue);
+        ivAddToQueue.setImageResource(R.drawable.ic_bs_add_queue_yt);
+        tvAddToQueue.setText("Agregar a la fila");
+        btnAddToQueue.setOnClickListener(v -> {
+            dialog.dismiss();
+            enqueuePlaylistTracksToEnd(track);
+        });
+
+        // 6. Fijar / Desfijar playlist (hide for Liked & Favoritos — always pinned)
+        View btnPin = view.findViewById(R.id.btnBsPlay);
+        boolean isAlwaysPinned = isLikedPlaylistStyle(track)
+                || FavoritesPlaylistStore.PLAYLIST_ID.equals(playlistId)
+                || isLocalFilesPlaylist;
+        if (isAlwaysPinned) {
+            btnPin.setVisibility(View.GONE);
+        } else {
+            boolean currentlyPinned = RadioHistoryStore.INSTANCE.isPlaylistPinned(requireContext(), playlistId);
+            btnPin.setVisibility(View.VISIBLE);
+            ImageView ivPin = view.findViewById(R.id.ivBsPlay);
+            TextView tvPin = view.findViewById(R.id.tvBsPlayLabel);
+            ivPin.setImageResource(R.drawable.ic_pin);
+            tvPin.setText(currentlyPinned ? "Desfijar playlist" : "Fijar playlist");
+            btnPin.setOnClickListener(v -> {
+                dialog.dismiss();
+                if (currentlyPinned) {
+                    RadioHistoryStore.INSTANCE.unpinPlaylist(requireContext(), playlistId);
+                } else {
+                    RadioHistoryStore.INSTANCE.pinPlaylist(requireContext(), playlistId);
+                }
+                refreshLibraryUi();
+            });
+        }
+
+        // 7. Iniciar radio (hidden for local files)
+        View btnRadio = view.findViewById(R.id.btnBsReplace);
+        btnRadio.setVisibility(isLocalFilesPlaylist ? View.GONE : View.VISIBLE);
+        ImageView ivRadio = view.findViewById(R.id.ivBsReplace);
+        TextView tvRadio = view.findViewById(R.id.tvBsReplace);
+        ivRadio.setImageResource(R.drawable.ic_bs_radio);
+        tvRadio.setText("Iniciar radio");
+        btnRadio.setOnClickListener(v -> {
+            dialog.dismiss();
+            android.widget.Toast.makeText(requireContext(), "Próximamente disponible para playlists", android.widget.Toast.LENGTH_SHORT).show();
+        });
+
         View btnDeletePlaylist = view.findViewById(R.id.btnBsFavorite);
         View btnRenamePlaylist = view.findViewById(R.id.btnBsDownload);
-        view.findViewById(R.id.btnBsAddToQueue).setVisibility(View.GONE);
-        view.findViewById(R.id.btnBsPlayPlaylist).setVisibility(View.GONE);
         boolean isCustomPlaylist = false;
         java.util.List<String> customPlaylists = CustomPlaylistsStore.INSTANCE.getAllPlaylistNames(requireContext());
         for (String customName : customPlaylists) {
@@ -3223,6 +3375,19 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             btnDeletePlaylist.setOnClickListener(v -> {
                 dialog.dismiss();
                 showDeleteCloudPlaylistConfirmDialog(track);
+            });
+            btnRenamePlaylist.setVisibility(View.GONE);
+        } else if (playlistId.startsWith("RDAMVM") || playlistId.startsWith("RDEM") || playlistId.startsWith("RDTMAK")) {
+            // Radio playlist — show delete radio option
+            btnDeletePlaylist.setVisibility(View.VISIBLE);
+            ImageView ivDelete = btnDeletePlaylist.findViewById(R.id.ivBsFavorite);
+            TextView tvDelete = btnDeletePlaylist.findViewById(R.id.tvBsFavorite);
+            ivDelete.setImageResource(R.drawable.ic_delete_modern);
+            tvDelete.setText("Eliminar radio");
+            btnDeletePlaylist.setOnClickListener(v -> {
+                dialog.dismiss();
+                RadioHistoryStore.INSTANCE.deleteRadio(requireContext(), playlistId);
+                refreshLibraryUi();
             });
             btnRenamePlaylist.setVisibility(View.GONE);
         } else {
@@ -3317,6 +3482,29 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
     }
     private void playPlaylistFromStart(@NonNull YouTubeMusicService.TrackResult playlistTrack) {
         if (!isAdded()) return;
+        // 0 Local files playlist
+        String plId = playlistTrack.contentId == null ? "" : playlistTrack.contentId.trim();
+        if (LocalFilesStore.PLAYLIST_ID.equals(plId)) {
+            List<LocalFilesStore.LocalTrack> localTracks = LocalFilesStore.getCachedFiles(requireContext());
+            if (localTracks.isEmpty()) {
+                android.widget.Toast.makeText(requireContext(), "No hay archivos locales", android.widget.Toast.LENGTH_SHORT).show();
+                return;
+            }
+            ArrayList<String> ids = new ArrayList<>();
+            ArrayList<String> titles = new ArrayList<>();
+            ArrayList<String> artists = new ArrayList<>();
+            ArrayList<String> durations = new ArrayList<>();
+            ArrayList<String> images = new ArrayList<>();
+            for (LocalFilesStore.LocalTrack t : localTracks) {
+                ids.add(t.getVideoId());
+                titles.add(t.getTitle().isEmpty() ? "Tema" : t.getTitle());
+                artists.add(t.getArtist());
+                durations.add(t.getDuration());
+                images.add(t.getAlbumArtUri());
+            }
+            startPlaybackQueue(ids, titles, artists, durations, images, 0);
+            return;
+        }
         // 1 Local/custom playlist by name
         java.util.List<String> customPlaylists = CustomPlaylistsStore.INSTANCE.getAllPlaylistNames(requireContext());
         for (String customName : customPlaylists) {
@@ -3440,6 +3628,161 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                     .commit();
         }
     }
+    private void enqueuePlaylistTracksNext(@NonNull YouTubeMusicService.TrackResult playlistTrack) {
+        fetchPlaylistTracksForQueue(playlistTrack, true);
+    }
+
+    private void enqueuePlaylistTracksToEnd(@NonNull YouTubeMusicService.TrackResult playlistTrack) {
+        fetchPlaylistTracksForQueue(playlistTrack, false);
+    }
+
+    private void fetchPlaylistTracksForQueue(@NonNull YouTubeMusicService.TrackResult playlistTrack, boolean insertNext) {
+        if (!isAdded()) return;
+        String playlistId = playlistTrack.contentId == null ? "" : playlistTrack.contentId.trim();
+        if (TextUtils.isEmpty(playlistId)) return;
+
+        // 0. Local files playlist
+        if (LocalFilesStore.PLAYLIST_ID.equals(playlistId)) {
+            List<LocalFilesStore.LocalTrack> localTracks = LocalFilesStore.getCachedFiles(requireContext());
+            if (localTracks.isEmpty()) return;
+            SongPlayerFragment sp = findSongPlayerFragment();
+            if (sp == null || !sp.isAdded()) return;
+            if (insertNext) {
+                for (int i = localTracks.size() - 1; i >= 0; i--) {
+                    LocalFilesStore.LocalTrack t = localTracks.get(i);
+                    sp.externalInsertNext(t.getVideoId(), t.getTitle(), t.getArtist(), t.getDuration(), t.getAlbumArtUri());
+                }
+            } else {
+                for (LocalFilesStore.LocalTrack t : localTracks) {
+                    sp.externalEnqueue(t.getVideoId(), t.getTitle(), t.getArtist(), t.getDuration(), t.getAlbumArtUri());
+                }
+            }
+            android.widget.Toast.makeText(requireContext(),
+                    insertNext ? "Se reproducirá a continuación" : "Agregado a la fila",
+                    android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        // 1. Radio playlists — load from RadioHistoryStore
+        if (playlistId.startsWith("RDAMVM") || playlistId.startsWith("RDEM") || playlistId.startsWith("RDTMAK")) {
+            List<RadioHistoryStore.RadioEntry> radios = RadioHistoryStore.INSTANCE.getRadios(requireContext());
+            for (RadioHistoryStore.RadioEntry radio : radios) {
+                if (playlistId.equals(radio.getRadioPlaylistId())) {
+                    SongPlayerFragment sp = findSongPlayerFragment();
+                    if (sp == null || !sp.isAdded()) return;
+                    List<RadioHistoryStore.RadioTrack> radioTracks = radio.getTracks();
+                    if (radioTracks.isEmpty()) return;
+                    if (insertNext) {
+                        for (int i = radioTracks.size() - 1; i >= 0; i--) {
+                            RadioHistoryStore.RadioTrack t = radioTracks.get(i);
+                            sp.externalInsertNext(t.getVideoId(), t.getTitle(), t.getArtist(), "--:--", t.getThumbnailUrl());
+                        }
+                    } else {
+                        for (RadioHistoryStore.RadioTrack t : radioTracks) {
+                            sp.externalEnqueue(t.getVideoId(), t.getTitle(), t.getArtist(), "--:--", t.getThumbnailUrl());
+                        }
+                    }
+                    android.widget.Toast.makeText(requireContext(),
+                            insertNext ? "Se reproducirá a continuación" : "Agregado a la fila",
+                            android.widget.Toast.LENGTH_SHORT).show();
+                    return;
+                }
+            }
+            return;
+        }
+
+        // 2. Favoritos playlist
+        if (FavoritesPlaylistStore.PLAYLIST_ID.equals(playlistId)) {
+            java.util.List<FavoritesPlaylistStore.FavoriteTrack> favTracks = FavoritesPlaylistStore.loadFavorites(requireContext());
+            if (favTracks.isEmpty()) return;
+            SongPlayerFragment sp = findSongPlayerFragment();
+            if (sp == null || !sp.isAdded()) return;
+            if (insertNext) {
+                for (int i = favTracks.size() - 1; i >= 0; i--) {
+                    FavoritesPlaylistStore.FavoriteTrack t = favTracks.get(i);
+                    sp.externalInsertNext(t.videoId, t.title, t.artist, t.duration, t.imageUrl);
+                }
+            } else {
+                for (FavoritesPlaylistStore.FavoriteTrack t : favTracks) {
+                    sp.externalEnqueue(t.videoId, t.title, t.artist, t.duration, t.imageUrl);
+                }
+            }
+            android.widget.Toast.makeText(requireContext(),
+                    insertNext ? "Se reproducirá a continuación" : "Agregado a la fila",
+                    android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        // 3. Custom playlists
+        java.util.List<String> customPlaylists = CustomPlaylistsStore.INSTANCE.getAllPlaylistNames(requireContext());
+        for (String customName : customPlaylists) {
+            if (customName.equalsIgnoreCase(playlistTrack.title)) {
+                java.util.List<FavoritesPlaylistStore.FavoriteTrack> customTracks =
+                        CustomPlaylistsStore.INSTANCE.getTracksFromPlaylist(requireContext(), customName);
+                if (customTracks.isEmpty()) return;
+                SongPlayerFragment sp = findSongPlayerFragment();
+                if (sp == null || !sp.isAdded()) return;
+                if (insertNext) {
+                    for (int i = customTracks.size() - 1; i >= 0; i--) {
+                        FavoritesPlaylistStore.FavoriteTrack t = customTracks.get(i);
+                        sp.externalInsertNext(t.videoId, t.title, t.artist, t.duration, t.imageUrl);
+                    }
+                } else {
+                    for (FavoritesPlaylistStore.FavoriteTrack t : customTracks) {
+                        sp.externalEnqueue(t.videoId, t.title, t.artist, t.duration, t.imageUrl);
+                    }
+                }
+                android.widget.Toast.makeText(requireContext(),
+                        insertNext ? "Se reproducirá a continuación" : "Agregado a la fila",
+                        android.widget.Toast.LENGTH_SHORT).show();
+                return;
+            }
+        }
+
+        // 3. YouTube playlists — fetch from API
+        String token = resolveAccessTokenForPlaylistDetail();
+        if (TextUtils.isEmpty(token)) {
+            android.widget.Toast.makeText(requireContext(), "Inicia sesión para esta acción", android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        youTubeMusicService.fetchPlaylistTracks(token, playlistId, 250, new YouTubeMusicService.PlaylistTracksCallback() {
+            @Override
+            public void onSuccess(java.util.List<YouTubeMusicService.PlaylistTrackResult> tracks) {
+                if (!isAdded() || tracks == null || tracks.isEmpty()) return;
+                SongPlayerFragment sp = findSongPlayerFragment();
+                if (sp == null || !sp.isAdded()) return;
+                if (insertNext) {
+                    for (int i = tracks.size() - 1; i >= 0; i--) {
+                        YouTubeMusicService.PlaylistTrackResult t = tracks.get(i);
+                        if (t == null || TextUtils.isEmpty(t.videoId)) continue;
+                        sp.externalInsertNext(t.videoId,
+                                TextUtils.isEmpty(t.title) ? "" : t.title,
+                                t.artist == null ? "" : t.artist,
+                                TextUtils.isEmpty(t.duration) ? "--:--" : t.duration,
+                                t.thumbnailUrl == null ? "" : t.thumbnailUrl);
+                    }
+                } else {
+                    for (YouTubeMusicService.PlaylistTrackResult t : tracks) {
+                        if (t == null || TextUtils.isEmpty(t.videoId)) continue;
+                        sp.externalEnqueue(t.videoId,
+                                TextUtils.isEmpty(t.title) ? "" : t.title,
+                                t.artist == null ? "" : t.artist,
+                                TextUtils.isEmpty(t.duration) ? "--:--" : t.duration,
+                                t.thumbnailUrl == null ? "" : t.thumbnailUrl);
+                    }
+                }
+                android.widget.Toast.makeText(requireContext(),
+                        insertNext ? "Se reproducirá a continuación" : "Agregado a la fila",
+                        android.widget.Toast.LENGTH_SHORT).show();
+            }
+            @Override
+            public void onError(String error) {
+                if (!isAdded()) return;
+                android.widget.Toast.makeText(requireContext(), "No se pudo cargar la playlist", android.widget.Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
     private void showDeletePlaylistConfirmDialog(@NonNull YouTubeMusicService.TrackResult playlistTrack) {
         if (!isAdded()) return;
         new androidx.appcompat.app.AlertDialog.Builder(requireContext())
@@ -3679,7 +4022,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
     }
     private void enqueueOfflineDownloadUniqueWork(@NonNull OneTimeWorkRequest request) {
         WorkManager manager = WorkManager.getInstance(requireContext().getApplicationContext());
-        manager.enqueueUniqueWork(OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request);
+        manager.enqueueUniqueWork(OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME, ExistingWorkPolicy.KEEP, request);
     }
     private void startObservingOfflineQueue() {
         if (!isAdded()) {
@@ -3917,7 +4260,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                             Log.w(TAG_STREAMING, "resume_stalled: BLOCKED-only chain detected, cancelling to unblock");
                             wm.cancelUniqueWork(OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME);
                         }
-                        if (!onlyBlocked && finalActiveCount >= 3) {
+                        if (!onlyBlocked && finalActiveCount >= 1) {
                             return;
                         }
                         mainHandler.postDelayed(() -> {
@@ -4389,9 +4732,9 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         String queueJson = data.getStringExtra(SearchFragment.EXTRA_RESULT_TRACKS_JSON);
         YouTubeMusicService.TrackResult track = new YouTubeMusicService.TrackResult(
                 resultType, contentId, title, subtitle, thumbnailUrl);
-        // Populate tracks for queue finding
-        tracks.clear();
-        featuredTrack = track;
+
+        // Parse fallback queue from local playlists (used only if radio fetch fails)
+        final List<YouTubeMusicService.TrackResult> fallbackTracks = new ArrayList<>();
         try {
             if (queueJson != null) {
                 org.json.JSONArray array = new org.json.JSONArray(queueJson);
@@ -4404,12 +4747,133 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                             obj.optString("subtitle", ""),
                             obj.optString("thumbnailUrl", "")
                     );
-                    tracks.add(qTrack);
+                    fallbackTracks.add(qTrack);
                 }
             }
         } catch (Exception ignored) {
         }
+
+        // For playlist types, open normally
+        if ("playlist".equals(resultType)) {
+            tracks.clear();
+            featuredTrack = track;
+            tracks.addAll(fallbackTracks);
+            openTrack(track, true);
+            return;
+        }
+
+        // Play the single track instantly (no queue delay)
+        tracks.clear();
+        featuredTrack = track;
+        tracks.add(track);
         openTrack(track, true);
+
+        // Fetch radio in background to enrich the queue
+        if (!TextUtils.isEmpty(videoId)) {
+            String cookie = "";
+            if (isAdded()) {
+                SharedPreferences prefs = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE);
+                String raw = prefs.getString(PREF_LAST_YOUTUBE_WEB_COOKIE, "");
+                cookie = raw != null ? raw.trim() : "";
+            }
+            String radioPlaylistId = "RDAMVM" + videoId;
+            final String selectedVideoId = videoId;
+            final YouTubeMusicService.TrackResult selectedTrack = track;
+            final List<YouTubeMusicService.TrackResult> localFallback = fallbackTracks;
+            youTubeMusicService.fetchMixTracks(cookie, radioPlaylistId, new YouTubeMusicService.MixTracksCallback() {
+                @Override
+                public void onSuccess(@NonNull List<YouTubeMusicService.TrackResult> radioTracks) {
+                    if (!isAdded() || radioTracks.isEmpty()) {
+                        applyFallbackQueue(selectedTrack, localFallback);
+                        return;
+                    }
+                    // Build radio queue: selected track first, then radio tracks (deduplicated)
+                    ArrayList<String> ids = new ArrayList<>();
+                    ArrayList<String> titles = new ArrayList<>();
+                    ArrayList<String> artists = new ArrayList<>();
+                    ArrayList<String> durations = new ArrayList<>();
+                    ArrayList<String> images = new ArrayList<>();
+                    ids.add(selectedVideoId);
+                    titles.add(TextUtils.isEmpty(selectedTrack.title) ? "Tema" : selectedTrack.title);
+                    artists.add(selectedTrack.subtitle == null ? "" : selectedTrack.subtitle);
+                    durations.add("--:--");
+                    images.add(selectedTrack.thumbnailUrl == null ? "" : selectedTrack.thumbnailUrl);
+                    for (YouTubeMusicService.TrackResult t : radioTracks) {
+                        if (TextUtils.isEmpty(t.videoId) || TextUtils.equals(t.videoId, selectedVideoId)) continue;
+                        ids.add(t.videoId);
+                        titles.add(TextUtils.isEmpty(t.title) ? "" : t.title);
+                        artists.add(t.subtitle == null ? "" : t.subtitle);
+                        durations.add("--:--");
+                        images.add(t.thumbnailUrl == null ? "" : t.thumbnailUrl);
+                    }
+                    SongPlayerFragment sp = findSongPlayerFragment();
+                    if (sp != null && sp.isAdded() && !ids.isEmpty()) {
+                        sp.externalReplaceQueue(ids, titles, artists, durations, images, 0, true);
+                    }
+                    // Save radio to history for library display
+                    List<RadioHistoryStore.RadioTrack> radioStoreTracks = new ArrayList<>();
+                    radioStoreTracks.add(new RadioHistoryStore.RadioTrack(
+                            selectedVideoId,
+                            TextUtils.isEmpty(selectedTrack.title) ? "Tema" : selectedTrack.title,
+                            selectedTrack.subtitle == null ? "" : selectedTrack.subtitle,
+                            selectedTrack.thumbnailUrl == null ? "" : selectedTrack.thumbnailUrl
+                    ));
+                    for (YouTubeMusicService.TrackResult t : radioTracks) {
+                        if (TextUtils.isEmpty(t.videoId) || TextUtils.equals(t.videoId, selectedVideoId)) continue;
+                        radioStoreTracks.add(new RadioHistoryStore.RadioTrack(
+                                t.videoId,
+                                TextUtils.isEmpty(t.title) ? "" : t.title,
+                                t.subtitle == null ? "" : t.subtitle,
+                                t.thumbnailUrl == null ? "" : t.thumbnailUrl
+                        ));
+                    }
+                    RadioHistoryStore.INSTANCE.saveRadio(
+                            requireContext(),
+                            radioPlaylistId,
+                            TextUtils.isEmpty(selectedTrack.title) ? "Tema" : selectedTrack.title,
+                            selectedTrack.thumbnailUrl == null ? "" : selectedTrack.thumbnailUrl,
+                            radioStoreTracks
+                    );
+                    refreshLibraryUi();
+                }
+
+                @Override
+                public void onError(@NonNull String error) {
+                    if (!isAdded()) return;
+                    applyFallbackQueue(selectedTrack, localFallback);
+                }
+            });
+        }
+    }
+
+    private void applyFallbackQueue(
+            @NonNull YouTubeMusicService.TrackResult selectedTrack,
+            @NonNull List<YouTubeMusicService.TrackResult> fallbackTracks
+    ) {
+        if (!isAdded() || fallbackTracks.isEmpty()) return;
+        ArrayList<String> ids = new ArrayList<>();
+        ArrayList<String> titles = new ArrayList<>();
+        ArrayList<String> artists = new ArrayList<>();
+        ArrayList<String> durations = new ArrayList<>();
+        ArrayList<String> images = new ArrayList<>();
+        int selectedIndex = 0;
+        for (int i = 0; i < fallbackTracks.size(); i++) {
+            YouTubeMusicService.TrackResult t = fallbackTracks.get(i);
+            if (t == null || TextUtils.isEmpty(t.videoId)) continue;
+            if (TextUtils.equals(t.videoId, selectedTrack.videoId)) {
+                selectedIndex = ids.size();
+            }
+            ids.add(t.videoId);
+            titles.add(TextUtils.isEmpty(t.title) ? "" : t.title);
+            artists.add(t.subtitle == null ? "" : t.subtitle);
+            durations.add("--:--");
+            images.add(t.thumbnailUrl == null ? "" : t.thumbnailUrl);
+        }
+        if (ids.isEmpty()) return;
+        SongPlayerFragment sp = findSongPlayerFragment();
+        if (sp != null && sp.isAdded()) {
+            sp.externalReplaceQueue(ids, titles, artists, durations, images, selectedIndex, true);
+        }
     }
     public void playNextFromSearch(@NonNull Intent data) {
         String videoId = data.getStringExtra(SearchFragment.EXTRA_RESULT_VIDEO_ID);
@@ -5115,7 +5579,9 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                             && TextUtils.equals(oldItem.subtitle, newItem.subtitle);
                     if (!baseEqual) return false;
                     // For YouTube playlists with a cached grid, thumbnailUrl is irrelevant
-                    // (the 2x2 grid comes from track thumbnails, not item.thumbnailUrl)
+                    // (the 2x2 grid comes from track thumbnails, not item.thumbnailUrl).
+                    // Return false if the grid became available since the last bind so the
+                    // ViewHolder is rebound and PlaylistGridArtLoader can draw the 2x2.
                     if ("playlist".equals(newItem.resultType) && !TextUtils.isEmpty(newItem.contentId)) {
                         String pid = newItem.contentId.trim();
                         boolean isYtPlaylist = !FavoritesPlaylistStore.PLAYLIST_ID.equals(pid)
@@ -5293,22 +5759,43 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             }
             if (!isLikedPlaylistStyle) {
                 String pid = item.contentId == null ? "" : item.contentId.trim();
-                List<String> gridUrls = pid.isEmpty() ? java.util.Collections.emptyList() : resolvePlaylistGridUrls(pid);
-                if (gridUrls.size() >= 4) {
-                    float density = holder.itemView.getContext().getResources().getDisplayMetrics().density;
-                    int sizePx = Math.round(60 * density);
-                    PlaylistGridArtLoader.load(holder.ivTrackThumb, gridUrls, sizePx);
+                boolean isLocalFilesItem = LocalFilesStore.PLAYLIST_ID.equals(pid);
+                boolean isRadioItem = pid.startsWith("RDAMVM") || pid.startsWith("RDEM") || pid.startsWith("RDTMAK");
+                if (isLocalFilesItem) {
+                    // Local files: white folder icon on black background
+                    holder.ivTrackThumb.setTag(R.id.tag_artwork_signature, null);
+                    holder.ivTrackThumb.setScaleType(ImageView.ScaleType.CENTER);
+                    holder.ivTrackThumb.setBackgroundColor(android.graphics.Color.BLACK);
+                    holder.ivTrackThumb.setImageResource(R.drawable.ic_folder_white);
+                } else if (isRadioItem && !TextUtils.isEmpty(item.thumbnailUrl)) {
+                    // Radio items: single image, no grid
+                    holder.ivTrackThumb.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                    holder.ivTrackThumb.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+                    loadArtworkInto(holder.ivTrackThumb, item.thumbnailUrl);
                 } else {
-                    // Grey placeholder only if no previous grid image is loaded
-                    Object prevSignature = holder.ivTrackThumb.getTag(R.id.tag_artwork_signature);
-                    if (prevSignature == null) {
-                        holder.ivTrackThumb.setImageDrawable(new android.graphics.drawable.ColorDrawable(
-                                ContextCompat.getColor(holder.itemView.getContext(), R.color.surface_high)));
+                    holder.ivTrackThumb.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                    holder.ivTrackThumb.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+                    List<String> gridUrls = pid.isEmpty() ? java.util.Collections.emptyList() : resolvePlaylistGridUrls(pid);
+                    if (gridUrls.size() >= 4) {
+                        float density = holder.itemView.getContext().getResources().getDisplayMetrics().density;
+                        int sizePx = Math.round(60 * density);
+                        PlaylistGridArtLoader.load(holder.ivTrackThumb, gridUrls, sizePx);
+                    } else if (!TextUtils.isEmpty(item.thumbnailUrl)) {
+                        loadArtworkInto(holder.ivTrackThumb, item.thumbnailUrl);
+                    } else {
+                        // Grey placeholder only if no previous grid image is loaded
+                        Object prevSignature = holder.ivTrackThumb.getTag(R.id.tag_artwork_signature);
+                        if (prevSignature == null) {
+                            holder.ivTrackThumb.setImageDrawable(new android.graphics.drawable.ColorDrawable(
+                                    ContextCompat.getColor(holder.itemView.getContext(), R.color.surface_high)));
+                        }
                     }
                 }
             }
             boolean isPlaylistItem = "playlist".equals(item.resultType);
-            boolean isPinned = isFavoritesPlaylistStyle || isLikedPlaylistStyle;
+            String itemContentId = item.contentId == null ? "" : item.contentId;
+            boolean isPinned = isFavoritesPlaylistStyle || isLikedPlaylistStyle
+                    || RadioHistoryStore.INSTANCE.isPlaylistPinned(holder.itemView.getContext(), itemContentId);
             holder.ivTrackMore.setVisibility(isPlaylistItem ? View.VISIBLE : View.GONE);
             if (!isPlaylistItem) holder.flPlaylistOfflineContainer.setVisibility(View.GONE);
             if (holder.ivPlaylistPin != null) {
