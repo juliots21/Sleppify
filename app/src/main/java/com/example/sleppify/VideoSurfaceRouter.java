@@ -142,6 +142,9 @@ public final class VideoSurfaceRouter {
                     videoActive = false;
                     detecting = false;
                     activePlayer = null;
+                    // Show overlay briefly to prevent video frame flash before cover loads
+                    showOverlay();
+                    handler.postDelayed(this::hideOverlay, 300L);
                     if (callback != null) callback.onVideoStatic();
                 } else {
                     // Known real video — attach immediately, no overlay

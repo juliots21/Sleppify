@@ -33,7 +33,7 @@
             android:ellipsize="end"
             android:fontFamily="sans-serif-black"
             android:includeFontPadding="false"
-            android:maxLines="1"
+            android:maxLines="2"
             android:textColor="@color/text_primary"
             android:textSize="14sp"
             android:textStyle="bold" />

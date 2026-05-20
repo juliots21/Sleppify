@@ -1601,17 +1601,32 @@ class MainActivity : AppCompatActivity() {
         val detail = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL) ?: return false
         if (!detail.isAdded || detail.isHidden) return false
 
-        markStreamingEntryAsLibrary()
-        supportFragmentManager.popBackStackImmediate(TAG_PLAYLIST_DETAIL, androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE)
-        if (bottomNav.selectedItemId != R.id.nav_music) {
-            suppressNavListener = true
-            bottomNav.selectedItemId = R.id.nav_music
-            suppressNavListener = false
+        // Count how many playlist_detail entries are on the back stack
+        var detailEntryCount = 0
+        for (i in 0 until supportFragmentManager.backStackEntryCount) {
+            if (supportFragmentManager.getBackStackEntryAt(i).name == TAG_PLAYLIST_DETAIL) {
+                detailEntryCount++
+            }
         }
-        currentMainNavItemId = R.id.nav_music
-        if (!isSearchFragmentVisible()) {
-            topAppBar.visibility = View.VISIBLE
-            updateHeaderTitleForModule(R.id.nav_music)
+
+        if (detailEntryCount > 1) {
+            // Multiple playlist details stacked (e.g. source playlist → radio).
+            // Pop only the topmost one so we return to the previous playlist.
+            supportFragmentManager.popBackStackImmediate()
+        } else {
+            // Single detail — pop all the way back to library
+            markStreamingEntryAsLibrary()
+            supportFragmentManager.popBackStackImmediate(TAG_PLAYLIST_DETAIL, androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE)
+            if (bottomNav.selectedItemId != R.id.nav_music) {
+                suppressNavListener = true
+                bottomNav.selectedItemId = R.id.nav_music
+                suppressNavListener = false
+            }
+            currentMainNavItemId = R.id.nav_music
+            if (!isSearchFragmentVisible()) {
+                topAppBar.visibility = View.VISIBLE
+                updateHeaderTitleForModule(R.id.nav_music)
+            }
         }
         return true
     }

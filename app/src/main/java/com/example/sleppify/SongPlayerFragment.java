@@ -2991,8 +2991,8 @@ public class SongPlayerFragment extends Fragment {
 
         if (!bootstrapArtwork) {
             ivPlayerCover.animate().cancel();
-            ivPlayerCover.setAlpha(0f);
-            ivPlayerCover.setImageDrawable(null);
+            // Keep old image visible until new one arrives (prevents blank cover on non-cached tracks)
+            ivPlayerCover.setAlpha(1f);
         }
 
         playerCoverTarget = new CustomTarget<Bitmap>() {
@@ -3309,9 +3309,9 @@ public class SongPlayerFragment extends Fragment {
             showPlayerArtworkLoadingState();
             if (!isAdded()) return;
         } else {
+            // Don't fade out — keep old cover visible until new one arrives in loadPlayerCover
             if (ivPlayerCover != null) {
                 ivPlayerCover.animate().cancel();
-                ivPlayerCover.animate().alpha(0f).setDuration(180).start();
             }
         }
 
@@ -6342,12 +6342,14 @@ public class SongPlayerFragment extends Fragment {
         currentVideoFilePath = null;
         if (pbVideoLoading != null) pbVideoLoading.setVisibility(View.GONE);
         if (ivPlayerCover != null) {
+            ivPlayerCover.animate().cancel();
+            ivPlayerCover.setAlpha(1f);
             ivPlayerCover.setVisibility(View.VISIBLE);
             ivPlayerCover.setClickable(true);
         }
         // Reset hero to default cover art layout
         resetPlayerHeroContainerHeight();
-        // Reload cover art and backdrop for the current track
+        // Reload cover art and backdrop for the current track (instant, no fade)
         if (!tracks.isEmpty() && currentIndex >= 0 && currentIndex < tracks.size()) {
             PlayerTrack track = tracks.get(currentIndex);
             loadPlayerCover(track, false, 1);

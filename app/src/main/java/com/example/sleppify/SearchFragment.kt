@@ -1173,10 +1173,18 @@ class SearchFragment : Fragment() {
             btnBsDownload.visibility = View.GONE
         }
 
+        dialog.show()
+
         val parent = view.parent as? View
         parent?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
 
-        dialog.show()
+        // Configure slide-up animation
+        val bottomSheet = dialog.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
+        if (bottomSheet != null) {
+            val behavior = com.google.android.material.bottomsheet.BottomSheetBehavior.from(bottomSheet)
+            behavior.skipCollapsed = true
+            behavior.state = com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
+        }
     }
 
     private fun downloadTrackFromSearch(track: YouTubeMusicService.TrackResult) {
@@ -1776,7 +1784,7 @@ class SearchFragment : Fragment() {
             matchingRecent.forEach { result.add(SuggestionItem.Recent(it.query, it.thumbnail)) }
         }
 
-        if (smartSuggestions.isNotEmpty()) {
+        if (smartSuggestions.isNotEmpty() && normDraft.isEmpty()) {
             result.add(SuggestionItem.Header("Temas relacionados"))
             smartSuggestions.take(7).forEach { result.add(SuggestionItem.Suggestion(it)) }
         }

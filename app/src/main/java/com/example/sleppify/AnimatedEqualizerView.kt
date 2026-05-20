@@ -7,7 +7,6 @@ import android.os.Handler
 import android.os.Looper
 import android.util.AttributeSet
 import android.view.View
-import java.util.Random
 
 class AnimatedEqualizerView @JvmOverloads constructor(
     context: Context,
@@ -18,7 +17,11 @@ class AnimatedEqualizerView @JvmOverloads constructor(
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val barHeights = floatArrayOf(0.2f, 0.2f, 0.2f)
     private val targetHeights = floatArrayOf(0.2f, 0.2f, 0.2f)
-    private val random = Random()
+
+    // Deterministic keyframe pattern — same table for all bars, offset by phase
+    private val keyframes = floatArrayOf(0.3f, 0.75f, 0.45f, 0.9f, 0.55f, 0.35f, 0.8f, 0.5f)
+    private val phaseIndex = intArrayOf(0, 3, 5) // staggered start phases per bar
+
     private var animating = false
     private val handler = Handler(Looper.getMainLooper())
     private var barColor = -0x1
@@ -30,7 +33,8 @@ class AnimatedEqualizerView @JvmOverloads constructor(
             var changed = false
             for (i in 0..2) {
                 if (Math.abs(barHeights[i] - targetHeights[i]) < 0.05f) {
-                    targetHeights[i] = 0.25f + random.nextFloat() * 0.45f
+                    phaseIndex[i] = (phaseIndex[i] + 1) % keyframes.size
+                    targetHeights[i] = keyframes[phaseIndex[i]]
                 }
 
                 if (barHeights[i] < targetHeights[i]) {
@@ -75,6 +79,7 @@ class AnimatedEqualizerView @JvmOverloads constructor(
             for (i in 0..2) {
                 barHeights[i] = 0.2f
                 targetHeights[i] = 0.2f
+                phaseIndex[i] = i * 3 // reset staggered phases
             }
             invalidate()
         }

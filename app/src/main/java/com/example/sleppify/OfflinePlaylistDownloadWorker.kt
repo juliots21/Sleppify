@@ -254,8 +254,16 @@ class OfflinePlaylistDownloadWorker(
             }
 
             if (!validateDownloadedTrackFile(context, id, expectedDurationLabel)) {
-                Log.w(TAG, "track:validation_failed id=$id expectedDuration='$expectedDurationLabel'")
-                return TrackDownloadResult.failed(id, title, noNetworkEncountered)
+                Log.w(TAG, "track:validation_failed id=$id expectedDuration='$expectedDurationLabel' retrying once")
+                // Retry once: delete and redownload
+                OfflineAudioStore.deleteOfflineAudio(context, id)
+                progressReporter.onProgress(0.05f)
+                val retryOk = downloadTrack(context, id, serverIndex, networkIssueTracker, progressReporter)
+                noNetworkEncountered = noNetworkEncountered || networkIssueTracker.hasIssue()
+                if (!retryOk || !validateDownloadedTrackFile(context, id, expectedDurationLabel)) {
+                    Log.w(TAG, "track:retry_validation_failed id=$id")
+                    return TrackDownloadResult.failed(id, title, noNetworkEncountered)
+                }
             }
 
             progressReporter.onProgress(1f)
@@ -266,6 +274,8 @@ class OfflinePlaylistDownloadWorker(
         } finally {
             if (addedToActive) activeTrackIds.remove(id)
             activeTrackProgressFractions.remove(id)
+            // Throttle between downloads to avoid proxy saturation
+            try { Thread.sleep(710L) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
         }
     }
 
@@ -384,6 +394,13 @@ class OfflinePlaylistDownloadWorker(
             return false
         }
 
+        // Playability check: verify file can be read by MediaExtractor (detects corrupt/incomplete)
+        if (!isFilePlayable(audioFile)) {
+            Log.w(TAG, "track:not_playable id=$videoId")
+            OfflineAudioStore.deleteOfflineAudio(context, videoId)
+            return false
+        }
+
         val expectedDurationSeconds = parseDurationSeconds(expectedDurationLabel)
         if (expectedDurationSeconds <= 0) return true
 
@@ -437,6 +454,25 @@ class OfflinePlaylistDownloadWorker(
             return -1
         } catch (_: Exception) {
             return -1
+        } finally {
+            runCatching { extractor.release() }
+        }
+    }
+
+    private fun isFilePlayable(file: File): Boolean {
+        val extractor = MediaExtractor()
+        try {
+            extractor.setDataSource(file.absolutePath)
+            if (extractor.trackCount <= 0) return false
+            // Verify at least one audio or video track exists
+            for (i in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(i)
+                val mime = format.getString(android.media.MediaFormat.KEY_MIME) ?: continue
+                if (mime.startsWith("audio/") || mime.startsWith("video/")) return true
+            }
+            return false
+        } catch (_: Exception) {
+            return false
         } finally {
             runCatching { extractor.release() }
         }

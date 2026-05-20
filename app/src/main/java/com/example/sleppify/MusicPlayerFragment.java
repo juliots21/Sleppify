@@ -6057,6 +6057,10 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                     continue;
                 }
                 seen.add(track.videoId);
+                // Local files are always on device — skip from offline calculations
+                if (LocalFilesStore.isLocalVideoId(track.videoId)) {
+                    continue;
+                }
                 eligibleCount++;
                 // Check actual offline files - this is the ground truth
                 if (OfflineAudioStore.hasValidatedOfflineAudio(appContext, track.videoId, track.duration)) {

@@ -359,24 +359,7 @@ public class PlaylistDetailFragment extends Fragment
                 if (!isAdded()) return;
                 isScrolling = newState != RecyclerView.SCROLL_STATE_IDLE;
 
-                if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
-                    // ── DRAG ──
-                    // Only suppress new Glide requests during finger-down drag to
-                    // avoid initiating loads for rapidly recycled views.
-                    if (trackAdapter != null) trackAdapter.setFastScrolling(true);
-
-                } else if (newState == RecyclerView.SCROLL_STATE_SETTLING) {
-                    // ── FLING ──
-                    // Finger lifted, list coasting — allow Glide to load normally
-                    // so images fill in as the list decelerates.
-                    if (trackAdapter != null) trackAdapter.setFastScrolling(false);
-
-                } else {
-                    // ── IDLE ──
-                    // Everything stopped. Clear fast-scroll flag, then reload images and
-                    // state only for the currently visible rows.
-                    if (trackAdapter != null) trackAdapter.setFastScrolling(false);
-
+                if (newState == RecyclerView.SCROLL_STATE_IDLE) {
                     if (trackAdapter != null) {
                         trackAdapter.flushDeferredNotifications();
                         if (recyclerView.getLayoutManager() instanceof LinearLayoutManager) {
@@ -3296,7 +3279,7 @@ public class PlaylistDetailFragment extends Fragment
         btnAddPrimary.setVisibility(isLocalFilesPlaylist ? View.GONE : View.VISIBLE);
         if (hasOfflineAudio) {
             ivAddPrimary.setImageResource(R.drawable.ic_delete_modern);
-            tvAddPrimary.setText("Eliminar\ndescarga");
+            tvAddPrimary.setText("Descargado");
         } else {
             ivAddPrimary.setImageResource(R.drawable.ic_download_bold);
             tvAddPrimary.setText("Descargar");
@@ -3370,23 +3353,6 @@ public class PlaylistDetailFragment extends Fragment
             dialog.dismiss();
             queueTrackAtEnd(position);
         });
-
-        // Row: Borrar de la playlist (only for local playlists: Favoritos + custom)
-        boolean isLocalPlaylist = FavoritesPlaylistStore.PLAYLIST_ID.equals(currentPlaylistId)
-                || (currentPlaylistId != null && currentPlaylistId.startsWith(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX));
-        if (isLocalPlaylist) {
-            btnDownload.setVisibility(View.VISIBLE);
-            ImageView ivBorrar = btnDownload.findViewById(R.id.ivBsDownload);
-            TextView tvBorrar = btnDownload.findViewById(R.id.tvBsDownload);
-            ivBorrar.setImageResource(R.drawable.ic_delete_modern);
-            tvBorrar.setText("Borrar de la playlist");
-            btnDownload.setOnClickListener(v -> {
-                dialog.dismiss();
-                removeTrackFromCurrentPlaylist(position);
-            });
-        } else {
-            btnDownload.setVisibility(View.GONE);
-        }
 
         // Row: Reemplazar (hidden for local files)
         View btnReplace = view.findViewById(R.id.btnBsReplace);
@@ -3910,30 +3876,6 @@ public class PlaylistDetailFragment extends Fragment
                 selected.duration,
                 selected.imageUrl
         );
-    }
-
-    private void removeTrackFromCurrentPlaylist(int position) {
-        if (!isAdded() || position < 0 || position >= currentTracks.size()) {
-            return;
-        }
-
-        PlaylistTrack selected = currentTracks.get(position);
-        if (TextUtils.isEmpty(selected.videoId)) {
-            return;
-        }
-
-        if (FavoritesPlaylistStore.PLAYLIST_ID.equals(currentPlaylistId)) {
-            FavoritesPlaylistStore.removeFavorite(requireContext(), selected.videoId);
-        } else if (currentPlaylistId != null && currentPlaylistId.startsWith(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX)) {
-            String name = currentPlaylistId.substring(CustomPlaylistsStore.CUSTOM_PLAYLIST_PREFIX.length());
-            CustomPlaylistsStore.INSTANCE.removeTrackFromPlaylist(requireContext(), name, selected.videoId);
-        }
-
-        currentTracks.remove(position);
-        trackAdapter.submitTracks(currentTracks);
-        rebuildPlaybackQueue();
-        String playlistName = resolveCurrentPlaylistName();
-        showRemovedFromPlaylistBar(selected, playlistName);
     }
 
     private String resolveCurrentPlaylistName() {
@@ -5152,9 +5094,11 @@ public class PlaylistDetailFragment extends Fragment
                 PlaylistGridArtLoader.load(holder.ivPlaylistCover, headerGridUrls, 800);
                 PlaylistGridArtLoader.load(holder.ivPlaylistBackdrop, headerGridUrls, 320);
             } else if (isLocalFilesContext(currentPlaylistId)) {
-                // Local files: white folder icon on black background (same as library row)
-                holder.ivPlaylistCover.setPadding(0, 0, 0, 0);
-                holder.ivPlaylistCover.setScaleType(ImageView.ScaleType.CENTER);
+                // Local files: white folder icon on black background, scaled to ~50% of cover
+                float density = holder.itemView.getContext().getResources().getDisplayMetrics().density;
+                int padPx = Math.round(50 * density);
+                holder.ivPlaylistCover.setPadding(padPx, padPx, padPx, padPx);
+                holder.ivPlaylistCover.setScaleType(ImageView.ScaleType.FIT_CENTER);
                 holder.ivPlaylistCover.setBackgroundColor(android.graphics.Color.BLACK);
                 holder.ivPlaylistCover.setColorFilter(null);
                 holder.ivPlaylistCover.setImageResource(R.drawable.ic_folder_white);
@@ -5458,7 +5402,6 @@ public class PlaylistDetailFragment extends Fragment
         @NonNull
         private final Map<String, Float> downloadingTrackProgressById = new HashMap<>();
         private final Set<Integer> pendingNotifyPositions = new HashSet<>();
-        private boolean isFastScrolling = false;
         // Track which items have pending state lookups to avoid duplicate requests
         private final Set<String> pendingOfflineLookups = new HashSet<>();
         // Cached colors — resolved once to avoid Resources lock on every bind
@@ -5580,10 +5523,6 @@ public class PlaylistDetailFragment extends Fragment
                     }
                 });
             });
-        }
-
-        void setFastScrolling(boolean fast) {
-            isFastScrolling = fast;
         }
 
         void setActiveIndex(int activeIndex) {
@@ -5930,9 +5869,13 @@ public class PlaylistDetailFragment extends Fragment
             super.onViewRecycled(holder);
             // Cancel any in-flight Glide request so it can't land on a rebound holder
             // showing a different track — this is the root cause of wrong-image-on-wrong-row.
-            Glide.with(holder.ivTrackArt.getContext()).clear(holder.ivTrackArt);
-            holder.ivTrackArt.setImageDrawable(null);
+            // Skip clearing for local tracks — they always show a static icon.
             int pos = holder.getAdapterPosition();
+            boolean isLocal = pos >= 0 && pos < items.size() && LocalFilesStore.isLocalVideoId(items.get(pos).videoId);
+            if (!isLocal) {
+                Glide.with(holder.ivTrackArt.getContext()).clear(holder.ivTrackArt);
+                holder.ivTrackArt.setImageDrawable(null);
+            }
             if (pos >= 0 && pos < items.size()) {
                 String videoId = items.get(pos).videoId;
                 if (!TextUtils.isEmpty(videoId)) {
@@ -6030,20 +5973,13 @@ public class PlaylistDetailFragment extends Fragment
             holder.tvTrackTitle.setText(track.title);
             Context context = holder.itemView.getContext();
 
-            // Image loading: during a fast fling show a grey placeholder only.
-            // Glide requests are paused by the scroll listener during flings and resumed
-            // at idle — Glide will then automatically complete pending loads for visible items.
+            // Image loading: local tracks always show music note icon (never cleared).
+            // For remote tracks, during a fast fling show a grey placeholder only.
             boolean isLocalTrack = LocalFilesStore.isLocalVideoId(track.videoId);
-            if (isFastScrolling) {
-                // During drag, clear the stale image from the recycled holder immediately
-                // so the wrong track's art doesn't show. reloadImagesForRange will load
-                // the correct image at SCROLL_STATE_IDLE.
+            if (isLocalTrack) {
+                // Local files: always music note icon on grey background — never fade/clear
                 Glide.with(context).clear(holder.ivTrackArt);
-                holder.ivTrackArt.setImageDrawable(null);
-            } else if (isLocalTrack) {
-                // Local files: always music note icon on grey background
-                Glide.with(context).clear(holder.ivTrackArt);
-                holder.ivTrackArt.setScaleType(ImageView.ScaleType.CENTER);
+                holder.ivTrackArt.setScaleType(ImageView.ScaleType.FIT_CENTER);
                 holder.ivTrackArt.setBackgroundColor(ContextCompat.getColor(context, R.color.surface_high));
                 holder.ivTrackArt.setImageResource(R.drawable.ic_music);
             } else {
