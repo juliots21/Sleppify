@@ -81,13 +81,6 @@ dependencies {
     implementation("androidx.media3:media3-database:$media3Version")
     implementation("androidx.media3:media3-ui:$media3Version")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    // pierfrancescosoffritti YouTube iframe player removed — playback is ExoPlayer only.
-    // NewPipeExtractor - v0.26.1 estable en JitPack
-    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.1") {
-        exclude(group = "com.google.protobuf", module = "protobuf-javalite")
-    }
-    // Requerido por NewPipeExtractor
-    implementation("com.github.spotbugs:spotbugs-annotations:4.8.3")
     implementation("androidx.camera:camera-core:$cameraXVersion")
     implementation("androidx.camera:camera-camera2:$cameraXVersion")
     implementation("androidx.camera:camera-lifecycle:$cameraXVersion")

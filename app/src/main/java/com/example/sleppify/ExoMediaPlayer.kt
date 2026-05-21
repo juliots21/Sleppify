@@ -49,6 +49,10 @@ class ExoMediaPlayer {
         fun onError(mp: ExoMediaPlayer, what: Int, extra: Int): Boolean
     }
 
+    interface OnBufferingListener {
+        fun onBufferingChanged(mp: ExoMediaPlayer, isBuffering: Boolean)
+    }
+
     companion object {
         private const val TAG = "ExoMediaPlayer"
         private const val CACHE_SIZE_BYTES = 100L * 1024 * 1024 // 100 MB disk cache
@@ -111,6 +115,7 @@ class ExoMediaPlayer {
     private var preparedListener: OnPreparedListener? = null
     private var completionListener: OnCompletionListener? = null
     private var errorListener: OnErrorListener? = null
+    private var bufferingListener: OnBufferingListener? = null
 
     private var pendingUri: Uri? = null
     private var pendingPath: String? = null
@@ -140,12 +145,12 @@ class ExoMediaPlayer {
 
         val loadControl = if (lowBuffer) {
             DefaultLoadControl.Builder()
-                .setBufferDurationsMs(5_000, 15_000, 500, 1_000)
+                .setBufferDurationsMs(5_000, 15_000, 250, 500)
                 .setPrioritizeTimeOverSizeThresholds(true)
                 .build()
         } else {
             DefaultLoadControl.Builder()
-                .setBufferDurationsMs(15_000, 50_000, 500, 1_000)
+                .setBufferDurationsMs(15_000, 50_000, 250, 500)
                 .setPrioritizeTimeOverSizeThresholds(true)
                 .build()
         }
@@ -196,6 +201,15 @@ class ExoMediaPlayer {
                     }
                 }
             }
+            // Notify buffering state changes for seek feedback
+            bufferingListener?.let { listener ->
+                val isBuffering = playbackState == Player.STATE_BUFFERING
+                mainHandler.post {
+                    if (!released) {
+                        listener.onBufferingChanged(this@ExoMediaPlayer, isBuffering)
+                    }
+                }
+            }
         }
 
         override fun onPlayerError(error: PlaybackException) {
@@ -231,6 +245,10 @@ class ExoMediaPlayer {
 
     fun setOnErrorListener(l: OnErrorListener?) {
         this.errorListener = l
+    }
+
+    fun setOnBufferingListener(l: OnBufferingListener?) {
+        this.bufferingListener = l
     }
 
     fun setDataSource(context: Context, uri: Uri, headers: Map<String, String>?) {

@@ -30,7 +30,7 @@ class SleppifyApp : Application() {
     }
 
     /**
-     * Performs heavy initialization: Glide (main thread), ProviderInstaller + NewPipe (background).
+     * Performs heavy initialization: Glide (main thread), ProviderInstaller (background).
      * ExoPlayer is lazy-initialized on first use via [ExoPlayerManager.getSharedExoPlayer].
      * Called immediately on startup if session exists, or after first login otherwise.
      * Safe to call multiple times — guards with [heavyInitDone].
@@ -54,17 +54,12 @@ class SleppifyApp : Application() {
         // ExoPlayer is now lazy-initialized on first use via ExoPlayerManager.getSharedExoPlayer()
         // — no need to block the main thread here.
 
-        // Heavy background work: ProviderInstaller + NewPipeExtractor
+        // Background: ProviderInstaller for TLS security
         Executors.newSingleThreadExecutor().execute {
             try {
                 com.google.android.gms.security.ProviderInstaller.installIfNeeded(this)
             } catch (e: Exception) {
                 Log.w("SleppifyApp", "ProviderInstaller failed", e)
-            }
-            try {
-                org.schabi.newpipe.extractor.NewPipe.init(NewPipeHttpDownloader.getInstance())
-            } catch (e: Exception) {
-                Log.w("SleppifyApp", "NewPipeExtractor pre-init failed (will retry lazily)", e)
             }
         }
     }

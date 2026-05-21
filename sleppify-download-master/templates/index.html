@@ -47,6 +47,11 @@
         <div class="actions">
             <button class="btn-test" id="btnTest" onclick="runTest()">Diagnosticar</button>
             <button class="btn-download" id="btnDownload" onclick="runDownload()">Descargar a PC</button>
+            <button class="btn-stream" id="btnStream" onclick="runStream()" style="background: #3b82f6; color: #fff;">Probar Streaming</button>
+        </div>
+
+        <div id="videoContainer" style="display:none; margin-bottom: 24px; border-radius: 8px; overflow: hidden; background: #000; border: 1px solid #333;">
+            <video id="videoPlayer" controls style="width: 100%; display: block;" autoplay></video>
         </div>
 
         <div class="status-bar" id="statusBar" style="display:none;">
@@ -211,6 +216,31 @@
                 setStatus('Error de red', 'red');
                 log('[NETWORK ERROR] ' + e.message, 'err');
             }
+        }
+
+        function runStream() {
+            const url = getUrl();
+            if (!url) { alert('Ingresa una URL'); return; }
+
+            clearLog();
+            setStatus('Iniciando Stream...', 'yellow');
+            log('[STREAM] URL: ' + url, 'info');
+            log('[STREAM] Conectando a /api/streaming...', 'info');
+            
+            const videoContainer = document.getElementById('videoContainer');
+            const videoPlayer = document.getElementById('videoPlayer');
+            
+            videoContainer.style.display = 'block';
+            videoPlayer.src = '/api/streaming?url=' + encodeURIComponent(url);
+            
+            videoPlayer.onplaying = () => {
+                setStatus('Reproduciendo Stream', 'green');
+                log('[OK] Video reproduciéndose exitosamente.', 'ok');
+            };
+            videoPlayer.onerror = (e) => {
+                setStatus('Error en Stream', 'red');
+                log('[ERROR] No se pudo cargar o reproducir el stream.', 'err');
+            };
         }
 
         // Allow Enter key to trigger test

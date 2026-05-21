@@ -1,125 +1,40 @@
 package com.example.sleppify
 
 import android.content.Context
-import android.util.Log
-import org.schabi.newpipe.extractor.NewPipe
-import org.schabi.newpipe.extractor.ServiceList.YouTube
-import org.schabi.newpipe.extractor.stream.StreamInfo
-import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Resolver de streams de YouTube usando NewPipeExtractor.
- * Simplificado: solo NewPipeExtractor, sin clientes InnerTube manuales.
+ * Stream URL resolver — delegates to ProxyStreamResolver (Sleppify proxy servers).
+ * Kept as a thin wrapper to preserve existing call sites across the app.
  */
 object InnertubeResolver {
-    private const val TAG = "InnertubeResolver"
-    private const val PREFS_PLAYER_STATE = "player_state"
-    private const val PREF_LAST_YOUTUBE_WEB_COOKIE = "stream_last_youtube_web_cookie"
-    private const val CACHE_EXPIRY_MS = 6 * 60 * 60 * 1000 // 6 horas
-
-    private val urlCache = ConcurrentHashMap<String, CachedUrl>()
-    @Volatile
-    private var authCookieHeader: String = ""
-
-    private val newPipeInitLock = Any()
-
-    data class CachedUrl(
-        val url: String,
-        val timestamp: Long
-    )
 
     @JvmStatic
     fun loadAuthCookiesFromPrefs(context: Context) {
-        val prefs = context.getSharedPreferences(PREFS_PLAYER_STATE, Context.MODE_PRIVATE)
-        authCookieHeader = prefs.getString(PREF_LAST_YOUTUBE_WEB_COOKIE, "")?.trim() ?: ""
+        // No-op: proxy resolver doesn't need auth cookies
     }
 
     @JvmStatic
     fun setAuthCookies(cookieHeader: String?) {
-        authCookieHeader = cookieHeader?.trim() ?: ""
+        // No-op
     }
 
     @JvmStatic
-    fun getAuthCookieHeader(): String = authCookieHeader
+    fun getAuthCookieHeader(): String = ""
 
     @JvmStatic
     fun invalidate(videoId: String?) {
-        if (videoId.isNullOrEmpty()) return
-        val keys = urlCache.keys.filter { it.startsWith("${videoId}_") }
-        keys.forEach { urlCache.remove(it) }
+        ProxyStreamResolver.invalidate(videoId)
     }
 
-    /**
-     * Obtiene el bitrate objetivo basado en la preferencia de calidad de streaming.
-     */
-    private fun getTargetBitrate(context: Context): Int {
-        val prefs = context.getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE)
-        val quality = prefs.getString(CloudSyncManager.KEY_STREAMING_QUALITY, CloudSyncManager.STREAMING_QUALITY_MEDIUM)
-        return when (quality) {
-            CloudSyncManager.STREAMING_QUALITY_LOW -> 96_000
-            CloudSyncManager.STREAMING_QUALITY_HIGH -> 256_000
-            CloudSyncManager.STREAMING_QUALITY_VERY_HIGH -> 320_000
-            else -> 128_000
-        }
-    }
-
-    private fun ensureNewPipe() {
-        if (NewPipe.getDownloader() == null) {
-            synchronized(newPipeInitLock) {
-                if (NewPipe.getDownloader() == null) {
-                    NewPipe.init(NewPipeHttpDownloader.getInstance())
-                }
-            }
-        }
-    }
-
-    /**
-     * Resuelve URL de audio usando NewPipeExtractor.
-     */
     @JvmStatic
     @JvmOverloads
     fun resolveStreamUrl(context: Context, videoId: String?, forceAlternativeClient: Boolean = false): String? {
-        if (videoId.isNullOrEmpty()) return null
-
-        val targetBitrate = getTargetBitrate(context)
-        val cacheKey = "${videoId}_${targetBitrate}"
-        urlCache[cacheKey]?.let {
-            if (System.currentTimeMillis() - it.timestamp < CACHE_EXPIRY_MS) {
-                return it.url
-            }
-        }
-
-        return try {
-            ensureNewPipe()
-            val info = StreamInfo.getInfo(YouTube, "https://www.youtube.com/watch?v=$videoId")
-            val audioStream = info.audioStreams
-                .sortedBy { Math.abs(it.bitrate - targetBitrate) }
-                .firstOrNull()
-                ?: info.audioStreams.maxByOrNull { it.bitrate }
-
-            val url = audioStream?.content
-            if (!url.isNullOrEmpty()) {
-                urlCache[cacheKey] = CachedUrl(url, System.currentTimeMillis())
-                url
-            } else {
-                Log.w(TAG, "No audio stream via NewPipe for: $videoId")
-                null
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error resolving via NewPipe $videoId: ${e.message}")
-            null
-        }
+        return ProxyStreamResolver.resolveStreamUrl(videoId)
     }
 
-    /**
-     * Headers mínimos para reproducir streams.
-     */
     @JvmStatic
     fun getHeadersFor(videoId: String?): Map<String, String> {
-        return if (authCookieHeader.isNotEmpty()) {
-            mapOf("Cookie" to authCookieHeader)
-        } else {
-            emptyMap()
-        }
+        // googlevideo.com URLs don't require auth headers
+        return emptyMap()
     }
 }

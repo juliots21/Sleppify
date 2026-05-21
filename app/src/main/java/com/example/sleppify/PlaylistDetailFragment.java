@@ -472,7 +472,10 @@ public class PlaylistDetailFragment extends Fragment
     @Override
     public void onPlaybackSnapshotUpdated() {
         if (isAdded() && getActivity() != null) {
-            getActivity().runOnUiThread(this::syncTrackStateFromPlayer);
+            getActivity().runOnUiThread(() -> {
+                syncTrackStateFromPlayer();
+                refreshVisibleTrackRows();
+            });
         }
     }
 
@@ -5712,43 +5715,11 @@ public class PlaylistDetailFragment extends Fragment
                 downloadingTrackProgressById.putAll(normalizedProgressById);
             }
 
-            // When a download just completed (running flipped true→false), pre-populate the
-            // cache with true for all tracks that were downloading so that the very first
-            // bindTrackState call after notify already sees the correct state — eliminating
-            // the 1-frame flicker where the icon briefly shows as not-downloaded.
-            if (wasRunning && !running) {
-                for (String completedId : previousIds) {
-                    if (!TextUtils.isEmpty(completedId)) {
-                        offlineAvailabilityCache.put(completedId.trim(), true);
-                    }
-                }
-            }
-
-            // When the batch is still running but individual tracks were removed from
-            // downloadingTrackIds, they just finished downloading. Eagerly mark them as
-            // offline-available so bindTrackState shows the filled check immediately
-            // instead of waiting for a scroll-triggered async disk lookup.
-            if (wasRunning && running) {
-                for (String previousTrackId : previousIds) {
-                    if (!TextUtils.isEmpty(previousTrackId) && !normalizedIds.contains(previousTrackId)) {
-                        offlineAvailabilityCache.put(previousTrackId.trim(), true);
-                        lastOfflineStateLookupTimeByTrack.remove(previousTrackId.trim());
-                    }
-                }
-            }
-
+            // Invalidate cache for all tracks that changed state so the next bind
+            // triggers a real disk lookup via triggerOfflineStateLookup, avoiding
+            // false positives when a download failed internally.
             for (String previousTrackId : previousIds) {
-                if (wasRunning && !running) {
-                    // Cache already set to true above — only clear the debounce timestamp
-                    // so the next scroll-triggered lookup can re-verify, but don't evict
-                    // the cache entry itself (that would cause the flicker we just fixed).
-                    lastOfflineStateLookupTimeByTrack.remove(previousTrackId.trim());
-                } else if (wasRunning && running && !normalizedIds.contains(previousTrackId)) {
-                    // Track just completed mid-batch — cache already set above, just clear debounce
-                    lastOfflineStateLookupTimeByTrack.remove(previousTrackId.trim());
-                } else {
-                    invalidateTrackStateCache(previousTrackId);
-                }
+                invalidateTrackStateCache(previousTrackId);
             }
             for (String currentTrackId : downloadingTrackIds) {
                 invalidateTrackStateCache(currentTrackId);
@@ -5771,6 +5742,22 @@ public class PlaylistDetailFragment extends Fragment
                         }
                     });
                 }
+            }
+
+            // After batch completes or tracks leave active set, schedule a verified
+            // disk lookup so the UI reflects the real file state (not cached assumptions).
+            if (wasRunning && rvPlaylistContent != null) {
+                mainHandler.postDelayed(() -> {
+                    if (rvPlaylistContent == null) return;
+                    RecyclerView.LayoutManager lm = rvPlaylistContent.getLayoutManager();
+                    if (lm instanceof LinearLayoutManager) {
+                        int first = ((LinearLayoutManager) lm).findFirstVisibleItemPosition() - 1;
+                        int last = ((LinearLayoutManager) lm).findLastVisibleItemPosition() - 1;
+                        if (first >= 0) {
+                            loadStateForVisibleRange(first, last);
+                        }
+                    }
+                }, 80L);
             }
         }
 

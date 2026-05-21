@@ -78,8 +78,12 @@ class SettingsFragment : Fragment() {
     private lateinit var vStorageDownloads: View
     private lateinit var vStorageCache: View
     private lateinit var vStorageFree: View
-    private lateinit var btnDeleteSettingsCache: MaterialButton
-    private lateinit var btnDeleteAllDownloads: MaterialButton
+    private lateinit var rowDeleteCache: View
+    private lateinit var tvDeleteCacheTitle: TextView
+    private lateinit var tvDeleteCacheSubtitle: TextView
+    private lateinit var rowDeleteDownloads: View
+    private lateinit var tvDeleteDownloadsTitle: TextView
+    private lateinit var tvDeleteDownloadsSubtitle: TextView
     private lateinit var swLocalFiles: MaterialSwitch
 
     private val settingsPrefs: SharedPreferences by lazy { 
@@ -202,8 +206,12 @@ class SettingsFragment : Fragment() {
         vStorageDownloads = v.findViewById(R.id.vStorageDownloads)
         vStorageCache = v.findViewById(R.id.vStorageCache)
         vStorageFree = v.findViewById(R.id.vStorageFree)
-        btnDeleteSettingsCache = v.findViewById(R.id.btnDeleteSettingsCache)
-        btnDeleteAllDownloads = v.findViewById(R.id.btnDeleteAllDownloads)
+        rowDeleteCache = v.findViewById(R.id.rowDeleteCache)
+        tvDeleteCacheTitle = v.findViewById(R.id.tvDeleteCacheTitle)
+        tvDeleteCacheSubtitle = v.findViewById(R.id.tvDeleteCacheSubtitle)
+        rowDeleteDownloads = v.findViewById(R.id.rowDeleteDownloads)
+        tvDeleteDownloadsTitle = v.findViewById(R.id.tvDeleteDownloadsTitle)
+        tvDeleteDownloadsSubtitle = v.findViewById(R.id.tvDeleteDownloadsSubtitle)
     }
 
     private fun setupInteractions() {
@@ -215,8 +223,8 @@ class SettingsFragment : Fragment() {
         rowDownloadQuality.setOnClickListener { showDownloadQualityPicker() }
         rowStreamingQuality.setOnClickListener { showStreamingQualityPicker() }
         rowOpenEqualizer.setOnClickListener { (activity as? MainActivity)?.openEqualizerFromSettings() }
-        btnDeleteSettingsCache.setOnClickListener { showDeleteCacheConfirmation() }
-        btnDeleteAllDownloads.setOnClickListener { showDeleteAllDownloadsConfirmation() }
+        rowDeleteCache.setOnClickListener { showDeleteCacheConfirmation() }
+        rowDeleteDownloads.setOnClickListener { showDeleteAllDownloadsConfirmation() }
         updateDeleteCacheButtonState()
         updateDeleteDownloadsButtonState()
         renderLocalFilesSwitch()
@@ -255,7 +263,7 @@ class SettingsFragment : Fragment() {
     override fun onHiddenChanged(hidden: Boolean) {
         super.onHiddenChanged(hidden)
         if (!hidden) {
-            view?.post { view?.scrollTo(0, 0) }
+            view?.findViewById<ScrollView>(R.id.svSettingsContent)?.scrollTo(0, 0)
         }
     }
 
@@ -414,13 +422,15 @@ class SettingsFragment : Fragment() {
     }
 
     private fun updateDeleteCacheButtonState() {
-        btnDeleteSettingsCache.isEnabled = !storageCleanupInFlight
-        btnDeleteSettingsCache.setText(if (storageCleanupInFlight) R.string.settings_storage_delete_cache_running else R.string.settings_storage_delete_cache)
+        rowDeleteCache.isEnabled = !storageCleanupInFlight
+        rowDeleteCache.alpha = if (storageCleanupInFlight) 0.5f else 1f
+        tvDeleteCacheTitle.text = if (storageCleanupInFlight) "Limpiando cache…" else "Eliminar cache"
     }
 
     private fun updateDeleteDownloadsButtonState() {
-        btnDeleteAllDownloads.isEnabled = !downloadCleanupInFlight
-        btnDeleteAllDownloads.text = if (downloadCleanupInFlight) "Eliminando…" else "Eliminar descargas"
+        rowDeleteDownloads.isEnabled = !downloadCleanupInFlight
+        rowDeleteDownloads.alpha = if (downloadCleanupInFlight) 0.5f else 1f
+        tvDeleteDownloadsTitle.text = if (downloadCleanupInFlight) "Eliminando…" else "Eliminar descargas"
     }
 
     private fun showDeleteAllDownloadsConfirmation() {
@@ -628,7 +638,9 @@ class SettingsFragment : Fragment() {
         tvProfileName.text = name?.takeIf { it.isNotBlank() } ?: "Usuario"
         tvProfileBadge.text = email?.takeIf { it.isNotBlank() } ?: "Cuenta conectada · toca para cerrar sesion"
         
-        if (InnertubeResolver.getAuthCookieHeader().isNotEmpty()) {
+        val hasYtSession = requireContext().getSharedPreferences("player_state", Context.MODE_PRIVATE)
+            .getString("stream_last_youtube_web_cookie", "")?.trim()?.isNotEmpty() == true
+        if (hasYtSession) {
             ivYoutubeMusicStatus.visibility = View.VISIBLE
             ivYoutubeMusicStatus.alpha = 1.0f
         } else {
@@ -656,7 +668,8 @@ class SettingsFragment : Fragment() {
         tvSleppifyName.text = authManager.getDisplayName()
         tvSleppifyEmail.text = authManager.getEmail()
 
-        val cookie = InnertubeResolver.getAuthCookieHeader()
+        val cookie = requireContext().getSharedPreferences("player_state", Context.MODE_PRIVATE)
+            .getString("stream_last_youtube_web_cookie", "")?.trim() ?: ""
         if (cookie.isNotEmpty()) {
             tvYtStatus.text = "Conectado"
             tvYtStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_primary))

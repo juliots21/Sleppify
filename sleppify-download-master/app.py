@@ -88,6 +88,11 @@ def _stream_and_cleanup(file_path, chunk_size=65536):
 # Video: format 18 = 360p h264+aac pre-muxed mp4 (no merge, no ffmpeg)
 VIDEO_FORMAT = '18'
 
+# --- In-memory stream URL cache (avoids re-resolving on each Range/seek request) ---
+import time as _time
+_stream_url_cache = {}  # {video_id: {'url': str, 'content_length': int, 'ts': float}}
+_STREAM_CACHE_TTL = 4 * 3600  # 4 hours (googlevideo URLs expire ~6h)
+
 @app.route('/api/video', methods=['POST'])
 def api_video():
     """Download 360p mp4 video to temp file, then stream complete file to client."""
@@ -109,7 +114,6 @@ def api_video():
             'no_playlist': True,
             'outtmpl': os.path.join(tmpdir, '%(id)s.%(ext)s'),
             'http_chunk_size': 10485760,
-            **(({'cookiefile': COOKIES_FILE} if os.path.exists(COOKIES_FILE) else {})),
         }
 
         print(f"[VIDEO] downloading: {youtube_url}")
@@ -139,6 +143,273 @@ def api_video():
         if tmpdir:
             shutil.rmtree(tmpdir, ignore_errors=True)
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/resolve', methods=['GET', 'POST'])
+def api_resolve():
+    """Resolve direct stream URL for a YouTube video (360p mp4). Returns JSON with the URL."""
+    if request.method == 'POST':
+        data = request.get_json()
+        youtube_url = data.get('url') if data else None
+    else:
+        youtube_url = request.args.get('url')
+
+    if not youtube_url:
+        return jsonify({"error": "URL missing"}), 400
+
+    client_cookie = request.headers.get('X-Youtube-Cookie')
+    auth = get_auth_opts(client_cookie)
+    tmp_cookie = auth.pop('_tmp_cookie_file', None)
+
+    ydl_opts = {
+        'format': VIDEO_FORMAT,
+        'quiet': True,
+        'no_warnings': True,
+        'no_playlist': True,
+        'skip_download': True,
+        **auth,
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(youtube_url, download=False)
+            if not info or 'url' not in info:
+                return jsonify({"error": "Could not extract stream URL"}), 500
+
+            return jsonify({
+                "status": "ok",
+                "url": info['url'],
+                "duration": info.get('duration'),
+                "title": info.get('title', ''),
+            })
+    except Exception as e:
+        print(f"[RESOLVE] error: {youtube_url} — {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if tmp_cookie:
+            try: os.unlink(tmp_cookie)
+            except: pass
+
+@app.route('/api/stream/<video_id>', methods=['GET'])
+def api_stream_cached(video_id):
+    """
+    Optimized streaming proxy: resolves once, caches URL, then proxies bytes.
+    Supports Range requests for seeking without re-resolving yt-dlp each time.
+    ExoPlayer should point here: GET /api/stream/<video_id>
+    """
+    import urllib.request
+
+    now = _time.time()
+    cached = _stream_url_cache.get(video_id)
+
+    # Resolve if not cached or expired
+    if not cached or (now - cached['ts']) > _STREAM_CACHE_TTL:
+        client_cookie = request.headers.get('X-Youtube-Cookie')
+        auth = get_auth_opts(client_cookie)
+        tmp_cookie = auth.pop('_tmp_cookie_file', None)
+
+        ydl_opts = {
+            'format': VIDEO_FORMAT,
+            'quiet': True,
+            'no_warnings': True,
+            'no_playlist': True,
+            'skip_download': True,
+            **auth,
+        }
+
+        try:
+            youtube_url = f'https://www.youtube.com/watch?v={video_id}'
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(youtube_url, download=False)
+                if not info or 'url' not in info:
+                    return jsonify({"error": "Could not extract stream URL"}), 500
+
+                stream_url = info['url']
+                content_length = info.get('filesize') or info.get('filesize_approx') or 0
+
+                # HEAD request to get accurate Content-Length if needed
+                if not content_length:
+                    try:
+                        head_req = urllib.request.Request(stream_url, method='HEAD',
+                            headers={'User-Agent': 'Mozilla/5.0'})
+                        head_resp = urllib.request.urlopen(head_req)
+                        content_length = int(head_resp.headers.get('Content-Length', 0))
+                        head_resp.close()
+                    except Exception:
+                        pass
+
+                _stream_url_cache[video_id] = {
+                    'url': stream_url,
+                    'content_length': content_length,
+                    'ts': now,
+                }
+                cached = _stream_url_cache[video_id]
+        except Exception as e:
+            print(f"[STREAM] resolve error: {video_id} — {e}")
+            return jsonify({"error": str(e)}), 500
+        finally:
+            if tmp_cookie:
+                try: os.unlink(tmp_cookie)
+                except: pass
+
+    # Now proxy from cached URL
+    stream_url = cached['url']
+    content_length = cached['content_length']
+
+    range_header = request.headers.get('Range')
+    range_start = 0
+    range_end = content_length - 1 if content_length else None
+
+    if range_header and content_length:
+        try:
+            range_spec = range_header.replace('bytes=', '')
+            parts = range_spec.split('-')
+            range_start = int(parts[0]) if parts[0] else 0
+            range_end = int(parts[1]) if parts[1] else (content_length - 1)
+        except (ValueError, IndexError):
+            pass
+
+    # Build upstream Range request
+    req_headers = {'User-Agent': 'Mozilla/5.0'}
+    if content_length and (range_start > 0 or (range_end is not None and range_end < content_length - 1)):
+        req_headers['Range'] = f'bytes={range_start}-{range_end}'
+
+    try:
+        upstream_req = urllib.request.Request(stream_url, headers=req_headers)
+        upstream_resp = urllib.request.urlopen(upstream_req)
+    except urllib.error.HTTPError as he:
+        if he.code == 403:
+            # URL expired, invalidate cache and retry once
+            _stream_url_cache.pop(video_id, None)
+            print(f"[STREAM] 403 from CDN for {video_id}, cache invalidated. Client should retry.")
+            return jsonify({"error": "Stream URL expired, retry"}), 410
+        raise
+
+    def generate():
+        try:
+            while True:
+                chunk = upstream_resp.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            upstream_resp.close()
+
+    resp_length = (range_end - range_start + 1) if (range_end is not None and content_length) else content_length
+    resp_headers = {
+        'Content-Type': 'video/mp4',
+        'Accept-Ranges': 'bytes',
+    }
+    if content_length:
+        resp_headers['Content-Length'] = str(resp_length)
+
+    if range_header and content_length and range_start > 0:
+        resp_headers['Content-Range'] = f'bytes {range_start}-{range_end}/{content_length}'
+        return Response(generate(), status=206, headers=resp_headers)
+    else:
+        return Response(generate(), status=200, headers=resp_headers)
+
+
+@app.route('/api/streaming', methods=['GET', 'POST'])
+def api_streaming():
+    """Stream 360p mp4 via proxy. Supports Range requests for seeking."""
+    import urllib.request
+
+    if request.method == 'POST':
+        data = request.get_json()
+        youtube_url = data.get('url') if data else None
+    else:
+        youtube_url = request.args.get('url')
+
+    if not youtube_url:
+        return jsonify({"error": "URL missing"}), 400
+
+    client_cookie = request.headers.get('X-Youtube-Cookie')
+    auth = get_auth_opts(client_cookie)
+    tmp_cookie = auth.pop('_tmp_cookie_file', None)
+
+    ydl_opts = {
+        'format': VIDEO_FORMAT,
+        'quiet': True,
+        'no_warnings': True,
+        'no_playlist': True,
+        'skip_download': True,
+        **auth,
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(youtube_url, download=False)
+            if not info or 'url' not in info:
+                return jsonify({"error": "Could not extract direct stream URL"}), 500
+
+            stream_url = info['url']
+            content_length = info.get('filesize') or info.get('filesize_approx') or 0
+
+            # If we don't have content_length from yt-dlp, do a HEAD request
+            if not content_length:
+                try:
+                    head_req = urllib.request.Request(stream_url, method='HEAD',
+                        headers={'User-Agent': 'Mozilla/5.0'})
+                    head_resp = urllib.request.urlopen(head_req)
+                    content_length = int(head_resp.headers.get('Content-Length', 0))
+                    head_resp.close()
+                except Exception:
+                    pass
+
+            # Parse Range header from client
+            range_header = request.headers.get('Range')
+            range_start = 0
+            range_end = content_length - 1 if content_length else None
+
+            if range_header and content_length:
+                try:
+                    range_spec = range_header.replace('bytes=', '')
+                    parts = range_spec.split('-')
+                    range_start = int(parts[0]) if parts[0] else 0
+                    range_end = int(parts[1]) if parts[1] else (content_length - 1)
+                except (ValueError, IndexError):
+                    pass
+
+            # Build upstream request with Range
+            req_headers = {'User-Agent': 'Mozilla/5.0'}
+            if range_start > 0 or (range_end and range_end < content_length - 1):
+                req_headers['Range'] = f'bytes={range_start}-{range_end}'
+
+            upstream_req = urllib.request.Request(stream_url, headers=req_headers)
+            upstream_resp = urllib.request.urlopen(upstream_req)
+
+            def generate():
+                try:
+                    while True:
+                        chunk = upstream_resp.read(65536)
+                        if not chunk:
+                            break
+                        yield chunk
+                finally:
+                    upstream_resp.close()
+
+            # Build response headers
+            resp_length = (range_end - range_start + 1) if (range_end is not None and content_length) else content_length
+            resp_headers = {
+                'Content-Type': 'video/mp4',
+                'Accept-Ranges': 'bytes',
+            }
+            if content_length:
+                resp_headers['Content-Length'] = str(resp_length)
+
+            if range_header and content_length and range_start > 0:
+                resp_headers['Content-Range'] = f'bytes {range_start}-{range_end}/{content_length}'
+                return Response(generate(), status=206, headers=resp_headers)
+            else:
+                return Response(generate(), status=200, headers=resp_headers)
+
+    except Exception as e:
+        print(f"[STREAMING] error: {youtube_url} — {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if tmp_cookie:
+            try: os.unlink(tmp_cookie)
+            except: pass
 
 @app.route('/api/health', methods=['GET'])
 def api_health():

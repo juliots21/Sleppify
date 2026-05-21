@@ -115,11 +115,9 @@ object OfflineAudioStore {
     @JvmStatic
     fun hasValidatedOfflineAudio(context: Context, trackId: String, expectedDurationLabel: String?): Boolean {
         val normalized = normalizeTrackId(trackId)
-        val cached = getCachedOfflineState(normalized)
-        if (cached != null) {
-            return cached
-        }
 
+        // Always check disk — do NOT short-circuit on cache. This method is the
+        // "source of truth" that callers rely on to detect failed downloads.
         val existing = getExistingOfflineAudioFile(context, normalized)
         if (!existing.isFile || existing.length() <= 0L) {
             putCachedOfflineState(normalized, false)

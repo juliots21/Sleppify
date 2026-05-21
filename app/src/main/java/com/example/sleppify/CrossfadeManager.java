@@ -36,10 +36,8 @@ public final class CrossfadeManager {
     private static final int CROSSFADE_FIRST_STEP_MS = 500;
     private static final int CROSSFADE_STEP_MS = 40;
 
-    // Match the primary InnerTube client so CDN sees consistent identity
     private static final String STREAM_HTTP_USER_AGENT =
-            "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 11; en_US; "
-                    + "Pixel 4; Build/RQ3A.210705.001; Cronet/112.0.5615.49) gzip";
+            "Mozilla/5.0 (Linux; Android 11; Pixel 4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
 
     public interface Callback {
         /** Called on main thread when crossfade finishes and the incoming player is the new active player. */
@@ -319,10 +317,6 @@ public final class CrossfadeManager {
                 Map<String, String> headers = new HashMap<>();
                 headers.put("User-Agent", STREAM_HTTP_USER_AGENT);
                 headers.put("Accept", "*/*");
-                Map<String, String> authHeaders = InnertubeResolver.getHeadersFor(null);
-                if (authHeaders != null) {
-                    headers.putAll(authHeaders);
-                }
                 incoming.setDataSource(appContext, Uri.parse(source), headers);
             } else if (source.startsWith("content://")) {
                 incoming.setDataSource(appContext, Uri.parse(source), null);

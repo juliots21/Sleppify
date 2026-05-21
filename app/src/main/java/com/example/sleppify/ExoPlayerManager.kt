@@ -57,8 +57,8 @@ object ExoPlayerManager {
                             .setBufferDurationsMs(
                                 /* minBufferMs */            15_000,
                                 /* maxBufferMs */            50_000,
-                                /* bufferForPlaybackMs */       500,
-                                /* bufferForPlaybackAfterRebufferMs */ 1_000
+                                /* bufferForPlaybackMs */       250,
+                                /* bufferForPlaybackAfterRebufferMs */ 500
                             )
                             .setBackBuffer(
                                 /* backBufferDurationMs */ 30_000,

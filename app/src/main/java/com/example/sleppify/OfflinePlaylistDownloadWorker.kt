@@ -242,6 +242,7 @@ class OfflinePlaylistDownloadWorker(
             if (!isDownloadAllowedByCurrentNetworkPolicy(context, networkIssueTracker)) {
                 noNetworkEncountered = true
                 Log.w(TAG, "track:blocked_by_policy id=$id")
+                OfflineAudioStore.markOfflineAudioState(id, false)
                 return TrackDownloadResult.failed(id, title, true)
             }
 
@@ -250,6 +251,7 @@ class OfflinePlaylistDownloadWorker(
 
             if (!downloaded) {
                 Log.w(TAG, "track:failed id=$id network=$noNetworkEncountered")
+                OfflineAudioStore.markOfflineAudioState(id, false)
                 return TrackDownloadResult.failed(id, title, noNetworkEncountered)
             }
 
@@ -262,6 +264,7 @@ class OfflinePlaylistDownloadWorker(
                 noNetworkEncountered = noNetworkEncountered || networkIssueTracker.hasIssue()
                 if (!retryOk || !validateDownloadedTrackFile(context, id, expectedDurationLabel)) {
                     Log.w(TAG, "track:retry_validation_failed id=$id")
+                    OfflineAudioStore.markOfflineAudioState(id, false)
                     return TrackDownloadResult.failed(id, title, noNetworkEncountered)
                 }
             }

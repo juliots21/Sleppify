@@ -52,6 +52,7 @@
     </LinearLayout>
 
     <ScrollView
+        android:id="@+id/svSettingsContent"
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:clipToPadding="false"
@@ -849,57 +850,105 @@
                     </LinearLayout>
                 </LinearLayout>
 
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginHorizontal="16dp"
+                    android:background="#0AFFFFFF" />
+
+                <!-- Eliminar cache -->
                 <LinearLayout
+                    android:id="@+id/rowDeleteCache"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="14dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:gravity="center_vertical"
                     android:orientation="horizontal"
-                    android:gravity="center"
-                    android:weightSum="2">
+                    android:paddingVertical="12dp">
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnDeleteSettingsCache"
+                    <LinearLayout
                         android:layout_width="0dp"
-                        android:layout_height="36dp"
+                        android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:layout_marginEnd="4dp"
-                        android:backgroundTint="@color/surface_high"
-                        android:insetTop="0dp"
-                        android:insetBottom="0dp"
-                        android:text="@string/settings_storage_delete_cache"
-                        android:textAllCaps="false"
-                        android:textColor="@color/text_primary"
-                        android:textSize="11sp"
-                        android:textStyle="bold"
-                        app:cornerRadius="18dp" />
+                        android:orientation="vertical">
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnDeleteAllDownloads"
-                        android:layout_width="0dp"
-                        android:layout_height="36dp"
-                        android:layout_weight="1"
-                        android:layout_marginStart="4dp"
-                        android:backgroundTint="@color/surface_high"
-                        android:insetTop="0dp"
-                        android:insetBottom="0dp"
-                        android:text="Eliminar descargas"
-                        android:textAllCaps="false"
-                        android:textColor="@color/text_primary"
-                        android:textSize="11sp"
-                        android:textStyle="bold"
-                        app:cornerRadius="18dp" />
+                        <TextView
+                            android:id="@+id/tvDeleteCacheTitle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Eliminar cache"
+                            android:textColor="@color/text_primary"
+                            android:textSize="14sp" />
 
+                        <TextView
+                            android:id="@+id/tvDeleteCacheSubtitle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="@string/settings_storage_hint"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_marginStart="10dp"
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="@color/text_secondary" />
                 </LinearLayout>
 
-                <TextView
-                    android:id="@+id/tvStorageCacheHint"
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginHorizontal="16dp"
+                    android:background="#0AFFFFFF" />
+
+                <!-- Eliminar descargas -->
+                <LinearLayout
+                    android:id="@+id/rowDeleteDownloads"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:lineSpacingExtra="2dp"
-                    android:text="@string/settings_storage_hint"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="13sp" />
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingVertical="12dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/tvDeleteDownloadsTitle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Eliminar descargas"
+                            android:textColor="@color/text_primary"
+                            android:textSize="14sp" />
+
+                        <TextView
+                            android:id="@+id/tvDeleteDownloadsSubtitle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="Elimina todas las canciones descargadas para liberar espacio"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_marginStart="10dp"
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="@color/text_secondary" />
+                </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

@@ -38,7 +38,6 @@ import android.widget.SeekBar;
 import com.bumptech.glide.Glide;
 import com.bumptech.glide.load.engine.DiskCacheStrategy;
 import com.example.sleppify.utils.YouTubeCropTransformation;
-import com.example.sleppify.utils.YouTubeImageProcessor;
 import com.bumptech.glide.load.DecodeFormat;
 import com.bumptech.glide.request.target.CustomTarget;
 import com.bumptech.glide.request.transition.Transition;
@@ -57,7 +56,6 @@ import androidx.core.content.ContextCompat;
 import androidx.core.widget.NestedScrollView;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentManager;
-import androidx.palette.graphics.Palette;
 import androidx.recyclerview.widget.ItemTouchHelper;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
@@ -65,8 +63,6 @@ import androidx.recyclerview.widget.RecyclerView;
 import android.support.v4.media.MediaMetadataCompat;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.support.v4.media.session.PlaybackStateCompat;
-import com.google.android.material.imageview.ShapeableImageView;
-
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -108,8 +104,6 @@ public class SongPlayerFragment extends Fragment {
 
     private static final long PROGRESS_TICK_MS = 200L;
     private static final String PREFS_PLAYER_STATE = "player_state";
-    private static final String PREFS_BACKDROP_COLORS = "sleppify_backdrop_colors";
-    private static final int BACKDROP_COLOR_PREFS_MAX = 200;
     private static final String PREF_SOCIAL_STATS_PREFIX = "yt_social_stats_";
     private static final String PREF_LAST_PLAYLIST_ID = "stream_last_playlist_id";
     private static final String PREF_LAST_PLAYLIST_TITLE = "stream_last_playlist_title";
@@ -133,9 +127,7 @@ public class SongPlayerFragment extends Fragment {
     private static final long PLAYBACK_BOOTSTRAP_GRACE_MS = 1800L;
     private static final int MAX_PLAYBACK_SOURCE_RETRY = 1;
     private static final long PLAYBACK_SOURCE_RETRY_DELAY_MS = 350L;
-    // Match the primary InnerTube client (ANDROID_MUSIC) so the CDN sees a
-    // consistent identity between the URL resolution and the playback HTTP request.
-    private static final String STREAM_HTTP_USER_AGENT = "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 11; en_US; Pixel 4; Build/RQ3A.210705.001; Cronet/112.0.5615.49) gzip";
+    private static final String STREAM_HTTP_USER_AGENT = "Mozilla/5.0 (Linux; Android 11; Pixel 4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
     private static final String AUDIUS_API_BASE_URL = "https://discoveryprovider.audius.co/v1";
     private static final String AUDIUS_APP_NAME = "sleppify";
     private static final int AUDIUS_SEARCH_LIMIT = 6;
@@ -149,7 +141,7 @@ public class SongPlayerFragment extends Fragment {
     private final java.util.ArrayDeque<PlayerTrack> globalPlaybackHistory = new java.util.ArrayDeque<>();
 
     private ImageView ivPlayerCover;
-    private ShapeableImageView ivPlayerBackdrop;
+    private View ivPlayerBackdrop;
     private AnimatedEqualizerView animatedEqPlayer;
     private FrameLayout flPlayerHero;
     @Nullable
@@ -246,7 +238,7 @@ public class SongPlayerFragment extends Fragment {
     @NonNull
     private String pendingDownloadVideoId = "";
     /**
-     * Tracks the videoId for which we already consumed a one-shot InnerTube re-resolution
+     * Tracks the videoId for which we already consumed a one-shot re-resolution
      * retry after an ExoPlayer failure. If another error occurs for the same videoId,
      * we skip to the next track instead of retrying indefinitely.
      */
@@ -276,18 +268,20 @@ public class SongPlayerFragment extends Fragment {
     private boolean usingOfflineSource = false;
     private final Handler localProgressHandler = new Handler(Looper.getMainLooper());
     private final YouTubeMusicService radioMusicService = new YouTubeMusicService();
-    private final ExecutorService streamResolverExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService streamResolverExecutor = Executors.newFixedThreadPool(3);
     private final ExecutorService socialStatsExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService persistenceExecutor = Executors.newSingleThreadExecutor();
-    private final ExecutorService imageProcessingExecutor = Executors.newSingleThreadExecutor();
     private final Map<String, SocialStats> socialStatsCache = new HashMap<>();
 
     // Direct streaming & pre-fetching
     private volatile String prefetchedNextVideoId = null;
     private volatile String prefetchedNextUrl = null;
 
+    // Stream-as-download: background-save the currently streaming track for offline
+    private volatile String streamDownloadingVideoId = null;
+
     // Gapless pre-buffer: an ExoMediaPlayer prepared silently for the next track
-    private static final long GAPLESS_PRE_BUFFER_LISTEN_THRESHOLD_MS = 5_000L;
+    private static final long GAPLESS_PRE_BUFFER_LISTEN_THRESHOLD_MS = 2_000L;
     private long accumulatedListenMs = 0;
     @Nullable
     private ExoMediaPlayer gaplessPreBufferedPlayer = null;
@@ -346,25 +340,11 @@ public class SongPlayerFragment extends Fragment {
     private String pendingSocialStatsVideoId = "";
     @Nullable
     private Runnable pendingSocialStatsFetchRunnable;
-    @Nullable
-    private CustomTarget<Bitmap> playerCoverTarget;
 
     private View playerBackgroundContainer;
-    private final java.util.LinkedHashMap<String, Integer> dominantColorCache = new java.util.LinkedHashMap<String, Integer>(50, 0.75f, true) {
-        @Override
-        protected boolean removeEldestEntry(Map.Entry eldest) {
-            return size() > 50;
-        }
-    };
-    @Nullable
-    private Runnable deferredBackdropLoadRunnable;
     @Nullable
     private Runnable nextUpRevealRunnable;
     private int nextUpRevealCursor = 0;
-    @NonNull
-    private String activeCoverVideoId = "";
-    @NonNull
-    private String activeBackdropVideoId = "";
     private boolean playerArtworkBootstrapPending = true;
     @Nullable
     private Bitmap mediaSessionArtwork;
@@ -563,36 +543,17 @@ public class SongPlayerFragment extends Fragment {
         animatedEqPlayer = view.findViewById(R.id.animatedEqPlayer);
         flPlayerHero = view.findViewById(R.id.flPlayerHero);
         pbVideoLoading = view.findViewById(R.id.pbVideoLoading);
-        // Init video router with hero container
+        // Init video router with hero + mini containers
         {
             FrameLayout miniContainer = null;
-            ProgressBar miniSpinner = null;
-            ImageView miniArt = null;
             if (getActivity() instanceof MainActivity) {
-                GlobalMiniPlayerController mini = ((MainActivity) getActivity()).getGlobalMiniPlayer();
-                if (mini != null) {
-                    View miniRoot = ((MainActivity) getActivity()).findViewById(R.id.llGlobalMiniPlayer);
-                    if (miniRoot != null) {
-                        miniContainer = miniRoot.getRootView().findViewById(R.id.flMiniPlayerVideoContainer);
-                        miniSpinner = miniRoot.getRootView().findViewById(R.id.pbMiniPlayerLoading);
-                        miniArt = mini.getArtView();
-                    }
+                View miniRoot = ((MainActivity) getActivity()).findViewById(R.id.llGlobalMiniPlayer);
+                if (miniRoot != null) {
+                    miniContainer = miniRoot.getRootView().findViewById(R.id.flMiniPlayerVideoContainer);
                 }
             }
-            videoRouter.init(requireContext(), flPlayerHero, miniContainer,
-                    pbVideoLoading, miniSpinner, ivPlayerCover, miniArt);
-            videoRouter.setCallback(new VideoSurfaceRouter.Callback() {
-                @Override
-                public void onVideoConfirmed() {
-                    // Real video — hero layout adjustments
-                    updatePlayerSurfaceForSource();
-                }
-                @Override
-                public void onVideoStatic() {
-                    // Static image — revert to cover art
-                    revertVideoToStaticCover();
-                }
-            });
+            videoRouter.init(requireContext(), flPlayerHero, miniContainer);
+            videoRouter.setCallback(() -> updatePlayerSurfaceForSource());
         }
         playerArtworkBootstrapPending = true;
         tvPlayerTitle = view.findViewById(R.id.tvPlayerTitle);
@@ -685,6 +646,10 @@ public class SongPlayerFragment extends Fragment {
                     userSeeking = false;
                     if (localExoMediaPlayer != null) {
                         try {
+                            // Show loading spinner until playback resumes after seek
+                            if (pbVideoLoading != null && !usingOfflineSource) {
+                                pbVideoLoading.setVisibility(View.VISIBLE);
+                            }
                             localExoMediaPlayer.seekTo(currentSeconds * 1000);
                         } catch (Exception ignored) {
                         }
@@ -711,7 +676,6 @@ public class SongPlayerFragment extends Fragment {
                     streamResolverExecutor
             );
             crossfadeManager.invalidateDurationCache();
-            loadBackdropColorCache();
             loadPlaybackModesFromSettings();
             setupSocialActions();
             updatePlaybackModeButtons();
@@ -767,16 +731,6 @@ public class SongPlayerFragment extends Fragment {
                 startLocalProgressTicker();
             }
             ensureActivePlaybackIfExpected("onHiddenChanged-visible");
-            // ✅ Re-bind artwork if the player was re-shown and artwork doesn't match current track
-            // Skip when video is active — video surface handles display, no artwork rebind needed
-            if (!currentSourceIsVideo && !tracks.isEmpty() && currentIndex >= 0 && currentIndex < tracks.size()) {
-                PlayerTrack current = tracks.get(currentIndex);
-                String currentVideoId = current.videoId == null ? "" : current.videoId;
-                if (!TextUtils.equals(activeCoverVideoId, currentVideoId)
-                        || !TextUtils.equals(activeBackdropVideoId, currentVideoId)) {
-                    bindCurrentTrackInternal(false, false);
-                }
-            }
         }
     }
 
@@ -867,14 +821,11 @@ public class SongPlayerFragment extends Fragment {
         }
         cancelAutoplayRecovery();
         cancelPlaybackErrorRetry();
-        cancelDeferredBackdropLoad();
         cancelNextUpReveal();
         cancelPendingSocialStatsFetch();
         cancelPendingStreamResolver();
-        clearPlayerCoverRequest();
         // Release video surface before destroying view
         videoRouter.onPlayerReleased();
-        resetPlayerHeroContainerHeight();
         stopLocalProgressTicker();
         
         // Si es un reproductor temporal (e.g., en SearchActivity), NO liberar el player
@@ -898,7 +849,6 @@ public class SongPlayerFragment extends Fragment {
         streamResolverExecutor.shutdownNow();
         socialStatsExecutor.shutdownNow();
         persistenceExecutor.shutdownNow();
-        imageProcessingExecutor.shutdownNow();
         super.onDestroyView();
     }
 
@@ -1466,8 +1416,6 @@ public class SongPlayerFragment extends Fragment {
         }
 
         // Bind metadata. forceZero=true resets UI to 0, but we restore resume position after.
-        // NOTE: Do NOT call showPlayerArtworkLoadingState() here — keep old cover visible
-        // until the new one loads via Glide, preventing the black flash.
         bindCurrentTrackInternal(false, true);
         // Reset state BEFORE restoring resumeSeconds
         cancelOfflineCrossfade();
@@ -1560,6 +1508,9 @@ public class SongPlayerFragment extends Fragment {
         syncMiniStateWithPlaylist();
         persistPlaybackSnapshot(false);
         prefetchNextTrackStream();
+
+        // Stream-as-download: gapless players are always network sources
+        maybeSaveStreamedTrackOffline(track.videoId);
     }
 
     private void handleLocalPlaybackCompletion() {
@@ -1615,24 +1566,75 @@ public class SongPlayerFragment extends Fragment {
     private void prefetchNextTrackStream() {
         if (tracks.size() <= 1) return;
 
-        int nextIndex = (currentIndex + 1) % tracks.size();
-        PlayerTrack nextTrack = tracks.get(nextIndex);
-        if (nextTrack == null || TextUtils.isEmpty(nextTrack.videoId)) return;
+        // Prefetch next 2 tracks in parallel for instant transitions
+        for (int offset = 1; offset <= Math.min(2, tracks.size() - 1); offset++) {
+            int idx = (currentIndex + offset) % tracks.size();
+            PlayerTrack track = tracks.get(idx);
+            if (track == null || TextUtils.isEmpty(track.videoId)) continue;
 
-        // Skip if local device file or already offline
-        if (LocalFilesStore.isLocalVideoId(nextTrack.videoId)) return;
-        if (isAdded() && OfflineAudioStore.hasOfflineAudio(requireContext(), nextTrack.videoId)) {
-            return;
+            // Skip local files and offline tracks
+            if (LocalFilesStore.isLocalVideoId(track.videoId)) continue;
+            if (isAdded() && OfflineAudioStore.hasOfflineAudio(requireContext(), track.videoId)) continue;
+
+            // Only resolve the immediate next into prefetchedNext fields
+            final boolean isImmediate = (offset == 1);
+            if (isImmediate && TextUtils.equals(track.videoId, prefetchedNextVideoId)) continue;
+
+            final String videoId = track.videoId;
+            streamResolverExecutor.submit(() -> {
+                String url = InnertubeResolver.resolveStreamUrl(requireContext(), videoId);
+                if (!TextUtils.isEmpty(url) && isImmediate) {
+                    prefetchedNextVideoId = videoId;
+                    prefetchedNextUrl = url;
+                }
+            });
         }
+    }
 
-        // Skip if already prefetched
-        if (TextUtils.equals(nextTrack.videoId, prefetchedNextVideoId)) return;
+    /**
+     * After a network track starts playing, download it in the background to the offline directory.
+     * The proxy server already has the CDN URL cached, so this download is fast.
+     */
+    private void maybeSaveStreamedTrackOffline(@NonNull String videoId) {
+        if (TextUtils.isEmpty(videoId)) return;
+        if (LocalFilesStore.isLocalVideoId(videoId)) return;
+        if (!isAdded()) return;
 
-        streamResolverExecutor.submit(() -> {
-            String url = InnertubeResolver.resolveStreamUrl(requireContext(), nextTrack.videoId);
-            if (!TextUtils.isEmpty(url)) {
-                prefetchedNextVideoId = nextTrack.videoId;
-                prefetchedNextUrl = url;
+        final String normalized = videoId.trim();
+        if (normalized.equals(streamDownloadingVideoId)) return;
+
+        final Context appContext = requireContext().getApplicationContext();
+        if (OfflineAudioStore.hasOfflineAudio(appContext, normalized)) return;
+
+        streamDownloadingVideoId = normalized;
+        streamResolverExecutor.execute(() -> {
+            try {
+                // Re-check on background thread
+                if (OfflineAudioStore.hasOfflineAudio(appContext, normalized)) {
+                    streamDownloadingVideoId = null;
+                    return;
+                }
+
+                java.io.File targetFile = OfflineAudioStore.getOfflineVideoFile(appContext, normalized);
+                int serverIndex = Math.abs(normalized.hashCode()) % SleppifyDownloaderResolver.SERVER_COUNT;
+
+                boolean ok = SleppifyDownloaderResolver.INSTANCE.downloadVideoViaProxy(
+                        normalized, targetFile, serverIndex, null);
+
+                if (ok) {
+                    OfflineAudioStore.markOfflineAudioState(normalized, true);
+                    PlaybackEventBus.notifyPlaybackSnapshotUpdated();
+                    Log.d(TAG, "stream-as-download: saved " + normalized);
+                } else {
+                    OfflineAudioStore.markOfflineAudioState(normalized, false);
+                    if (targetFile.isFile()) targetFile.delete();
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "stream-as-download: failed " + normalized + " " + e.getMessage());
+            } finally {
+                if (normalized.equals(streamDownloadingVideoId)) {
+                    streamDownloadingVideoId = null;
+                }
             }
         });
     }
@@ -1649,12 +1651,11 @@ public class SongPlayerFragment extends Fragment {
                 || localSourcePreparing
                 || crossfadeManager.isInProgress()
                 || gaplessPreBufferTriggered
-                || !isPlaying
-                || usingOfflineSource) {
+                || !isPlaying) {
             return;
         }
 
-        // Trigger after 5s of cumulative listening (not position-based)
+        // Trigger after 2s of cumulative listening
         if (accumulatedListenMs < GAPLESS_PRE_BUFFER_LISTEN_THRESHOLD_MS) {
             return;
         }
@@ -1725,10 +1726,6 @@ public class SongPlayerFragment extends Fragment {
             Map<String, String> headers = new HashMap<>();
             headers.put("User-Agent", STREAM_HTTP_USER_AGENT);
             headers.put("Accept", "*/*");
-            Map<String, String> authHeaders = InnertubeResolver.getHeadersFor(nextTrack.videoId);
-            if (authHeaders != null) {
-                headers.putAll(authHeaders);
-            }
             player.setDataSource(appCtx, Uri.parse(url), headers);
             player.setVolume(0f, 0f);
 
@@ -1841,8 +1838,8 @@ public class SongPlayerFragment extends Fragment {
         stopLocalProgressTicker();
         releaseLocalExoMediaPlayer();
         usingOfflineSource = !networkSource;
-        currentSourceIsVideo = !networkSource && isVideoSource(source);
-        currentVideoFilePath = currentSourceIsVideo ? source : null;
+        currentSourceIsVideo = true;
+        currentVideoFilePath = (!networkSource) ? source : null;
         localSourcePreparing = true;
         updatePlayerSurfaceForSource();
 
@@ -1880,12 +1877,15 @@ public class SongPlayerFragment extends Fragment {
         } catch (Exception ignored) {
         }
 
-        // Route video to VideoSurfaceRouter (handles detection + reparenting)
-        if (currentSourceIsVideo && currentVideoFilePath != null) {
-            videoRouter.onTrackStarted(player, currentVideoFilePath, track.videoId);
-        } else {
-            videoRouter.onTrackStarted(player, null, track.videoId);
-        }
+        // Attach video surface
+        videoRouter.onTrackStarted(player, track.videoId);
+
+        // Hide loading spinner when ExoPlayer finishes buffering (e.g. after seek)
+        player.setOnBufferingListener((mp, isBuffering) -> {
+            if (mp == localExoMediaPlayer && pbVideoLoading != null) {
+                pbVideoLoading.setVisibility(isBuffering ? View.VISIBLE : View.GONE);
+            }
+        });
 
         player.setOnPreparedListener(mp -> {
             cancelSourcePrepareTimeout();
@@ -1922,13 +1922,13 @@ public class SongPlayerFragment extends Fragment {
                     audioTrackReinitToken = -1;
                     startLocalProgressTicker();
 
-                    // Video detection is handled by VideoSurfaceRouter.onTrackStarted
-                    if (!currentSourceIsVideo) {
-                        if (pbVideoLoading != null) pbVideoLoading.setVisibility(View.GONE);
-                    }
-
                     // Start pre-fetching the next track once this one is successfully playing
                     prefetchNextTrackStream();
+
+                    // Stream-as-download: save this track offline in the background
+                    if (networkSource) {
+                        maybeSaveStreamedTrackOffline(track.videoId);
+                    }
                 } catch (Exception startError) {
                     Log.e(TAG, "onPrepared: start failed for videoId=" + track.videoId, startError);
                     if (localExoMediaPlayer == mp) {
@@ -2035,10 +2035,6 @@ public class SongPlayerFragment extends Fragment {
                 Map<String, String> headers = new HashMap<>();
                 headers.put("User-Agent", STREAM_HTTP_USER_AGENT);
                 headers.put("Accept", "*/*");
-                Map<String, String> authHeaders = InnertubeResolver.getHeadersFor(track.videoId);
-                if (authHeaders != null) {
-                    headers.putAll(authHeaders);
-                }
                 player.setDataSource(playbackAppContext, Uri.parse(source), headers);
             } else if (source.startsWith("content://") && isAdded()) {
                 player.setDataSource(playbackAppContext, Uri.parse(source), null);
@@ -2096,8 +2092,6 @@ public class SongPlayerFragment extends Fragment {
         if (sbPlaybackProgress != null) sbPlaybackProgress.setProgress(0);
         
         notifyPlaybackStateChanged();
-        
-        // showPlayerArtworkLoadingState() moved to playCurrentTrack() to avoid race conditions
     }
 
     private void releaseSingleExoMediaPlayer(@Nullable ExoMediaPlayer player) {
@@ -2617,13 +2611,9 @@ public class SongPlayerFragment extends Fragment {
             loadedVideoId = "";
         }
 
-        // Update video surface for incoming crossfade track
-        boolean nextIsVideo = false;
-        if (isAdded() && OfflineAudioStore.hasOfflineVideo(requireContext(), track.videoId)) {
-            nextIsVideo = true;
-        }
-        currentSourceIsVideo = nextIsVideo;
-        currentVideoFilePath = nextIsVideo
+        // All playback is video
+        currentSourceIsVideo = true;
+        currentVideoFilePath = (!wasNetwork && isAdded())
                 ? OfflineAudioStore.getOfflineVideoFile(requireContext(), track.videoId).getAbsolutePath()
                 : null;
         updatePlayerSurfaceForSource();
@@ -2658,13 +2648,18 @@ public class SongPlayerFragment extends Fragment {
         updatePlayPauseIcon();
         updateMediaSessionState();
 
-        // Route crossfaded video through router (handles detection + reparenting)
-        if (currentSourceIsVideo && currentVideoFilePath != null && localExoMediaPlayer != null) {
-            videoRouter.onTrackStarted(localExoMediaPlayer, currentVideoFilePath, track.videoId);
+        // Attach video surface for crossfaded track
+        if (localExoMediaPlayer != null) {
+            videoRouter.onTrackStarted(localExoMediaPlayer, track.videoId);
         }
 
         prefetchedNextVideoId = null;
         prefetchNextTrackStream();
+
+        // Stream-as-download: save crossfaded network track offline
+        if (wasNetwork) {
+            maybeSaveStreamedTrackOffline(track.videoId);
+        }
     }
 
     private void startLocalProgressTicker() {
@@ -2732,297 +2727,7 @@ public class SongPlayerFragment extends Fragment {
             });
     }
 
-    private void loadPlayerCover(@NonNull PlayerTrack track, boolean bootstrapArtwork, int animationDirection) {
-        if (!isAdded() || getActivity() == null || ivPlayerCover == null) {
-            return;
-        }
-        // When playing video, don't load cover art — video surface handles display
-        if (currentSourceIsVideo) {
-            clearPlayerCoverRequest();
-            ivPlayerCover.setImageDrawable(null);
-            ivPlayerCover.setVisibility(View.GONE);
-            completePlayerArtworkBootstrap();
-            return;
-        }
 
-        String requestVideoId = track.videoId == null ? "" : track.videoId.trim();
-        String fallbackImageUrl = track.imageUrl == null ? "" : track.imageUrl.trim();
-        String preferredImageUrl = resolveHighResCoverUrl(requestVideoId, fallbackImageUrl);
-        if (TextUtils.isEmpty(preferredImageUrl)) {
-            clearPlayerCoverRequest();
-            clearMediaNotificationArtwork();
-            activeCoverVideoId = "";
-            resetPlayerHeroContainerHeight();
-            ivPlayerCover.setImageDrawable(null);
-            updateMediaSessionMetadata();
-            return;
-        }
-
-        activeCoverVideoId = requestVideoId;
-        clearPlayerCoverRequest();
-
-        if (!bootstrapArtwork) {
-            ivPlayerCover.animate().cancel();
-            // Keep old image visible until new one arrives (prevents blank cover on non-cached tracks)
-            ivPlayerCover.setAlpha(1f);
-        }
-
-        playerCoverTarget = new CustomTarget<Bitmap>() {
-            @Override
-            public void onResourceReady(@NonNull Bitmap resource, @Nullable Transition<? super Bitmap> transition) {
-                if (!isAdded() || !TextUtils.equals(activeCoverVideoId, requestVideoId)) {
-                    return;
-                }
-
-                // Move smartCrop to background thread to avoid UI lag
-                imageProcessingExecutor.execute(() -> {
-                    Bitmap processedResource = YouTubeImageProcessor.smartCrop(resource);
-                    
-                    localProgressHandler.post(() -> {
-                        if (!isAdded() || !TextUtils.equals(activeCoverVideoId, requestVideoId)) {
-                            return;
-                        }
-                        ivPlayerCover.animate().cancel();
-                        ivPlayerCover.setTranslationX(0f);
-                        ivPlayerCover.setAlpha(0f);
-                        // Adjust scaleType based on bitmap aspect ratio after crop:
-                        // wide/panoramic → fitCenter (show full width); square/tall → centerCrop
-                        if (processedResource != null && processedResource.getWidth() > processedResource.getHeight() * 1.2f) {
-                            ivPlayerCover.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
-                        } else {
-                            ivPlayerCover.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
-                        }
-                        // Set image and promote to hardware layer BEFORE starting the animation.
-                        // This uploads the bitmap to the GPU in the current vsync so the first
-                        // animated frame has zero upload cost — eliminating the "10fps" jank.
-                        ivPlayerCover.setImageBitmap(processedResource);
-                        ivPlayerCover.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null);
-                        ivPlayerCover.animate()
-                            .alpha(1f)
-                            .setDuration(420L)
-                            .setInterpolator(new android.view.animation.DecelerateInterpolator())
-                            .withEndAction(() -> ivPlayerCover.setLayerType(
-                                    android.view.View.LAYER_TYPE_NONE, null))
-                            .start();
-                        adjustPlayerHeroForCover(processedResource);
-                        cacheMediaNotificationArtwork(requestVideoId, processedResource);
-                        updateMediaSessionMetadata();
-                        updateMediaNotification();
-                    });
-                });
-            }
-
-            @Override
-            public void onLoadCleared(@Nullable Drawable placeholder) {
-                if (!isAdded()) {
-                    return;
-                }
-                ivPlayerCover.setImageDrawable(null);
-            }
-
-            @Override
-            public void onLoadFailed(@Nullable Drawable errorDrawable) {
-                if (!isAdded() || !TextUtils.equals(activeCoverVideoId, requestVideoId)) {
-                    return;
-                }
-                resetPlayerHeroContainerHeight();
-                clearMediaNotificationArtwork();
-                ivPlayerCover.animate().cancel();
-                ivPlayerCover.setAlpha(1f);
-                ivPlayerCover.setImageDrawable(null);
-                updateMediaSessionMetadata();
-                updateMediaNotification();
-            }
-        };
-
-        // Limit image size to reduce memory pressure and GPU load during fade animations
-        final int maxCoverSize = 640;
-
-        com.bumptech.glide.RequestManager requestManager = Glide.with(this);
-        requestManager
-                .asBitmap()
-                .load(preferredImageUrl)
-                .transform(SHARED_YT_CROP)
-                .format(DecodeFormat.PREFER_ARGB_8888)
-                .diskCacheStrategy(DiskCacheStrategy.ALL)
-                .override(maxCoverSize, maxCoverSize)
-                .error(
-                        requestManager
-                                .asBitmap()
-                                .load("https://i.ytimg.com/vi/" + Uri.encode(requestVideoId) + "/hqdefault.jpg")
-                                .transform(SHARED_YT_CROP)
-                                .format(DecodeFormat.PREFER_ARGB_8888)
-                                .diskCacheStrategy(DiskCacheStrategy.ALL)
-                                .override(maxCoverSize, maxCoverSize)
-                                .error(
-                                        TextUtils.isEmpty(fallbackImageUrl)
-                                                || TextUtils.equals(preferredImageUrl, fallbackImageUrl)
-                                                ? null
-                                                : requestManager
-                                                        .asBitmap()
-                                                        .load(fallbackImageUrl)
-                                                        .transform(SHARED_YT_CROP)
-                                                        .format(DecodeFormat.PREFER_ARGB_8888)
-                                                        .diskCacheStrategy(DiskCacheStrategy.ALL)
-                                                        .override(maxCoverSize, maxCoverSize)
-                                )
-                )
-                .into(playerCoverTarget);
-    }
-
-    private void loadPlayerBackdrop(@NonNull PlayerTrack track, boolean bootstrapArtwork) {
-        if (!isAdded() || getActivity() == null || playerBackgroundContainer == null) {
-            completePlayerArtworkBootstrap();
-            return;
-        }
-
-        String requestVideoId = track.videoId == null ? "" : track.videoId.trim();
-        String fallbackImageUrl = track.imageUrl == null ? "" : track.imageUrl.trim();
-        String preferredImageUrl = resolveLowResBackdropUrl(requestVideoId, fallbackImageUrl);
-
-        activeBackdropVideoId = requestVideoId;
-
-        if (TextUtils.isEmpty(preferredImageUrl)) {
-            if (bootstrapArtwork) fadeOutBackdropToBlack();
-            completePlayerArtworkBootstrap();
-            return;
-        }
-
-        // Verificar si el color ya está cacheado
-        Integer cachedColor = dominantColorCache.get(requestVideoId);
-        if (cachedColor != null) {
-            revealBackdropWithFadeToColor(cachedColor);
-            if (bootstrapArtwork) {
-                completePlayerArtworkBootstrap();
-            }
-            return;
-        }
-
-        com.bumptech.glide.request.target.CustomTarget<Bitmap> backdropTarget = new com.bumptech.glide.request.target.CustomTarget<Bitmap>() {
-            @Override
-            public void onResourceReady(@NonNull Bitmap bitmap, @Nullable Transition<? super Bitmap> transition) {
-                if (!isAdded() || !TextUtils.equals(activeBackdropVideoId, requestVideoId)) {
-                    return;
-                }
-
-                // Extraer color dominante usando Palette
-                Palette.from(bitmap).generate(palette -> {
-                    if (!isAdded() || !TextUtils.equals(activeBackdropVideoId, requestVideoId)) {
-                        return;
-                    }
-
-                    int dominantColor = palette.getDominantColor(Color.BLACK);
-
-                    // Detect B&W images robustly:
-                    // JPEG compression artifacts can introduce a warm/red tint in B&W photos,
-                    // so we cross-check dominant color saturation, vibrant swatch saturation,
-                    // and the average saturation across all available swatches.
-                    final int NEUTRAL_GRAY = 0xFF1A1A1A;
-                    float[] hsvDominant = new float[3];
-                    Color.colorToHSV(dominantColor, hsvDominant);
-                    float dominantSat = hsvDominant[1];
-
-                    // Collect max saturation from all swatches to confirm color richness
-                    float maxSwatchSat = dominantSat;
-                    java.util.List<Palette.Swatch> swatches = palette.getSwatches();
-                    for (Palette.Swatch swatch : swatches) {
-                        if (swatch == null) continue;
-                        float[] h = new float[3];
-                        Color.colorToHSV(swatch.getRgb(), h);
-                        if (h[1] > maxSwatchSat) maxSwatchSat = h[1];
-                    }
-
-                    // Vibrant swatch — most saturated by Palette's definition
-                    Palette.Swatch vibrant = palette.getVibrantSwatch();
-                    float vibrantSat = 0f;
-                    if (vibrant != null) {
-                        float[] hv = new float[3];
-                        Color.colorToHSV(vibrant.getRgb(), hv);
-                        vibrantSat = hv[1];
-                    }
-
-                    // Image is B&W if both the dominant AND vibrant swatches are low-saturation.
-                    // Threshold raised to 0.22f to catch JPEG-tinted B&W images.
-                    boolean isBW = dominantSat < 0.22f && vibrantSat < 0.30f && maxSwatchSat < 0.30f;
-                    int finalColor = isBW ? NEUTRAL_GRAY : dominantColor;
-
-                    dominantColorCache.put(requestVideoId, finalColor);
-                    saveBackdropColor(requestVideoId, finalColor);
-                    revealBackdropWithFadeToColor(finalColor);
-
-                    if (bootstrapArtwork) {
-                        completePlayerArtworkBootstrap();
-                    }
-                });
-            }
-
-            @Override
-            public void onLoadCleared(@Nullable android.graphics.drawable.Drawable placeholder) {
-                if (!isAdded()) {
-                    return;
-                }
-                fadeOutBackdropToBlack();
-            }
-
-            @Override
-            public void onLoadFailed(@Nullable android.graphics.drawable.Drawable errorDrawable) {
-                if (!isAdded() || !TextUtils.equals(activeBackdropVideoId, requestVideoId)) {
-                    return;
-                }
-
-                fadeOutBackdropToBlack();
-                completePlayerArtworkBootstrap();
-            }
-        };
-
-        com.bumptech.glide.RequestManager requestManager = Glide.with(this);
-        // Load small bitmap (16x16) to extract dominant color only - not for display
-        requestManager
-                .asBitmap()
-                .load(preferredImageUrl)
-                .priority(com.bumptech.glide.Priority.LOW)
-                .centerCrop()
-                .override(64, 64)
-                .diskCacheStrategy(DiskCacheStrategy.ALL)
-                .skipMemoryCache(true)
-                .error(
-                        TextUtils.isEmpty(fallbackImageUrl)
-                                || TextUtils.equals(preferredImageUrl, fallbackImageUrl)
-                                ? null
-                                : requestManager
-                                        .asBitmap()
-                                        .load(fallbackImageUrl)
-                                        .priority(com.bumptech.glide.Priority.LOW)
-                                        .centerCrop()
-                                        .override(64, 64)
-                                        .diskCacheStrategy(DiskCacheStrategy.ALL)
-                                        .skipMemoryCache(true)
-                )
-                .into(backdropTarget);
-    }
-
-    @NonNull
-    private String resolveHighResCoverUrl(
-            @NonNull String videoId,
-            @NonNull String fallbackImageUrl
-    ) {
-        if (!TextUtils.isEmpty(videoId)) {
-            return "https://i.ytimg.com/vi/" + Uri.encode(videoId) + "/maxresdefault.jpg";
-        }
-        return fallbackImageUrl;
-    }
-
-    private String resolveLowResBackdropUrl(
-            @NonNull String videoId,
-            @NonNull String fallbackImageUrl
-    ) {
-        if (!TextUtils.isEmpty(videoId)) {
-            return "https://i.ytimg.com/vi/" + Uri.encode(videoId) + "/mqdefault.jpg";
-        }
-        return fallbackImageUrl;
-    }
-
-    // ... (rest of the code remains the same)
 
     @Override
     public void onDestroy() {
@@ -3080,40 +2785,19 @@ public class SongPlayerFragment extends Fragment {
 
         boolean bootstrapArtwork = playerArtworkBootstrapPending;
         if (bootstrapArtwork) {
-            showPlayerArtworkLoadingState();
-            if (!isAdded()) return;
-        } else {
-            // Don't fade out — keep old cover visible until new one arrives in loadPlayerCover
-            if (ivPlayerCover != null) {
-                ivPlayerCover.animate().cancel();
+            playerArtworkBootstrapPending = false;
+            // Black background — video surface will show on top
+            if (playerBackgroundContainer != null) {
+                playerBackgroundContainer.setBackgroundColor(Color.BLACK);
             }
         }
+        // Hide cover art — all playback is video now
+        if (ivPlayerCover != null) ivPlayerCover.setVisibility(View.GONE);
 
-        // Always load artwork for notification/MediaSession regardless of player visibility.
-        // Uses applicationContext so it survives fragment hide/show cycles.
+        // Load notification/MediaSession artwork only
         loadNotificationArtworkOnly(track);
-
-        // ✅ Only load artwork if player is actually visible (not hidden/miniplayer mode)
-        if (!isHidden()) {
-            // ✅ PRIORITY 1: Load cover art (visible immediately)
-            loadPlayerCover(track, bootstrapArtwork, 1);
-
-            // ✅ BACKDROP: Only fade to black on first bootstrap, otherwise crossfade to new dominant color
-            if (bootstrapArtwork && playerBackgroundContainer != null) {
-                fadeOutBackdropToBlack();
-            }
-
-            // ✅ DEFERRED: Backdrop and notification artwork (not immediately visible)
-            // Defer by 500ms to avoid saturating Glide thread pool while cover is loading
-            if (getView() != null) {
-                getView().postDelayed(() -> {
-                    if (!isAdded() || isHidden()) return;
-                    scheduleBackdropLoad(track, bootstrapArtwork);
-                }, 500L);
-            }
-        } else {
-            // Player is hidden: clear activeCoverVideoId so onHiddenChanged forces a re-bind
-            activeCoverVideoId = "";
+        if (bootstrapArtwork) {
+            refreshNextUp();
         }
 
         updateMediaSessionMetadata();
@@ -4241,37 +3925,24 @@ public class SongPlayerFragment extends Fragment {
         backPressedCallback.setEnabled(!hidden && isResumed());
     }
 
-    private static boolean isVideoSource(@Nullable String source) {
-        return source != null && source.toLowerCase(java.util.Locale.ROOT).endsWith(".mp4");
-    }
 
     private void updatePlayerSurfaceForSource() {
-        if (ivPlayerCover == null) return;
-        if (currentSourceIsVideo) {
-            ivPlayerCover.setVisibility(View.GONE);
-            // Fixed height (same as cover art) so controls never shift.
-            // Full-width (no margins) for video — better rendering performance.
-            if (flPlayerHero != null && getContext() != null) {
-                androidx.constraintlayout.widget.ConstraintLayout.LayoutParams p =
-                        (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) flPlayerHero.getLayoutParams();
-                if (p != null) {
-                    p.leftMargin = 0;
-                    p.rightMargin = 0;
-                    p.height = 0; // MATCH_CONSTRAINT
-                    flPlayerHero.setLayoutParams(p);
-                }
-                flPlayerHero.setBackground(androidx.core.content.ContextCompat.getDrawable(getContext(), R.drawable.bg_player_cover_flat));
+        // All playback is video — hide cover, full-width hero, black background
+        if (ivPlayerCover != null) ivPlayerCover.setVisibility(View.GONE);
+        if (flPlayerHero != null && getContext() != null) {
+            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams p =
+                    (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) flPlayerHero.getLayoutParams();
+            if (p != null) {
+                p.leftMargin = 0;
+                p.rightMargin = 0;
+                p.height = 0; // MATCH_CONSTRAINT
+                flPlayerHero.setLayoutParams(p);
             }
-            // Pure black backdrop for video
-            if (playerBackgroundContainer != null) {
-                playerBackgroundContainer.animate().cancel();
-                playerBackgroundContainer.setBackgroundColor(0xFF000000);
-                playerBackgroundContainer.setTag(R.id.tag_backdrop_top_color, 0xFF000000);
-            }
-        } else {
-            ivPlayerCover.setVisibility(View.VISIBLE);
-            ivPlayerCover.setClickable(true);
-            if (pbVideoLoading != null) pbVideoLoading.setVisibility(View.GONE);
+            flPlayerHero.setBackground(androidx.core.content.ContextCompat.getDrawable(getContext(), R.drawable.bg_player_cover_flat));
+        }
+        if (playerBackgroundContainer != null) {
+            playerBackgroundContainer.animate().cancel();
+            playerBackgroundContainer.setBackgroundColor(0xFF000000);
         }
     }
 
@@ -5088,51 +4759,107 @@ public class SongPlayerFragment extends Fragment {
         if (!isAdded() || btnPlayerMore == null) return;
 
         float density = getResources().getDisplayMetrics().density;
+        int popupWidthPx = (int) (170 * density);
 
-        // Build popup content
-        android.widget.LinearLayout popupContent = new android.widget.LinearLayout(requireContext());
-        popupContent.setOrientation(android.widget.LinearLayout.HORIZONTAL);
-        popupContent.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        popupContent.setBackgroundResource(R.drawable.bg_popup_menu);
-        int hPad = (int) (16 * density);
-        int vPad = (int) (14 * density);
-        popupContent.setPadding(hPad, vPad, hPad, vPad);
+        // Root container — vertical, solid black
+        android.widget.LinearLayout root = new android.widget.LinearLayout(requireContext());
+        root.setOrientation(android.widget.LinearLayout.VERTICAL);
+        root.setBackgroundResource(R.drawable.bg_popup_menu);
+        root.setClipToOutline(true);
+        root.setOutlineProvider(new android.view.ViewOutlineProvider() {
+            @Override
+            public void getOutline(View view, android.graphics.Outline outline) {
+                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), 14 * density);
+            }
+        });
+        int padV = (int) (4 * density);
+        root.setPadding(0, padV, 0, padV);
 
-        ImageView ivEq = new ImageView(requireContext());
-        ivEq.setImageResource(R.drawable.ic_equalizer);
-        ivEq.setColorFilter(android.graphics.Color.WHITE);
-        int iconSize = (int) (20 * density);
-        android.widget.LinearLayout.LayoutParams iconParams = new android.widget.LinearLayout.LayoutParams(iconSize, iconSize);
-        ivEq.setLayoutParams(iconParams);
-        popupContent.addView(ivEq);
-
-        TextView tvEq = new TextView(requireContext());
-        tvEq.setText("Ecualizador");
-        tvEq.setTextColor(android.graphics.Color.WHITE);
-        tvEq.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
-        tvEq.setTypeface(null, android.graphics.Typeface.BOLD);
-        tvEq.setPadding((int) (10 * density), 0, 0, 0);
-        popupContent.addView(tvEq);
+        // Menu items
+        int[] icons = { R.drawable.ic_equalizer };
+        String[] labels = { "Ecualizador" };
+        Runnable[] actions = {
+                () -> {
+                    if (getActivity() instanceof MainActivity) {
+                        collapseToMiniMode(true);
+                        ((MainActivity) getActivity()).openEqualizerFromPlayer();
+                    }
+                },
+        };
 
         android.widget.PopupWindow popup = new android.widget.PopupWindow(
-                popupContent,
-                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                root,
+                popupWidthPx,
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
                 true);
-        popup.setElevation(12 * density);
+        popup.setElevation(16 * density);
         popup.setOutsideTouchable(true);
         popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
 
-        popupContent.setOnClickListener(v -> {
-            popup.dismiss();
-            if (getActivity() instanceof MainActivity) {
-                collapseToMiniMode(true);
-                ((MainActivity) getActivity()).openEqualizerFromPlayer();
-            }
-        });
+        for (int i = 0; i < labels.length; i++) {
+            android.widget.LinearLayout row = new android.widget.LinearLayout(requireContext());
+            row.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+            row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            row.setBackgroundResource(R.drawable.bg_popup_item_ripple);
+            row.setClickable(true);
+            row.setFocusable(true);
+            int rowHPad = (int) (14 * density);
+            int rowVPad = (int) (12 * density);
+            row.setPadding(rowHPad, rowVPad, rowHPad, rowVPad);
 
-        // Show below the anchor button
-        popup.showAsDropDown(btnPlayerMore, 0, (int) (4 * density), android.view.Gravity.END);
+            ImageView icon = new ImageView(requireContext());
+            icon.setImageResource(icons[i]);
+            icon.setColorFilter(0xFFFFFFFF);
+            int iconSize = (int) (18 * density);
+            android.widget.LinearLayout.LayoutParams iconLp =
+                    new android.widget.LinearLayout.LayoutParams(iconSize, iconSize);
+            icon.setLayoutParams(iconLp);
+            row.addView(icon);
+
+            TextView label = new TextView(requireContext());
+            label.setText(labels[i]);
+            label.setTextColor(0xFFFFFFFF);
+            label.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 13f);
+            label.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL));
+            label.setMaxLines(1);
+            label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            android.widget.LinearLayout.LayoutParams labelLp =
+                    new android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            labelLp.setMarginStart((int) (10 * density));
+            label.setLayoutParams(labelLp);
+            row.addView(label);
+
+            final int idx = i;
+            row.setOnClickListener(v -> {
+                popup.dismiss();
+                v.postDelayed(() -> actions[idx].run(), 120);
+            });
+
+            root.addView(row);
+        }
+
+        // Scale from right edge, vertically centered
+        root.setPivotX(popupWidthPx);
+        root.setPivotY(0);
+        root.setScaleX(0.7f);
+        root.setScaleY(0.7f);
+        root.setAlpha(0f);
+
+        // Position: left of button, vertically aligned with button center
+        int xOff = -popupWidthPx;
+        int yOff = -(int) (btnPlayerMore.getHeight() * 0.15f);
+        popup.showAsDropDown(btnPlayerMore, xOff, yOff, android.view.Gravity.END | android.view.Gravity.TOP);
+
+        // Entrance animation
+        root.animate()
+                .scaleX(1f)
+                .scaleY(1f)
+                .alpha(1f)
+                .setDuration(180)
+                .setInterpolator(new android.view.animation.DecelerateInterpolator(2.5f))
+                .start();
+
+        popup.setOnDismissListener(() -> {});
     }
 
     private void showSaveToPlaylistSheetFromPlayer() {
@@ -5801,184 +5528,6 @@ public class SongPlayerFragment extends Fragment {
         return persistentAppContext;
     }
 
-    private void clearPlayerCoverRequest() {
-        if (playerCoverTarget == null) {
-            return;
-        }
-        if (isAdded()) {
-            Glide.with(this).clear(playerCoverTarget);
-        }
-        playerCoverTarget = null;
-    }
-
-    private void showPlayerArtworkLoadingState() {
-        if (ivPlayerCover != null) {
-            ivPlayerCover.setImageResource(android.R.color.black);
-        }
-        if (ivPlayerBackdrop != null) {
-            ivPlayerBackdrop.animate().cancel();
-            ivPlayerBackdrop.setBackgroundColor(Color.BLACK);
-        }
-    }
-
-    private void completePlayerArtworkBootstrap() {
-        if (!playerArtworkBootstrapPending) {
-            return;
-        }
-        playerArtworkBootstrapPending = false;
-        refreshNextUp();
-    }
-
-    private void cancelDeferredBackdropLoad() {
-        if (deferredBackdropLoadRunnable != null) {
-            localProgressHandler.removeCallbacks(deferredBackdropLoadRunnable);
-            deferredBackdropLoadRunnable = null;
-        }
-    }
-
-    private void scheduleBackdropLoad(
-            @NonNull PlayerTrack requestedTrack,
-            boolean bootstrapArtwork
-    ) {
-        cancelDeferredBackdropLoad();
-        // Keep pure black backdrop when video is playing
-        if (currentSourceIsVideo) {
-            completePlayerArtworkBootstrap();
-            return;
-        }
-
-        String requestVideoId = requestedTrack.videoId == null ? "" : requestedTrack.videoId;
-        deferredBackdropLoadRunnable = () -> {
-            deferredBackdropLoadRunnable = null;
-            if (!isAdded() || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) {
-                return;
-            }
-
-            PlayerTrack current = tracks.get(currentIndex);
-            String currentVideoId = current.videoId == null ? "" : current.videoId;
-            if (!TextUtils.equals(currentVideoId, requestVideoId)) {
-                return;
-            }
-
-            loadPlayerBackdrop(current, bootstrapArtwork);
-        };
-
-        deferredBackdropLoadRunnable.run();
-    }
-
-    /**
-     * Tones down a raw dominant color so it is not too vivid:
-     * - Reduces saturation to ~45% max
-     * - Reduces lightness to ~28% max (dark but not black)
-     */
-    private int muteBackdropColor(int rawColor) {
-        float[] hsl = new float[3];
-        androidx.core.graphics.ColorUtils.colorToHSL(rawColor, hsl);
-        // Keep hue intact. Boost saturation slightly for dull colors, cap vivid ones.
-        hsl[1] = Math.max(hsl[1], 0.35f);   // boost minimum saturation so grey covers look tinted
-        hsl[1] = Math.min(hsl[1], 0.80f);   // cap so neon colors don’t burn
-        // Target lightness: ~32–40% — dark enough to read text, light enough to feel like YouTube Music
-        hsl[2] = Math.max(hsl[2], 0.18f);   // floor: never completely black
-        hsl[2] = Math.min(hsl[2], 0.40f);   // ceiling: never too bright
-        return androidx.core.graphics.ColorUtils.HSLToColor(hsl);
-    }
-
-    /**
-     * Builds a top→bottom gradient from {@code topColor} to a darker variant of it.
-     * The bottom colour is derived by dropping lightness ~40 % further, but never
-     * below 6 % (very dark, not pure black), so there is always a visible gradient.
-     */
-    private android.graphics.drawable.GradientDrawable buildBackdropGradient(int topColor) {
-        float[] hsl = new float[3];
-        androidx.core.graphics.ColorUtils.colorToHSL(topColor, hsl);
-        // Mid stop: same hue/sat, lightness cut to ~45% of top
-        float midL = Math.max(0.07f, hsl[2] * 0.45f);
-        hsl[2] = midL;
-        int midColor = androidx.core.graphics.ColorUtils.HSLToColor(hsl);
-        // Bottom stop: near-black but tinted (keeps gradient from looking totally dead)
-        float bottomL = Math.max(0.04f, hsl[2] * 0.35f);
-        hsl[2] = bottomL;
-        int bottomColor = androidx.core.graphics.ColorUtils.HSLToColor(hsl);
-
-        android.graphics.drawable.GradientDrawable gd = new android.graphics.drawable.GradientDrawable(
-                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{topColor, midColor, bottomColor}
-        );
-        gd.setGradientType(android.graphics.drawable.GradientDrawable.LINEAR_GRADIENT);
-        return gd;
-    }
-
-    private void revealBackdropWithFadeToColor(int rawDominantColor) {
-        if (playerBackgroundContainer == null) return;
-
-        final int mutedColor = muteBackdropColor(rawDominantColor);
-        final android.graphics.drawable.GradientDrawable targetGradient = buildBackdropGradient(mutedColor);
-
-        // Snapshot the current background for the cross-fade start point
-        android.graphics.drawable.Drawable currentBg = playerBackgroundContainer.getBackground();
-        final int startColor;
-        if (currentBg instanceof android.graphics.drawable.GradientDrawable) {
-            // Extract the top color stored in the tag, fallback to near-black
-            Object tag = playerBackgroundContainer.getTag(R.id.tag_backdrop_top_color);
-            startColor = (tag instanceof Integer) ? (int) tag : 0xFF0A0A0A;
-        } else if (currentBg instanceof android.graphics.drawable.ColorDrawable) {
-            startColor = ((android.graphics.drawable.ColorDrawable) currentBg).getColor();
-        } else {
-            startColor = 0xFF0A0A0A;
-        }
-
-        android.animation.ValueAnimator anim = android.animation.ValueAnimator
-                .ofObject(new android.animation.ArgbEvaluator(), startColor, mutedColor);
-        anim.setDuration(600L);
-        anim.setInterpolator(new android.view.animation.DecelerateInterpolator());
-        anim.addUpdateListener(va -> {
-            if (playerBackgroundContainer == null) return;
-            int interpolated = (int) va.getAnimatedValue();
-            android.graphics.drawable.GradientDrawable frame = buildBackdropGradient(interpolated);
-            playerBackgroundContainer.setBackground(frame);
-            playerBackgroundContainer.setTag(R.id.tag_backdrop_top_color, interpolated);
-        });
-        anim.addListener(new android.animation.AnimatorListenerAdapter() {
-            @Override
-            public void onAnimationEnd(android.animation.Animator animation) {
-                if (playerBackgroundContainer == null) return;
-                playerBackgroundContainer.setBackground(targetGradient);
-                playerBackgroundContainer.setTag(R.id.tag_backdrop_top_color, mutedColor);
-            }
-        });
-        anim.start();
-    }
-
-    /** Load up to BACKDROP_COLOR_PREFS_MAX persisted dominant colors into the in-memory LRU. */
-    private void loadBackdropColorCache() {
-        if (persistentAppContext == null) return;
-        SharedPreferences prefs = persistentAppContext.getSharedPreferences(PREFS_BACKDROP_COLORS, Activity.MODE_PRIVATE);
-        Map<String, ?> all = prefs.getAll();
-        for (Map.Entry<String, ?> entry : all.entrySet()) {
-            if (entry.getValue() instanceof Integer && !dominantColorCache.containsKey(entry.getKey())) {
-                dominantColorCache.put(entry.getKey(), (Integer) entry.getValue());
-            }
-        }
-    }
-
-    /** Persist a newly extracted dominant color so future sessions skip Palette extraction. */
-    private void saveBackdropColor(@NonNull String videoId, int rawColor) {
-        if (persistentAppContext == null || videoId.isEmpty()) return;
-        SharedPreferences prefs = persistentAppContext.getSharedPreferences(PREFS_BACKDROP_COLORS, Activity.MODE_PRIVATE);
-        // Evict oldest entries if we are over the limit
-        Map<String, ?> all = prefs.getAll();
-        if (all.size() >= BACKDROP_COLOR_PREFS_MAX) {
-            SharedPreferences.Editor editor = prefs.edit();
-            int toRemove = all.size() - BACKDROP_COLOR_PREFS_MAX + 1;
-            for (String key : all.keySet()) {
-                editor.remove(key);
-                if (--toRemove <= 0) break;
-            }
-            editor.apply();
-        }
-        prefs.edit().putInt(videoId, rawColor).apply();
-    }
-
     private void clearMediaNotificationArtwork() {
         mediaSessionArtwork = null;
         mediaSessionArtworkVideoId = "";
@@ -6012,99 +5561,9 @@ public class SongPlayerFragment extends Fragment {
         }
     }
 
-    private void resetPlayerHeroContainerHeight() {
-        if (flPlayerHero == null) return;
-        int defaultMargin = dpToPx(20);
-        androidx.constraintlayout.widget.ConstraintLayout.LayoutParams p =
-                (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) flPlayerHero.getLayoutParams();
-        if (p != null) {
-            p.leftMargin = defaultMargin;
-            p.rightMargin = defaultMargin;
-            p.height = 0; // MATCH_CONSTRAINT
-            flPlayerHero.setLayoutParams(p);
-            if (getContext() != null) {
-                flPlayerHero.setBackground(androidx.core.content.ContextCompat.getDrawable(getContext(), R.drawable.bg_player_cover_rounded));
-            }
-        }
-    }
-
-    private void setPlayerHeroContainerHeight(int heightPx) {
-        // No-op: height is now managed by ConstraintLayout constraints
-    }
-
-    private void adjustPlayerHeroForCover(@NonNull Bitmap bitmap) {
-        if (flPlayerHero == null || getContext() == null) return;
-
-        int bmpWidth = Math.max(1, bitmap.getWidth());
-        int bmpHeight = Math.max(1, bitmap.getHeight());
-        boolean isWide = bmpWidth > bmpHeight * 1.2f;
-
-        // clPlayerContent has NO horizontal padding now; hero default margin=20dp.
-        // Wide images: margin=0 → full screen width. Square/tall: margin=20dp.
-        int heroMarginPx = isWide ? 0 : dpToPx(20);
-
-        androidx.constraintlayout.widget.ConstraintLayout.LayoutParams heroParams =
-                (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) flPlayerHero.getLayoutParams();
-        if (heroParams != null) {
-            heroParams.leftMargin = heroMarginPx;
-            heroParams.rightMargin = heroMarginPx;
-            heroParams.height = 0; // MATCH_CONSTRAINT — let constraints handle height
-            flPlayerHero.setLayoutParams(heroParams);
-            if (flPlayerHero.getParent() instanceof android.view.View) {
-                ((android.view.View) flPlayerHero.getParent()).requestLayout();
-            }
-        }
-        // Rounded corners only for square/tall images; flat edges for full-width wide images
-        if (isWide) {
-            flPlayerHero.setBackground(androidx.core.content.ContextCompat.getDrawable(getContext(), R.drawable.bg_player_cover_flat));
-        } else {
-            flPlayerHero.setBackground(androidx.core.content.ContextCompat.getDrawable(getContext(), R.drawable.bg_player_cover_rounded));
-        }
-
-    }
-
     private int dpToPx(int dp) {
         return Math.round(dp * requireContext().getResources().getDisplayMetrics().density);
     }
 
-
-    private void fadeOutBackdropToBlack() {
-        if (playerBackgroundContainer == null) return;
-        playerBackgroundContainer.animate().cancel();
-        // Use a very dark gradient instead of solid black so the transition looks smooth
-        android.graphics.drawable.GradientDrawable darkGrad = new android.graphics.drawable.GradientDrawable(
-                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{0xFF111111, 0xFF050505}
-        );
-        playerBackgroundContainer.setBackground(darkGrad);
-        playerBackgroundContainer.setTag(R.id.tag_backdrop_top_color, 0xFF0D0D0D);
-    }
-
-
-    /**
-     * Called when the static check determines the video is just a static image.
-     * Hides the PlayerView, detaches the video surface, shows the cover art,
-     * and resets the hero layout to its normal cover art mode.
-     */
-    private void revertVideoToStaticCover() {
-        currentSourceIsVideo = false;
-        currentVideoFilePath = null;
-        if (pbVideoLoading != null) pbVideoLoading.setVisibility(View.GONE);
-        if (ivPlayerCover != null) {
-            ivPlayerCover.animate().cancel();
-            ivPlayerCover.setAlpha(1f);
-            ivPlayerCover.setVisibility(View.VISIBLE);
-            ivPlayerCover.setClickable(true);
-        }
-        // Reset hero to default cover art layout
-        resetPlayerHeroContainerHeight();
-        // Reload cover art and backdrop for the current track (instant, no fade)
-        if (!tracks.isEmpty() && currentIndex >= 0 && currentIndex < tracks.size()) {
-            PlayerTrack track = tracks.get(currentIndex);
-            loadPlayerCover(track, false, 1);
-            scheduleBackdropLoad(track, false);
-        }
-    }
-
 }
-    
+
