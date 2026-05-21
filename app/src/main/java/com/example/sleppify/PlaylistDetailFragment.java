@@ -41,6 +41,8 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.constraintlayout.widget.ConstraintLayout;
 import androidx.core.content.ContextCompat;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.Observer;
 import androidx.recyclerview.widget.DiffUtil;
@@ -294,6 +296,28 @@ public class PlaylistDetailFragment extends Fragment
         toolbarBgDrawable.setAlpha(0);
         llPlaylistToolbar.setBackground(toolbarBgDrawable);
 
+        // Apply status bar inset to toolbar and RecyclerView top padding
+        ViewCompat.setOnApplyWindowInsetsListener(view, (v, insets) -> {
+            int statusBarTop = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top;
+            if (llPlaylistToolbar != null) {
+                llPlaylistToolbar.setPadding(
+                    llPlaylistToolbar.getPaddingLeft(),
+                    statusBarTop,
+                    llPlaylistToolbar.getPaddingRight(),
+                    llPlaylistToolbar.getPaddingBottom()
+                );
+            }
+            if (rvPlaylistContent != null) {
+                rvPlaylistContent.setPadding(
+                    rvPlaylistContent.getPaddingLeft(),
+                    statusBarTop + (int)(56 * getResources().getDisplayMetrics().density),
+                    rvPlaylistContent.getPaddingRight(),
+                    rvPlaylistContent.getPaddingBottom()
+                );
+            }
+            return insets;
+        });
+
         if (btnPlaylistBack != null) {
             btnPlaylistBack.setOnClickListener(v -> {
                 if (getActivity() != null) getActivity().onBackPressed();
@@ -463,6 +487,11 @@ public class PlaylistDetailFragment extends Fragment
         }
         if (hidden) {
             return;
+        }
+        if (rvPlaylistContent != null) {
+            rvPlaylistContent.post(() -> {
+                if (rvPlaylistContent != null) rvPlaylistContent.scrollToPosition(0);
+            });
         }
 
         onBecameVisible(true);
@@ -1510,6 +1539,23 @@ public class PlaylistDetailFragment extends Fragment
                     if (mapped.isEmpty()) {
                         revealPlaylistContentIfNeeded(true);
                         return;
+                    }
+                    // Prepend the source track that generated the radio at position 0
+                    if (currentPlaylistId.startsWith("RDAMVM") && currentPlaylistId.length() > 6) {
+                        String sourceVideoId = currentPlaylistId.substring(6);
+                        boolean alreadyPresent = false;
+                        for (PlaylistTrack pt : mapped) {
+                            if (sourceVideoId.equals(pt.videoId)) { alreadyPresent = true; break; }
+                        }
+                        if (!alreadyPresent) {
+                            mapped.add(0, new PlaylistTrack(
+                                    sourceVideoId,
+                                    currentPlaylistTitle != null ? currentPlaylistTitle : "",
+                                    currentPlaylistSubtitle != null ? currentPlaylistSubtitle : "",
+                                    "--:--",
+                                    currentPlaylistThumbnail != null ? currentPlaylistThumbnail : ""
+                            ));
+                        }
                     }
                     cacheTracks(playlistId, mapped, true);
                     renderTracks(mapped, playlistId, false);
@@ -5171,21 +5217,27 @@ public class PlaylistDetailFragment extends Fragment
                 holder.ivPlaylistBackdrop.setBackground(null);
                 holder.ivPlaylistBackdrop.setImageDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.BLACK));
             } else if (isRadioContext && !TextUtils.isEmpty(headerPlaylistThumbnail)) {
-                // Radio context: single thumbnail image from the originating track
+                // Radio context: HD image from the originating track's videoId
                 holder.ivPlaylistCover.setPadding(0, 0, 0, 0);
                 holder.ivPlaylistCover.setScaleType(ImageView.ScaleType.CENTER_CROP);
                 holder.ivPlaylistCover.setBackground(null);
                 holder.ivPlaylistCover.setColorFilter(null);
                 holder.ivPlaylistBackdrop.setBackground(null);
+                String radioVideoId = currentPlaylistId.startsWith("RDAMVM") ? currentPlaylistId.substring(6) : "";
+                String hdUrl = !radioVideoId.isEmpty()
+                        ? "https://i.ytimg.com/vi/" + android.net.Uri.encode(radioVideoId) + "/maxresdefault.jpg"
+                        : headerPlaylistThumbnail.trim();
                 Glide.with(holder.itemView)
-                        .load(headerPlaylistThumbnail.trim())
+                        .load(hdUrl)
+                        .error(Glide.with(holder.itemView).load(headerPlaylistThumbnail.trim()))
                         .diskCacheStrategy(DiskCacheStrategy.ALL)
                         .priority(com.bumptech.glide.Priority.HIGH)
                         .override(800, 800)
                         .transition(DrawableTransitionOptions.withCrossFade(200))
                         .into(holder.ivPlaylistCover);
                 Glide.with(holder.itemView)
-                        .load(headerPlaylistThumbnail.trim())
+                        .load(hdUrl)
+                        .error(Glide.with(holder.itemView).load(headerPlaylistThumbnail.trim()))
                         .diskCacheStrategy(DiskCacheStrategy.ALL)
                         .override(320, 320)
                         .transition(DrawableTransitionOptions.withCrossFade(200))

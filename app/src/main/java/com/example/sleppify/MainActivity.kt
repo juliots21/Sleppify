@@ -143,6 +143,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var settingsPrefs: SharedPreferences
     private lateinit var localPrefs: SharedPreferences
 
+    private var statusBarHeightPx = 0
     private var currentMainNavItemId = View.NO_ID
     private var lastSmartPrefetchAtMs = 0L
     private var hasAudioServiceStateSnapshot = false
@@ -173,7 +174,7 @@ class MainActivity : AppCompatActivity() {
     private val backPressedCallback = object : OnBackPressedCallback(true) {
         override fun handleOnBackPressed() {
             if (inScannerFromSettings) {
-                exitScannerBack()
+                returnFromScanner()
                 return
             }
             if (inEqualizerFromPlayer) {
@@ -185,7 +186,7 @@ class MainActivity : AppCompatActivity() {
                 return
             }
             if (inSettings) {
-                exitSettings()
+                returnFromSettings()
                 return
             }
 
@@ -205,8 +206,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         activeInstance = WeakReference(this)
         setContentView(R.layout.activity_main)
+        applySystemBarsStyle()
         PlaybackLoadingBus.clearLoading()
 
         initViews()
@@ -280,7 +283,8 @@ class MainActivity : AppCompatActivity() {
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            topAppBar.setPadding(topAppBar.paddingLeft, systemBars.top, topAppBar.paddingRight, topAppBar.paddingBottom)
+            statusBarHeightPx = systemBars.top
+            topAppBar.setPadding(topAppBar.paddingLeft, statusBarHeightPx, topAppBar.paddingRight, topAppBar.paddingBottom)
             
             if (bottomNav.paddingBottom != systemBars.bottom) {
                 bottomNav.setPadding(systemBars.left, 0, systemBars.right, systemBars.bottom)
@@ -299,16 +303,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupListeners() {
         btnSignInHeader?.setOnClickListener { triggerHeaderSignIn() }
-        btnProfilePhoto.setOnClickListener { if (inSettings) exitSettings() else enterSettings() }
+        btnProfilePhoto.setOnClickListener { if (inSettings) returnFromSettings() else enterSettings() }
         btnCamera.setOnClickListener { openScannerFromSettings() }
         bottomNav.setOnItemSelectedListener { item ->
             if (suppressNavListener) return@setOnItemSelectedListener true
             if (item.itemId == R.id.nav_search) {
-                if (inSettings) exitSettings()
+                if (inSettings) returnFromSettings()
                 openSearchFragment()
                 return@setOnItemSelectedListener true
             }
-            if (inSettings) exitSettings()
+            if (inSettings) returnFromSettings()
             if (isSearchFragmentVisible()) {
                 currentMainNavItemId = item.itemId
                 closeSearchFragment()
@@ -419,7 +423,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        applySystemBarsStyle()
         globalMiniPlayer?.onResume()
         lifecycleScope.launch {
             delay(RESUME_WORK_DELAY_MS)
@@ -842,10 +845,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun setSyncOverlayVisible(visible: Boolean) { /* Signals visual sync in header */ }
 
+    fun getStatusBarHeight(): Int = statusBarHeightPx
+
     private fun setTopAppBarExtraTopPadding(extraDp: Int) {
         val density = resources.displayMetrics.density
         val extraPx = (extraDp * density).toInt()
-        topAppBar.setPadding(topAppBar.paddingLeft, extraPx, topAppBar.paddingRight, topAppBar.paddingBottom)
+        topAppBar.setPadding(topAppBar.paddingLeft, statusBarHeightPx + extraPx, topAppBar.paddingRight, topAppBar.paddingBottom)
     }
 
     private fun configureHeaderActionForMainModules() {
@@ -913,7 +918,7 @@ class MainActivity : AppCompatActivity() {
             typeface = resolveHeaderSettingsTypeface()
             setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_arrow_back, 0, 0, 0)
             compoundDrawablePadding = (10 * resources.displayMetrics.density).toInt()
-            setOnClickListener { exitSettings() }
+            setOnClickListener { returnFromSettings() }
         }
     }
 
@@ -930,7 +935,7 @@ class MainActivity : AppCompatActivity() {
             typeface = resolveHeaderSettingsTypeface()
             setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_arrow_back, 0, 0, 0)
             compoundDrawablePadding = (10 * resources.displayMetrics.density).toInt()
-            setOnClickListener { exitScannerBack() }
+            setOnClickListener { returnFromScanner() }
         }
     }
 
@@ -962,7 +967,7 @@ class MainActivity : AppCompatActivity() {
                 setMaxLifecycle(target, Lifecycle.State.RESUMED)
                 commit()
             }
-            configureHeaderActionForSettings()
+            topAppBar.visibility = View.GONE
             setSolidNavigationBar(true)
             bottomNav.visibility = View.GONE
             lifecycleScope.launch {
@@ -972,7 +977,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun exitSettings() {
+    fun returnFromSettings() {
         if (!inSettings) return
         inSettings = false
         val selectedId = bottomNav.selectedItemId
@@ -990,6 +995,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 commit()
             }
+            topAppBar.visibility = View.VISIBLE
             configureHeaderActionForMainModules()
             setSolidNavigationBar(false)
             bottomNav.visibility = View.VISIBLE
@@ -1023,20 +1029,7 @@ class MainActivity : AppCompatActivity() {
                 setMaxLifecycle(target, Lifecycle.State.RESUMED)
                 commit()
             }
-            topAppBar.visibility = View.VISIBLE
-            setTopAppBarExtraTopPadding(14)
-            btnProfilePhoto.visibility = View.GONE
-            btnCamera.visibility = View.GONE
-            btnHeaderSearch.visibility = View.GONE
-            tvModuleTitle.apply {
-                text = "Ecualizador"
-                isAllCaps = false
-                letterSpacing = 0f
-                typeface = resolveHeaderSettingsTypeface()
-                setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_arrow_back, 0, 0, 0)
-                compoundDrawablePadding = (10 * resources.displayMetrics.density).toInt()
-                setOnClickListener { exitEqualizerToMusic() }
-            }
+            topAppBar.visibility = View.GONE
             setSolidNavigationBar(true)
             bottomNav.visibility = View.GONE
             lifecycleScope.launch {
@@ -1044,6 +1037,11 @@ class MainActivity : AppCompatActivity() {
                 revealModuleContent()
             }
         }
+    }
+
+    fun returnFromEqualizer() {
+        if (inEqualizerFromSettings) exitEqualizerToSettings()
+        else if (inEqualizerFromPlayer) exitEqualizerToMusic()
     }
 
     private fun exitEqualizerToMusic() {
@@ -1095,8 +1093,7 @@ class MainActivity : AppCompatActivity() {
                 setMaxLifecycle(target, Lifecycle.State.RESUMED)
                 commit()
             }
-            topAppBar.visibility = View.VISIBLE
-            configureHeaderActionForEqualizer()
+            topAppBar.visibility = View.GONE
             setSolidNavigationBar(true)
             bottomNav.visibility = View.GONE
             lifecycleScope.launch {
@@ -1121,8 +1118,7 @@ class MainActivity : AppCompatActivity() {
                 setMaxLifecycle(target, Lifecycle.State.RESUMED)
                 commit()
             }
-            topAppBar.visibility = View.VISIBLE
-            configureHeaderActionForSettings()
+            topAppBar.visibility = View.GONE
             setSolidNavigationBar(true)
             bottomNav.visibility = View.GONE
             lifecycleScope.launch {
@@ -1160,7 +1156,7 @@ class MainActivity : AppCompatActivity() {
         scannerLoadingOverlay.visibility = View.VISIBLE
         fragmentContainer.post {
             if (isFinishing || isDestroyed) return@post
-            configureHeaderActionForScanner()
+            topAppBar.visibility = View.GONE
             setSolidNavigationBar(true)
             bottomNav.visibility = View.GONE
             supportFragmentManager.beginTransaction().apply {
@@ -1189,12 +1185,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun exitScannerBack() {
+    fun returnFromScanner() {
         if (!inScannerFromSettings) return
         inScannerFromSettings = false
 
         showModuleLoadingOverlay()
-        if (!isSearchFragmentVisible() && !isPlaylistDetailVisible()) topAppBar.visibility = View.VISIBLE
 
         val returnToEqualizer = inEqualizerFromSettings
         val target = if (returnToEqualizer) {
@@ -1214,7 +1209,7 @@ class MainActivity : AppCompatActivity() {
                 setMaxLifecycle(target, Lifecycle.State.RESUMED)
                 commit()
             }
-            if (returnToEqualizer) configureHeaderActionForEqualizer() else configureHeaderActionForSettings()
+            topAppBar.visibility = View.GONE
             bottomNav.visibility = View.GONE
             setSolidNavigationBar(true)
             lifecycleScope.launch {
@@ -1648,6 +1643,8 @@ class MainActivity : AppCompatActivity() {
                 topAppBar.visibility = View.VISIBLE
                 updateHeaderTitleForModule(R.id.nav_music)
             }
+            // Scroll MusicPlayerFragment to top since onHiddenChanged won't fire
+            (getMainModuleFragment(R.id.nav_music) as? MusicPlayerFragment)?.scrollToTop()
         }
         return true
     }

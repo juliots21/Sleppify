@@ -238,6 +238,8 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
         if (hidden) {
             stopMiniProgressTicker();
         } else {
+            View nsv = getView() != null ? getView().findViewById(R.id.nsvPrincipalContent) : null;
+            if (nsv != null) nsv.post(() -> nsv.scrollTo(0, 0));
             // Delay shortcut read by 200ms so any in-flight PlayCountStore async write has committed
             handler.postDelayed(() -> {
                 if (isAdded() && !isHidden()) refreshShortcuts();

@@ -97,7 +97,7 @@
             android:fontFamily="@font/inter_variable"
             android:paddingStart="20dp"
             android:paddingEnd="20dp"
-            android:text="Iniciar sesión en YouTube Music"
+            android:text="Continuar en YouTube Music"
             android:textAllCaps="false"
             android:textColor="@color/white"
             android:textSize="14sp"

@@ -29,6 +29,8 @@ import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.example.sleppify.CloudSyncManager
@@ -112,6 +114,17 @@ class ScannerFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         
+        // Back button + status bar inset for floating top elements
+        val btnBack = view.findViewById<View>(R.id.btnScannerBack)
+        val importImages = view.findViewById<View>(R.id.actionImportImages)
+        btnBack?.setOnClickListener { (activity as? MainActivity)?.returnFromScanner() }
+        ViewCompat.setOnApplyWindowInsetsListener(view) { _, insets ->
+            val top = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+            btnBack?.let { it.setPadding(it.paddingLeft, it.paddingTop, it.paddingRight, it.paddingBottom); (it.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams)?.topMargin = top + 8 ; it.layoutParams = it.layoutParams }
+            importImages?.let { (it.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams)?.topMargin = top + 10 ; it.layoutParams = it.layoutParams }
+            insets
+        }
+
         previewScanner = view.findViewById(R.id.previewScanner)
         freezeOverlay = view.findViewById(R.id.ivFreezeOverlay)
         scanFocusOverlay = view.findViewById(R.id.scanFocusOverlay)

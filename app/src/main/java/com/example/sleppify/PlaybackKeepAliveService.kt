@@ -37,20 +37,25 @@ class PlaybackKeepAliveService : Service() {
             @Suppress("DEPRECATION")
             intent?.getParcelableExtra(EXTRA_NOTIFICATION)
         }
-        if (notification != null) {
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    startForeground(
-                        NOTIFICATION_ID,
-                        notification,
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
-                    )
-                } else {
-                    startForeground(NOTIFICATION_ID, notification)
-                }
-            } catch (e: Exception) {
-                Log.e("PlaybackKeepAlive", "Failed to start foreground", e)
+        if (notification == null) {
+            // No notification provided — cannot satisfy foreground contract, stop immediately
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
             }
+        } catch (e: Exception) {
+            Log.e("PlaybackKeepAlive", "Failed to start foreground", e)
+            stopSelf()
+            return START_NOT_STICKY
         }
         return START_STICKY
     }

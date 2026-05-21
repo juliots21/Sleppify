@@ -27,6 +27,8 @@ import android.widget.PopupWindow
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.fragment.app.Fragment
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
@@ -93,6 +95,17 @@ class EqualizerFragment : Fragment() {
         preferences = requireContext().getSharedPreferences(AudioEffectsService.PREFS_NAME, Context.MODE_PRIVATE)
         audioManager = requireContext().getSystemService(Context.AUDIO_SERVICE) as? AudioManager
 
+        // Own toolbar: back button + status bar inset
+        val llEqToolbar = view.findViewById<View>(R.id.llEqToolbar)
+        view.findViewById<View>(R.id.btnEqBack)?.setOnClickListener {
+            (activity as? MainActivity)?.returnFromEqualizer()
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(view) { _, insets ->
+            val top = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+            llEqToolbar?.setPadding(llEqToolbar.paddingLeft, top, llEqToolbar.paddingRight, llEqToolbar.paddingBottom)
+            insets
+        }
+
         // La vista puede recrearse al entrar/salir de Ajustes; forzamos recarga de preset/curva.
         hasLoadedUi = false
         boundProfileId = null
@@ -122,6 +135,13 @@ class EqualizerFragment : Fragment() {
         refreshEqModuleState()
         ensureEqServiceActive()
         applyCardStyles(view)
+    }
+
+    override fun onHiddenChanged(hidden: Boolean) {
+        super.onHiddenChanged(hidden)
+        if (!hidden) {
+            view?.findViewById<android.widget.ScrollView>(R.id.scrollEqContent)?.scrollTo(0, 0)
+        }
     }
 
     override fun onResume() {

@@ -24,6 +24,8 @@ import android.app.UiModeManager
 import android.content.res.Configuration
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.bumptech.glide.Glide
@@ -152,6 +154,21 @@ class SettingsFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+
+        // Own toolbar: back button + camera + status bar inset
+        val llSettingsToolbar = view.findViewById<View>(R.id.llSettingsToolbar)
+        view.findViewById<View>(R.id.btnSettingsBack)?.setOnClickListener {
+            (activity as? MainActivity)?.returnFromSettings()
+        }
+        view.findViewById<View>(R.id.btnSettingsCamera)?.setOnClickListener {
+            (activity as? MainActivity)?.openScannerFromSettings()
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(view) { _, insets ->
+            val top = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+            llSettingsToolbar?.setPadding(llSettingsToolbar.paddingLeft, top, llSettingsToolbar.paddingRight, llSettingsToolbar.paddingBottom)
+            insets
+        }
+
         initViews(view)
         setupInteractions()
         renderSettingsState()
@@ -232,6 +249,13 @@ class SettingsFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             val tracks = LocalFilesStore.scanLocalFiles(requireContext())
             LocalFilesStore.cacheFiles(requireContext(), tracks)
+        }
+    }
+
+    override fun onHiddenChanged(hidden: Boolean) {
+        super.onHiddenChanged(hidden)
+        if (!hidden) {
+            view?.post { view?.scrollTo(0, 0) }
         }
     }
 

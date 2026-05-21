@@ -824,11 +824,23 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
     public void onPause() {
         super.onPause();
     }
-    @Override
+    public void scrollToTop() {
+        if (rvMusicResults != null) {
+            rvMusicResults.post(() -> {
+                if (rvMusicResults != null) rvMusicResults.scrollToPosition(0);
+            });
+        }
+    }
+
     public void onHiddenChanged(boolean hidden) {
         super.onHiddenChanged(hidden);
         if (hidden) {
             return;
+        }
+        if (rvMusicResults != null) {
+            rvMusicResults.post(() -> {
+                if (rvMusicResults != null) rvMusicResults.scrollToPosition(0);
+            });
         }
         startObservingOfflineQueue();
         refreshCurrentPlayingPlaylistState();

@@ -615,18 +615,7 @@ public class SongPlayerFragment extends Fragment {
         tvCurrentTime = view.findViewById(R.id.tvCurrentTime);
         tvTotalTime = view.findViewById(R.id.tvTotalTime);
         sbPlaybackProgress = view.findViewById(R.id.sbPlaybackProgress);
-        svSongPlayerContent = view.findViewById(R.id.svSongPlayerContent);
-        disablePlayerContentScroll();
-        final View clPlayerContent = view.findViewById(R.id.clPlayerContent);
-        if (clPlayerContent != null && svSongPlayerContent != null) {
-            svSongPlayerContent.addOnLayoutChangeListener((v, left, top, right, bottom,
-                    oldLeft, oldTop, oldRight, oldBottom) -> {
-                int scrollH = bottom - top;
-                if (scrollH > 0 && clPlayerContent.getMinimumHeight() != scrollH) {
-                    clPlayerContent.setMinimumHeight(scrollH);
-                }
-            });
-        }
+        svSongPlayerContent = null;
         btnShuffle = view.findViewById(R.id.btnShuffle);
         btnRepeat = view.findViewById(R.id.btnRepeat);
         vPlayerShuffleIndicator = view.findViewById(R.id.vPlayerShuffleIndicator);
@@ -4263,13 +4252,12 @@ public class SongPlayerFragment extends Fragment {
             // Fixed height (same as cover art) so controls never shift.
             // Full-width (no margins) for video — better rendering performance.
             if (flPlayerHero != null && getContext() != null) {
-                int heroHeightPx = dpToPx(PLAYER_HERO_DEFAULT_HEIGHT_DP);
                 androidx.constraintlayout.widget.ConstraintLayout.LayoutParams p =
                         (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) flPlayerHero.getLayoutParams();
                 if (p != null) {
                     p.leftMargin = 0;
                     p.rightMargin = 0;
-                    p.height = heroHeightPx;
+                    p.height = 0; // MATCH_CONSTRAINT
                     flPlayerHero.setLayoutParams(p);
                 }
                 flPlayerHero.setBackground(androidx.core.content.ContextCompat.getDrawable(getContext(), R.drawable.bg_player_cover_flat));
@@ -5671,8 +5659,7 @@ public class SongPlayerFragment extends Fragment {
     }
     private void setupSwipeToDismiss(View root) {
         if (!(root instanceof SwipeInterceptLayout)) return;
-        NestedScrollView scrollView = root.findViewById(R.id.svSongPlayerContent);
-        if (scrollView == null) return;
+        final View scrollView = null; // No scrollable content — always allow swipe dismiss
 
         swipeDismissGestureActive = false;
         swipeDismissAnimationRunning = false;
@@ -5703,7 +5690,7 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private boolean handleSwipeDismissTouch(
-            View root, NestedScrollView scrollView, MotionEvent event,
+            View root, View scrollView, MotionEvent event,
             float[] initialTouchY, float[] dragStartY, float[] lastTouchY,
             long[] initialTouchTimeMs, boolean[] isDragging, boolean[] canStart) {
 
@@ -5717,7 +5704,7 @@ public class SongPlayerFragment extends Fragment {
                 initialTouchTimeMs[0] = event.getEventTime();
                 isDragging[0] = false;
                 swipeDismissGestureActive = false;
-                canStart[0] = scrollView.getScrollY() <= swipeDismissTouchSlopPx;
+                canStart[0] = scrollView == null || scrollView.getScrollY() <= swipeDismissTouchSlopPx;
                 return false;
 
             case MotionEvent.ACTION_MOVE:
@@ -5725,7 +5712,7 @@ public class SongPlayerFragment extends Fragment {
                 float totalDeltaY = currentY - initialTouchY[0];
                 lastTouchY[0] = currentY;
 
-                if (!canStart[0] && scrollView.getScrollY() <= swipeDismissTouchSlopPx && totalDeltaY > 0f) {
+                if (!canStart[0] && (scrollView == null || scrollView.getScrollY() <= swipeDismissTouchSlopPx) && totalDeltaY > 0f) {
                     canStart[0] = true;
                     dragStartY[0] = currentY;
                     totalDeltaY = 0f;
@@ -5735,7 +5722,6 @@ public class SongPlayerFragment extends Fragment {
                     isDragging[0] = true;
                     swipeDismissGestureActive = true;
                     dragStartY[0] = currentY - swipeDismissTouchSlopPx;
-                    scrollView.requestDisallowInterceptTouchEvent(true);
                 }
 
                 if (isDragging[0]) {
@@ -5758,7 +5744,6 @@ public class SongPlayerFragment extends Fragment {
 
                     isDragging[0] = false;
                     swipeDismissGestureActive = false;
-                    scrollView.requestDisallowInterceptTouchEvent(false);
 
                     if (shouldDismiss) {
                         swipeDismissAnimationRunning = true;
@@ -6030,13 +6015,12 @@ public class SongPlayerFragment extends Fragment {
     private void resetPlayerHeroContainerHeight() {
         if (flPlayerHero == null) return;
         int defaultMargin = dpToPx(20);
-        int defaultHeight = dpToPx(PLAYER_HERO_DEFAULT_HEIGHT_DP);
         androidx.constraintlayout.widget.ConstraintLayout.LayoutParams p =
                 (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) flPlayerHero.getLayoutParams();
         if (p != null) {
             p.leftMargin = defaultMargin;
             p.rightMargin = defaultMargin;
-            p.height = defaultHeight;
+            p.height = 0; // MATCH_CONSTRAINT
             flPlayerHero.setLayoutParams(p);
             if (getContext() != null) {
                 flPlayerHero.setBackground(androidx.core.content.ContextCompat.getDrawable(getContext(), R.drawable.bg_player_cover_rounded));
@@ -6045,15 +6029,7 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void setPlayerHeroContainerHeight(int heightPx) {
-        if (flPlayerHero == null || heightPx <= 0) {
-            return;
-        }
-        ViewGroup.LayoutParams params = flPlayerHero.getLayoutParams();
-        if (params == null || params.height == heightPx) {
-            return;
-        }
-        params.height = heightPx;
-        flPlayerHero.setLayoutParams(params);
+        // No-op: height is now managed by ConstraintLayout constraints
     }
 
     private void adjustPlayerHeroForCover(@NonNull Bitmap bitmap) {
@@ -6067,16 +6043,12 @@ public class SongPlayerFragment extends Fragment {
         // Wide images: margin=0 → full screen width. Square/tall: margin=20dp.
         int heroMarginPx = isWide ? 0 : dpToPx(20);
 
-        // Always keep the same height so controls below don't jump.
-        // Wide images use fitCenter scaleType so they show fully inside the fixed container.
-        int targetHeight = dpToPx(PLAYER_HERO_DEFAULT_HEIGHT_DP);
-
         androidx.constraintlayout.widget.ConstraintLayout.LayoutParams heroParams =
                 (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) flPlayerHero.getLayoutParams();
         if (heroParams != null) {
             heroParams.leftMargin = heroMarginPx;
             heroParams.rightMargin = heroMarginPx;
-            heroParams.height = targetHeight;
+            heroParams.height = 0; // MATCH_CONSTRAINT — let constraints handle height
             flPlayerHero.setLayoutParams(heroParams);
             if (flPlayerHero.getParent() instanceof android.view.View) {
                 ((android.view.View) flPlayerHero.getParent()).requestLayout();

@@ -203,6 +203,13 @@ class SearchFragment : Fragment() {
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             root.setPadding(systemBars.left, 0, systemBars.right, 0)
+            val llSearchBar = root.findViewById<View>(R.id.llSearchBar)
+            llSearchBar?.setPadding(
+                llSearchBar.paddingLeft,
+                systemBars.top,
+                llSearchBar.paddingRight,
+                llSearchBar.paddingBottom
+            )
             insets
         }
 
@@ -1853,7 +1860,8 @@ class SearchFragment : Fragment() {
                         artist = map["artist"] as? String ?: ""
                     )
                 }
-                if (parsed.isNotEmpty() && recentSearchData.isEmpty()) {
+                val localHasImages = recentSearchData.any { it.thumbnail.isNotEmpty() }
+                if (parsed.isNotEmpty() && (recentSearchData.isEmpty() || !localHasImages)) {
                     recentSearchData.clear()
                     recentSearchData.addAll(parsed)
                     saveRecentSearchQueries()
@@ -2304,6 +2312,8 @@ class SearchFragment : Fragment() {
         if (hidden) {
             // no-op
         } else {
+            rvSearchResults.post { rvSearchResults.scrollToPosition(0) }
+            rvSearchSuggestions.post { rvSearchSuggestions.scrollToPosition(0) }
             // Re-enable back pressed callback when fragment becomes visible again
             backPressedCallback?.isEnabled = true
             cachedSmartSuggestions = null
@@ -2316,6 +2326,10 @@ class SearchFragment : Fragment() {
                 showSuggestionsMode()
             }
             loadLocalTrackIndex()
+            // Retry Firebase load if local data has no thumbnails (e.g. auth wasn't ready at startup)
+            if (recentSearchData.none { it.thumbnail.isNotEmpty() }) {
+                loadRecentSearchesFromFirebase()
+            }
             if (!hasBeenVisible) {
                 showModuleLoadingOverlay()
                 scheduleOverlayRevealAfterDraw()
