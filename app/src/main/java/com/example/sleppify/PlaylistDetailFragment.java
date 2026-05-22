@@ -1411,7 +1411,7 @@ public class PlaylistDetailFragment extends Fragment
             playlistTracksCanLoadMore = false;
             if (!isAdded()) return;
             List<LocalFilesStore.LocalTrack> localTracks = LocalFilesStore.getCachedFiles(requireContext());
-            if (localTracks.isEmpty() && forceRefresh) {
+            if (localTracks.isEmpty()) {
                 localTracks = LocalFilesStore.scanLocalFiles(requireContext());
                 LocalFilesStore.cacheFiles(requireContext(), localTracks);
             }

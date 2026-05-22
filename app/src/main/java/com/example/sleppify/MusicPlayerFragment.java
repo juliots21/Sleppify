@@ -798,7 +798,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         // Always start from the top — post so it runs AFTER RecyclerView restores saved scroll state
         if (rvMusicResults != null) {
             rvMusicResults.post(() -> {
-                if (rvMusicResults != null) rvMusicResults.scrollToPosition(0);
+                scrollToTop();
             });
         }
     }
@@ -834,9 +834,9 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         super.onPause();
     }
     public void scrollToTop() {
-        if (rvMusicResults != null) {
+        if (rvMusicResults != null && musicResultsLayoutManager != null) {
             rvMusicResults.post(() -> {
-                if (rvMusicResults != null) rvMusicResults.scrollToPosition(0);
+                if (rvMusicResults != null) musicResultsLayoutManager.scrollToPositionWithOffset(0, 0);
             });
         }
     }
@@ -849,11 +849,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         if (getActivity() instanceof MainActivity) {
             ((MainActivity) getActivity()).ensureHeaderVisibleForMusic();
         }
-        if (rvMusicResults != null) {
-            rvMusicResults.post(() -> {
-                if (rvMusicResults != null) rvMusicResults.scrollToPosition(0);
-            });
-        }
+        scrollToTop();
         startObservingOfflineQueue();
         refreshCurrentPlayingPlaylistState();
         if (adapter != null) {
@@ -1514,7 +1510,10 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         if (TextUtils.isEmpty(youtubeAccessToken)) {
             Log.w(TAG_STREAMING, "playlist_fetch skipped: empty_token");
             libraryFetchInFlight = false;
-            if (restoreLibraryFromPersistentCache()) {
+            boolean hasLocalContent = LocalFilesStore.isEnabled(requireContext()) ||
+                    !CustomPlaylistsStore.INSTANCE.getAllPlaylistNames(requireContext()).isEmpty() ||
+                    !FavoritesPlaylistStore.loadFavorites(requireContext()).isEmpty();
+            if (restoreLibraryFromPersistentCache() || hasLocalContent) {
                 if (!backgroundRefresh) {
                     setLibraryLoading(false, "Modo offline: biblioteca guardada.");
                 }
@@ -1531,7 +1530,10 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         if (!isNetworkAvailable()) {
             Log.w(TAG_STREAMING, "playlist_fetch network_unavailable");
             libraryFetchInFlight = false;
-            if (restoreLibraryFromPersistentCache() || !libraryTracks.isEmpty()) {
+            boolean hasLocalContent = LocalFilesStore.isEnabled(requireContext()) ||
+                    !CustomPlaylistsStore.INSTANCE.getAllPlaylistNames(requireContext()).isEmpty() ||
+                    !FavoritesPlaylistStore.loadFavorites(requireContext()).isEmpty();
+            if (restoreLibraryFromPersistentCache() || !libraryTracks.isEmpty() || hasLocalContent) {
                 if (!backgroundRefresh) {
                     setLibraryLoading(false, "Sin internet. Mostrando biblioteca guardada.");
                 }
@@ -1590,7 +1592,10 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 Log.e(TAG_STREAMING, "playlist_fetch error: " + error);
                 if (isLikelyNetworkError(error)) {
                     boolean restored = restoreLibraryFromPersistentCache();
-                    if (restored || !libraryTracks.isEmpty()) {
+                    boolean hasLocalContent = LocalFilesStore.isEnabled(requireContext()) ||
+                            !CustomPlaylistsStore.INSTANCE.getAllPlaylistNames(requireContext()).isEmpty() ||
+                            !FavoritesPlaylistStore.loadFavorites(requireContext()).isEmpty();
+                    if (restored || !libraryTracks.isEmpty() || hasLocalContent) {
                         youtubeAuthRefreshInProgress = false;
                         if (!backgroundRefresh) {
                             setLibraryLoading(false, "Sin internet. Mostrando biblioteca guardada.");
@@ -1696,7 +1701,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         }
         if (rvMusicResults != null) {
             rvMusicResults.animate().cancel();
-            rvMusicResults.scrollToPosition(0);
+            scrollToTop();
             if (rvMusicResults.getVisibility() != View.VISIBLE) {
                 rvMusicResults.setAlpha(0f);
                 rvMusicResults.setVisibility(View.VISIBLE);

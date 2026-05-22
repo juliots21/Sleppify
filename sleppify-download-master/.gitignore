@@ -10,3 +10,8 @@ __pycache__/
 *.xlsx
 .ytdlp_cache/
 cookies.txt
+bgutil-ytdlp-pot-provider/
+test_downloads/
+test_20songs.py
+test_video_download.py
+sites-*.log

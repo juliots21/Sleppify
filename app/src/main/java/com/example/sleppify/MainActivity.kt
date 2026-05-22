@@ -1471,6 +1471,9 @@ class MainActivity : AppCompatActivity() {
         val isTrulySwitching = currentMainNavItemId != itemId || !target.isAdded || target.isHidden
         if (!isTrulySwitching && !inSettings) {
             updateHeaderTitleForModule(itemId)
+            if (itemId == R.id.nav_music) {
+                (target as? MusicPlayerFragment)?.scrollToTop()
+            }
             isNavigating = false
             return true
         }
@@ -1516,7 +1519,7 @@ class MainActivity : AppCompatActivity() {
                 .apply()
 
             if (itemId == R.id.nav_music) markStreamingEntryAsLibrary()
-            if (!isSearchFragmentVisible() && !isPlaylistDetailVisible()) {
+            if (!isSearchFragmentVisible()) {
                 topAppBar.visibility = View.VISIBLE
             }
             configureHeaderActionForMainModules()
