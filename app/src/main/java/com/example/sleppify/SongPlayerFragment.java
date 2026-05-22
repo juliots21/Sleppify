@@ -179,8 +179,7 @@ public class SongPlayerFragment extends Fragment {
     private View actionShare;
     private View actionDownloadTrack;
     private View actionSearchOnline;
-    private String lastSavedPlaylistKey = null;
-    private String lastSavedPlaylistName = null;
+    // lastSavedPlaylistKey/Name now read from CustomPlaylistsStore (global persistent)
     private ImageView ivActionDownloadIcon;
     private TextView tvActionDownloadLabel;
 
@@ -4791,7 +4790,6 @@ public class SongPlayerFragment extends Fragment {
         if (!isAdded() || btnPlayerMore == null) return;
 
         float density = getResources().getDisplayMetrics().density;
-        int popupWidthPx = (int) (170 * density);
 
         // Root container — vertical, solid black
         android.widget.LinearLayout root = new android.widget.LinearLayout(requireContext());
@@ -4813,7 +4811,6 @@ public class SongPlayerFragment extends Fragment {
         Runnable[] actions = {
                 () -> {
                     if (getActivity() instanceof MainActivity) {
-                        collapseToMiniMode(true);
                         ((MainActivity) getActivity()).openEqualizerFromPlayer();
                     }
                 },
@@ -4821,7 +4818,7 @@ public class SongPlayerFragment extends Fragment {
 
         android.widget.PopupWindow popup = new android.widget.PopupWindow(
                 root,
-                popupWidthPx,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
                 true);
         popup.setElevation(16 * density);
@@ -4856,7 +4853,7 @@ public class SongPlayerFragment extends Fragment {
             label.setMaxLines(1);
             label.setEllipsize(android.text.TextUtils.TruncateAt.END);
             android.widget.LinearLayout.LayoutParams labelLp =
-                    new android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+                    new android.widget.LinearLayout.LayoutParams(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
             labelLp.setMarginStart((int) (10 * density));
             label.setLayoutParams(labelLp);
             row.addView(label);
@@ -4864,32 +4861,33 @@ public class SongPlayerFragment extends Fragment {
             final int idx = i;
             row.setOnClickListener(v -> {
                 popup.dismiss();
-                v.postDelayed(() -> actions[idx].run(), 120);
+                btnPlayerMore.postDelayed(() -> actions[idx].run(), 120);
             });
 
             root.addView(row);
         }
 
-        // Scale from right edge, vertically centered
-        root.setPivotX(popupWidthPx);
-        root.setPivotY(0);
+        // Start invisible — animate after shown
         root.setScaleX(0.7f);
         root.setScaleY(0.7f);
         root.setAlpha(0f);
 
-        // Position: right next to the left edge of the button
-        int xOff = -popupWidthPx - (int) (4 * density);
-        int yOff = -btnPlayerMore.getHeight();
-        popup.showAsDropDown(btnPlayerMore, xOff, yOff, android.view.Gravity.START | android.view.Gravity.TOP);
+        // Position: drop down below the button, right-aligned
+        int yOff = (int) (4 * density);
+        popup.showAsDropDown(btnPlayerMore, 0, yOff, android.view.Gravity.END | android.view.Gravity.TOP);
 
-        // Entrance animation
-        root.animate()
-                .scaleX(1f)
-                .scaleY(1f)
-                .alpha(1f)
-                .setDuration(180)
-                .setInterpolator(new android.view.animation.DecelerateInterpolator(2.5f))
-                .start();
+        // Scale from top-right corner (set pivot after layout)
+        root.post(() -> {
+            root.setPivotX(root.getWidth());
+            root.setPivotY(0);
+            root.animate()
+                    .scaleX(1f)
+                    .scaleY(1f)
+                    .alpha(1f)
+                    .setDuration(180)
+                    .setInterpolator(new android.view.animation.DecelerateInterpolator(2.5f))
+                    .start();
+        });
 
         popup.setOnDismissListener(() -> {});
     }
@@ -4898,9 +4896,11 @@ public class SongPlayerFragment extends Fragment {
         if (!isAdded() || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) return;
         PlayerTrack current = tracks.get(currentIndex);
         if (TextUtils.isEmpty(current.videoId)) return;
-        if (lastSavedPlaylistKey != null && lastSavedPlaylistName != null) {
-            addTrackToPlaylistByKey(lastSavedPlaylistKey, current);
-            showSavedInPlaylistBarPlayer(current, lastSavedPlaylistKey, lastSavedPlaylistName);
+        String gKey = CustomPlaylistsStore.getLastSavedPlaylistKey(requireContext());
+        String gName = CustomPlaylistsStore.getLastSavedPlaylistName(requireContext());
+        if (gKey != null && gName != null) {
+            addTrackToPlaylistByKey(gKey, current);
+            showSavedInPlaylistBarPlayer(current, gKey, gName);
             return;
         }
         showSaveToPlaylistSheet(current, null);
@@ -4914,9 +4914,6 @@ public class SongPlayerFragment extends Fragment {
         View sheet = getLayoutInflater().inflate(R.layout.bottom_sheet_save_to_playlist, null);
         saveDialog.setContentView(sheet);
 
-        View parent = (View) sheet.getParent();
-        if (parent != null) parent.setBackgroundColor(android.graphics.Color.TRANSPARENT);
-
         ImageView ivClose = sheet.findViewById(R.id.ivSaveClose);
         ivClose.setOnClickListener(v -> saveDialog.dismiss());
 
@@ -4928,8 +4925,7 @@ public class SongPlayerFragment extends Fragment {
         sheet.findViewById(R.id.btnSaveConfirm).setOnClickListener(v -> {
             saveDialog.dismiss();
             if (lastAddedKey[0] != null && lastAddedName[0] != null) {
-                lastSavedPlaylistKey = lastAddedKey[0];
-                lastSavedPlaylistName = lastAddedName[0];
+                CustomPlaylistsStore.setLastSavedPlaylist(requireContext(), lastAddedKey[0], lastAddedName[0]);
                 showSavedInPlaylistBarPlayer(track, lastAddedKey[0], lastAddedName[0]);
             } else if (didRemove[0]) {
                 showRemovedFromPlaylistBarPlayer();
@@ -5044,6 +5040,17 @@ public class SongPlayerFragment extends Fragment {
             llList.addView(row);
         }
 
+        saveDialog.getBehavior().setSkipCollapsed(true);
+        saveDialog.getBehavior().setFitToContents(true);
+        saveDialog.setOnShowListener(d -> {
+            View bottomSheet = ((BottomSheetDialog) d)
+                    .findViewById(com.google.android.material.R.id.design_bottom_sheet);
+            if (bottomSheet != null) {
+                View sheetParent = (View) sheet.getParent();
+                if (sheetParent != null) sheetParent.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+                bottomSheet.setBackgroundResource(android.R.color.transparent);
+            }
+        });
         saveDialog.show();
     }
 
@@ -5140,7 +5147,6 @@ public class SongPlayerFragment extends Fragment {
 
         android.view.ViewGroup rootView = (android.view.ViewGroup) getView();
 
-        // Remove any existing saved bar
         View existing = rootView.findViewWithTag("saved_bar");
         if (existing != null) rootView.removeView(existing);
 
@@ -5153,7 +5159,7 @@ public class SongPlayerFragment extends Fragment {
         bar.setGravity(android.view.Gravity.CENTER_VERTICAL);
         bar.setBackgroundColor(android.graphics.Color.parseColor("#FF1E1E1E"));
         int hPad = (int) (16 * density);
-        int vPad = (int) (20 * density);
+        int vPad = (int) (12 * density);
         bar.setPadding(hPad, vPad, hPad, vPad);
         bar.setElevation(8 * density);
 
@@ -5161,7 +5167,9 @@ public class SongPlayerFragment extends Fragment {
         tvSaved.setText("Se guardó en " + playlistName);
         tvSaved.setTextColor(android.graphics.Color.WHITE);
         tvSaved.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
-        tvSaved.setTypeface(null, android.graphics.Typeface.BOLD);
+        tvSaved.setTypeface(null, android.graphics.Typeface.NORMAL);
+        tvSaved.setMaxLines(1);
+        tvSaved.setEllipsize(android.text.TextUtils.TruncateAt.END);
         android.widget.LinearLayout.LayoutParams tvParams = new android.widget.LinearLayout.LayoutParams(
                 0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
         tvSaved.setLayoutParams(tvParams);
@@ -5172,16 +5180,15 @@ public class SongPlayerFragment extends Fragment {
         btnChange.setTextColor(android.graphics.Color.parseColor("#8AB4F8"));
         btnChange.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
         btnChange.setTypeface(null, android.graphics.Typeface.BOLD);
-        btnChange.setPadding((int) (12 * density), 0, 0, 0);
+        btnChange.setPadding((int) (16 * density), 0, 0, 0);
         btnChange.setOnClickListener(v -> {
             rootView.removeView(bar);
-            lastSavedPlaylistKey = null;
-            lastSavedPlaylistName = null;
+            CustomPlaylistsStore.clearLastSavedPlaylist(requireContext());
             showSaveToPlaylistSheet(track, playlistKey);
         });
         bar.addView(btnChange);
 
-        int barBottomMargin = (int) (12 * density);
+        int barBottomMargin = (int) (56 * density);
         if (rootView instanceof androidx.constraintlayout.widget.ConstraintLayout) {
             androidx.constraintlayout.widget.ConstraintLayout.LayoutParams clp =
                     new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
@@ -5201,7 +5208,6 @@ public class SongPlayerFragment extends Fragment {
             rootView.addView(bar, flp);
         }
 
-        // Auto-dismiss after 4 seconds
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
             if (bar.getParent() != null) {
                 ((android.view.ViewGroup) bar.getParent()).removeView(bar);
@@ -5225,7 +5231,7 @@ public class SongPlayerFragment extends Fragment {
         bar.setGravity(android.view.Gravity.CENTER_VERTICAL);
         bar.setBackgroundColor(android.graphics.Color.parseColor("#FF1E1E1E"));
         int hPad = (int) (16 * density);
-        int vPad = (int) (20 * density);
+        int vPad = (int) (12 * density);
         bar.setPadding(hPad, vPad, hPad, vPad);
         bar.setElevation(8 * density);
 
@@ -5233,7 +5239,9 @@ public class SongPlayerFragment extends Fragment {
         tvMsg.setText("Se eliminó correctamente");
         tvMsg.setTextColor(android.graphics.Color.WHITE);
         tvMsg.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
-        tvMsg.setTypeface(null, android.graphics.Typeface.BOLD);
+        tvMsg.setTypeface(null, android.graphics.Typeface.NORMAL);
+        tvMsg.setMaxLines(1);
+        tvMsg.setEllipsize(android.text.TextUtils.TruncateAt.END);
         android.widget.LinearLayout.LayoutParams tvParams = new android.widget.LinearLayout.LayoutParams(
                 0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
         tvMsg.setLayoutParams(tvParams);
@@ -5244,14 +5252,14 @@ public class SongPlayerFragment extends Fragment {
         btnChange.setTextColor(android.graphics.Color.parseColor("#8AB4F8"));
         btnChange.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
         btnChange.setTypeface(null, android.graphics.Typeface.BOLD);
-        btnChange.setPadding((int) (12 * density), 0, 0, 0);
+        btnChange.setPadding((int) (16 * density), 0, 0, 0);
         btnChange.setOnClickListener(v -> {
             rootView.removeView(bar);
             showSaveToPlaylistSheetFromPlayer();
         });
         bar.addView(btnChange);
 
-        int barBM = (int) (12 * density);
+        int barBM = (int) (56 * density);
         if (rootView instanceof androidx.constraintlayout.widget.ConstraintLayout) {
             androidx.constraintlayout.widget.ConstraintLayout.LayoutParams clp =
                     new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(

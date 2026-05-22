@@ -103,8 +103,7 @@ class SearchFragment : Fragment() {
     private var suggestionsDebounceRunnable: Runnable? = null
     private var suggestionsJob: kotlinx.coroutines.Job? = null
     private var cachedSmartSuggestions: List<String>? = null
-    private var lastSavedPlaylistKey: String? = null
-    private var lastSavedPlaylistName: String? = null
+    // lastSavedPlaylistKey/Name now read from CustomPlaylistsStore (global persistent)
 
     private lateinit var etSearchQuery: TextInputEditText
     private lateinit var ivSearchClear: ImageView
@@ -1221,13 +1220,12 @@ class SearchFragment : Fragment() {
         tvFav.text = "Añadir a playlist"
         btnFavorite.setOnClickListener {
             dialog.dismiss()
-            val lspk = lastSavedPlaylistKey
-            val lspn = lastSavedPlaylistName
+            val lspk = CustomPlaylistsStore.getLastSavedPlaylistKey(requireContext())
+            val lspn = CustomPlaylistsStore.getLastSavedPlaylistName(requireContext())
             if (lspk != null && lspn != null) {
                 addTrackToPlaylistByKey(lspk, track)
                 showStatusBarSearch("Se guardó en $lspn") {
-                    lastSavedPlaylistKey = null
-                    lastSavedPlaylistName = null
+                    CustomPlaylistsStore.clearLastSavedPlaylist(requireContext())
                     showSaveToPlaylistSheet(track)
                 }
             } else {
@@ -1290,17 +1288,16 @@ class SearchFragment : Fragment() {
             btnBsDownload.visibility = View.GONE
         }
 
-        dialog.show()
-
-        val parent = view.parent as? View
-        parent?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-
-        // Configure slide-up animation
-        val bottomSheet = dialog.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
-        if (bottomSheet != null) {
-            val behavior = com.google.android.material.bottomsheet.BottomSheetBehavior.from(bottomSheet)
-            behavior.skipCollapsed = true
+        dialog.behavior.skipCollapsed = true
+        dialog.behavior.isFitToContents = true
+        dialog.setOnShowListener { d ->
+            val bottomSheet = (d as com.google.android.material.bottomsheet.BottomSheetDialog)
+                .findViewById<View>(com.google.android.material.R.id.design_bottom_sheet) ?: return@setOnShowListener
+            val sheetParent = view.parent as? View
+            sheetParent?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            bottomSheet.setBackgroundResource(android.R.color.transparent)
         }
+        dialog.show()
     }
 
     private fun downloadTrackFromSearch(track: YouTubeMusicService.TrackResult) {
@@ -1341,9 +1338,6 @@ class SearchFragment : Fragment() {
         val sheet = layoutInflater.inflate(R.layout.bottom_sheet_save_to_playlist, null)
         saveDialog.setContentView(sheet)
 
-        val parent = sheet.parent as? View
-        parent?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-
         var lastAddedKey: String? = null
         var lastAddedName: String? = null
         var didRemove = false
@@ -1353,11 +1347,9 @@ class SearchFragment : Fragment() {
         sheet.findViewById<View>(R.id.btnSaveConfirm).setOnClickListener {
             saveDialog.dismiss()
             if (lastAddedKey != null && lastAddedName != null) {
-                lastSavedPlaylistKey = lastAddedKey
-                lastSavedPlaylistName = lastAddedName
+                CustomPlaylistsStore.setLastSavedPlaylist(requireContext(), lastAddedKey, lastAddedName)
                 showStatusBarSearch("Se guardó en $lastAddedName") {
-                    lastSavedPlaylistKey = null
-                    lastSavedPlaylistName = null
+                    CustomPlaylistsStore.clearLastSavedPlaylist(requireContext())
                     showSaveToPlaylistSheet(track)
                 }
             } else if (didRemove) {
@@ -1471,6 +1463,15 @@ class SearchFragment : Fragment() {
             llList.addView(row)
         }
 
+        saveDialog.behavior.skipCollapsed = true
+        saveDialog.behavior.isFitToContents = true
+        saveDialog.setOnShowListener { d ->
+            val bottomSheet = (d as com.google.android.material.bottomsheet.BottomSheetDialog)
+                .findViewById<View>(com.google.android.material.R.id.design_bottom_sheet) ?: return@setOnShowListener
+            val sheetParent = sheet.parent as? View
+            sheetParent?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            bottomSheet.setBackgroundResource(android.R.color.transparent)
+        }
         saveDialog.show()
     }
 
@@ -1482,9 +1483,6 @@ class SearchFragment : Fragment() {
         if (existing != null) rootView.removeView(existing)
 
         val density = resources.displayMetrics.density
-        val miniPlayerHeight = (72 * density).toInt() // Height of llGlobalMiniPlayer
-        val bottomNavHeight = (48 * density).toInt()  // Height of bottomNavigation
-        val marginAboveMiniPlayer = (8 * density).toInt()
 
         val bar = android.widget.LinearLayout(requireContext()).apply {
             tag = "saved_bar"
@@ -1493,16 +1491,18 @@ class SearchFragment : Fragment() {
             gravity = android.view.Gravity.CENTER_VERTICAL
             setBackgroundColor(android.graphics.Color.parseColor("#FF1E1E1E"))
             val hPad = (16 * density).toInt()
-            val vPad = (20 * density).toInt()
+            val vPad = (12 * density).toInt()
             setPadding(hPad, vPad, hPad, vPad)
-            elevation = 40 * density // Higher than miniplayer (33dp)
+            elevation = 8 * density
         }
 
         val tvMsg = TextView(requireContext()).apply {
             text = message
             setTextColor(android.graphics.Color.WHITE)
             textSize = 14f
-            setTypeface(null, android.graphics.Typeface.BOLD)
+            setTypeface(null, android.graphics.Typeface.NORMAL)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
             layoutParams = android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         bar.addView(tvMsg)
@@ -1513,7 +1513,7 @@ class SearchFragment : Fragment() {
                 setTextColor(android.graphics.Color.parseColor("#8AB4F8"))
                 textSize = 14f
                 setTypeface(null, android.graphics.Typeface.BOLD)
-                setPadding((12 * density).toInt(), 0, 0, 0)
+                setPadding((16 * density).toInt(), 0, 0, 0)
                 setOnClickListener {
                     rootView.removeView(bar)
                     onChangeClick()
@@ -1522,7 +1522,7 @@ class SearchFragment : Fragment() {
             bar.addView(btnChange)
         }
 
-        val barBottomMargin = miniPlayerHeight + bottomNavHeight + marginAboveMiniPlayer
+        val barBottomMargin = computeSnackbarBottomMargin(activity, density)
         val flp = android.widget.FrameLayout.LayoutParams(
             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
             android.view.ViewGroup.LayoutParams.WRAP_CONTENT
@@ -1537,6 +1537,19 @@ class SearchFragment : Fragment() {
                 (bar.parent as android.view.ViewGroup).removeView(bar)
             }
         }, 4000L)
+    }
+
+    private fun computeSnackbarBottomMargin(activity: android.app.Activity, density: Float): Int {
+        var margin = (8 * density).toInt()
+        val bottomNav = activity.findViewById<View>(R.id.bottomNavigation)
+        if (bottomNav != null && bottomNav.visibility == View.VISIBLE) {
+            margin += bottomNav.height
+        }
+        val miniPlayer = activity.findViewById<View>(R.id.llGlobalMiniPlayer)
+        if (miniPlayer != null && miniPlayer.visibility == View.VISIBLE) {
+            margin += miniPlayer.height
+        }
+        return margin
     }
 
     private fun resolvePlaylistName(playlistKey: String): String {
@@ -1557,9 +1570,6 @@ class SearchFragment : Fragment() {
         if (existing != null) rootView.removeView(existing)
 
         val density = resources.displayMetrics.density
-        val miniPlayerHeight = (72 * density).toInt() // Height of llGlobalMiniPlayer
-        val bottomNavHeight = (48 * density).toInt()  // Height of bottomNavigation
-        val marginAboveMiniPlayer = (8 * density).toInt()
 
         val bar = android.widget.LinearLayout(requireContext()).apply {
             tag = "saved_bar"
@@ -1568,16 +1578,18 @@ class SearchFragment : Fragment() {
             gravity = android.view.Gravity.CENTER_VERTICAL
             setBackgroundColor(android.graphics.Color.parseColor("#FF1E1E1E"))
             val hPad = (16 * density).toInt()
-            val vPad = (20 * density).toInt()
+            val vPad = (12 * density).toInt()
             setPadding(hPad, vPad, hPad, vPad)
-            elevation = 40 * density // Higher than miniplayer (33dp)
+            elevation = 8 * density
         }
 
         val tvMsg = TextView(requireContext()).apply {
             text = message
             setTextColor(android.graphics.Color.WHITE)
             textSize = 14f
-            setTypeface(null, android.graphics.Typeface.BOLD)
+            setTypeface(null, android.graphics.Typeface.NORMAL)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
             layoutParams = android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         bar.addView(tvMsg)
@@ -1587,7 +1599,7 @@ class SearchFragment : Fragment() {
             setTextColor(android.graphics.Color.parseColor("#8AB4F8"))
             textSize = 14f
             setTypeface(null, android.graphics.Typeface.BOLD)
-            setPadding((12 * density).toInt(), 0, 0, 0)
+            setPadding((16 * density).toInt(), 0, 0, 0)
             setOnClickListener {
                 rootView.removeView(bar)
                 addTrackToPlaylistByKey(playlistKey, track)
@@ -1596,7 +1608,7 @@ class SearchFragment : Fragment() {
         }
         bar.addView(btnUndo)
 
-        val barBottomMargin = miniPlayerHeight + bottomNavHeight + marginAboveMiniPlayer
+        val barBottomMargin = computeSnackbarBottomMargin(activity, density)
         val flp = android.widget.FrameLayout.LayoutParams(
             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
             android.view.ViewGroup.LayoutParams.WRAP_CONTENT

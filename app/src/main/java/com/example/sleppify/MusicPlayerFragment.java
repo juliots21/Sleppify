@@ -808,6 +808,9 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         offlineQueueHadActiveWork = false;
         offlineManualQueueHadActiveWork = false;
         if (isHidden()) return;
+        if (getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).ensureHeaderVisibleForMusic();
+        }
         startObservingOfflineQueue();
         maybeResumeStarledOfflineDownloads();
         refreshCurrentPlayingPlaylistState();
@@ -842,6 +845,9 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         super.onHiddenChanged(hidden);
         if (hidden) {
             return;
+        }
+        if (getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).ensureHeaderVisibleForMusic();
         }
         if (rvMusicResults != null) {
             rvMusicResults.post(() -> {
@@ -3452,19 +3458,18 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             btnDeletePlaylist.setVisibility(View.GONE);
             btnRenamePlaylist.setVisibility(View.GONE);
         }
+        dialog.getBehavior().setSkipCollapsed(true);
+        dialog.getBehavior().setFitToContents(true);
+        dialog.setOnShowListener(d -> {
+            View bottomSheet = ((com.google.android.material.bottomsheet.BottomSheetDialog) d)
+                    .findViewById(com.google.android.material.R.id.design_bottom_sheet);
+            if (bottomSheet != null) {
+                View sheetParent = (View) view.getParent();
+                if (sheetParent != null) sheetParent.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+                bottomSheet.setBackgroundResource(android.R.color.transparent);
+            }
+        });
         dialog.show();
-
-        // Configure after show() so BottomSheetBehavior is attached and animation works
-        View parent = (View) view.getParent();
-        if (parent != null) {
-            parent.setBackgroundColor(android.graphics.Color.TRANSPARENT);
-        }
-        View bottomSheet = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
-        if (bottomSheet != null) {
-            com.google.android.material.bottomsheet.BottomSheetBehavior<?> behavior =
-                    com.google.android.material.bottomsheet.BottomSheetBehavior.from(bottomSheet);
-            behavior.setSkipCollapsed(true);
-        }
     }
     private void showLibraryTrackOptions(@NonNull YouTubeMusicService.TrackResult track, @NonNull View anchor) {
         if (!isAdded()) return;
@@ -3540,19 +3545,18 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         view.findViewById(R.id.btnBsDownload).setVisibility(View.GONE);
         view.findViewById(R.id.btnBsAddToQueue).setVisibility(View.GONE);
         view.findViewById(R.id.btnBsPlayPlaylist).setVisibility(View.GONE);
+        dialog.getBehavior().setSkipCollapsed(true);
+        dialog.getBehavior().setFitToContents(true);
+        dialog.setOnShowListener(d -> {
+            View bottomSheet2 = ((com.google.android.material.bottomsheet.BottomSheetDialog) d)
+                    .findViewById(com.google.android.material.R.id.design_bottom_sheet);
+            if (bottomSheet2 != null) {
+                View sheetParent2 = (View) view.getParent();
+                if (sheetParent2 != null) sheetParent2.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+                bottomSheet2.setBackgroundResource(android.R.color.transparent);
+            }
+        });
         dialog.show();
-
-        // Configure after show() so BottomSheetBehavior is attached and animation works
-        View parent2 = (View) view.getParent();
-        if (parent2 != null) {
-            parent2.setBackgroundColor(android.graphics.Color.TRANSPARENT);
-        }
-        View bottomSheet2 = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
-        if (bottomSheet2 != null) {
-            com.google.android.material.bottomsheet.BottomSheetBehavior<?> behavior =
-                    com.google.android.material.bottomsheet.BottomSheetBehavior.from(bottomSheet2);
-            behavior.setSkipCollapsed(true);
-        }
     }
     private void playPlaylistFromStart(@NonNull YouTubeMusicService.TrackResult playlistTrack) {
         if (!isAdded()) return;

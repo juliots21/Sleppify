@@ -609,7 +609,7 @@ class MainActivity : AppCompatActivity() {
             gravity = android.view.Gravity.CENTER_VERTICAL
             setBackgroundColor(bgColor)
             val hPad = (16 * density).toInt()
-            val vPad = (16 * density).toInt()
+            val vPad = (12 * density).toInt()
             setPadding(hPad, vPad, hPad, vPad)
             elevation = 45 * density
         }
@@ -618,8 +618,10 @@ class MainActivity : AppCompatActivity() {
             text = message
             setTextColor(android.graphics.Color.WHITE)
             textSize = 14f
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
             val font = ResourcesCompat.getFont(this@MainActivity, R.font.inter_variable)
-            setTypeface(font, android.graphics.Typeface.BOLD)
+            setTypeface(font, android.graphics.Typeface.NORMAL)
         }
         bar.addView(tv)
 
@@ -954,6 +956,7 @@ class MainActivity : AppCompatActivity() {
         globalMiniPlayer?.hide()
         val target = settingsFragment ?: SettingsFragment().also { settingsFragment = it }
         val isNew = !target.isAdded
+        setOverlayFullscreen(true)
         showModuleLoadingOverlay()
         fragmentContainer.post {
             if (isFinishing || isDestroyed) return@post
@@ -985,6 +988,7 @@ class MainActivity : AppCompatActivity() {
         val selectedId = bottomNav.selectedItemId
         val target = getMainModuleFragment(selectedId) ?: getOrCreateMainModuleFragment(selectedId)
         val isNew = target?.isAdded == false
+        setOverlayFullscreen(false)
         showModuleLoadingOverlay()
         fragmentContainer.post {
             if (isFinishing || isDestroyed) return@post
@@ -1016,6 +1020,7 @@ class MainActivity : AppCompatActivity() {
         globalMiniPlayer?.hide()
         val target = equalizerFragment ?: EqualizerFragment().also { equalizerFragment = it }
         val isNew = !target.isAdded
+        setOverlayFullscreen(true)
         showModuleLoadingOverlay()
         fragmentContainer.post {
             if (isFinishing || isDestroyed) return@post
@@ -1049,23 +1054,23 @@ class MainActivity : AppCompatActivity() {
     private fun exitEqualizerToMusic() {
         if (!inEqualizerFromPlayer) return
         inEqualizerFromPlayer = false
-        val current = getMainModuleFragment(currentMainNavItemId)
+        val songPlayer = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER)
+        setOverlayFullscreen(false)
         showModuleLoadingOverlay()
         fragmentContainer.post {
             if (isFinishing || isDestroyed) return@post
             supportFragmentManager.beginTransaction().apply {
                 setReorderingAllowed(true)
                 equalizerFragment?.let { if (it.isAdded) { hide(it); setMaxLifecycle(it, Lifecycle.State.STARTED) } }
-                if (current != null && current.isAdded) show(current)
-                setMaxLifecycle(current ?: return@apply, Lifecycle.State.RESUMED)
+                if (songPlayer != null && songPlayer.isAdded) {
+                    show(songPlayer)
+                    setMaxLifecycle(songPlayer, Lifecycle.State.RESUMED)
+                }
                 commit()
             }
-            if (!isSearchFragmentVisible() && !isPlaylistDetailVisible()) {
-                topAppBar.visibility = View.VISIBLE
-            }
-            configureHeaderActionForMainModules()
-            setSolidNavigationBar(false)
-            bottomNav.visibility = View.VISIBLE
+            topAppBar.visibility = View.GONE
+            setSolidNavigationBar(true)
+            bottomNav.visibility = View.GONE
             lifecycleScope.launch {
                 delay(MODULE_LOAD_OVERLAY_MIN_MS)
                 revealModuleContent()
@@ -1079,6 +1084,7 @@ class MainActivity : AppCompatActivity() {
         globalMiniPlayer?.hide()
         val target = equalizerFragment ?: EqualizerFragment().also { equalizerFragment = it }
         val isNew = !target.isAdded
+        setOverlayFullscreen(true)
         showModuleLoadingOverlay()
         fragmentContainer.post {
             if (isFinishing || isDestroyed) return@post
@@ -1474,6 +1480,7 @@ class MainActivity : AppCompatActivity() {
         currentMainNavItemId = itemId
         // Show overlay immediately — post the heavy fragment work so this frame
         // is rendered before the FragmentManager blocks the UI thread.
+        setOverlayFullscreen(false)
         showModuleLoadingOverlay()
         fragmentContainer.post {
             if (isFinishing || isDestroyed) { isNavigating = false; return@post }
@@ -1529,6 +1536,20 @@ class MainActivity : AppCompatActivity() {
     fun showModuleLoadingOverlay() {
         moduleLoadingOverlay.alpha = 1f
         moduleLoadingOverlay.visibility = View.VISIBLE
+    }
+
+    private fun setOverlayFullscreen(fullscreen: Boolean) {
+        val lp = moduleLoadingOverlay.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams ?: return
+        if (fullscreen) {
+            lp.bottomToTop = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
+            lp.bottomToBottom = R.id.main
+            lp.bottomMargin = 0
+        } else {
+            lp.bottomToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
+            lp.bottomToTop = R.id.bottomNavigation
+            lp.bottomMargin = (72 * resources.displayMetrics.density).toInt()
+        }
+        moduleLoadingOverlay.layoutParams = lp
     }
 
     fun revealModuleContent() {
@@ -1650,6 +1671,14 @@ class MainActivity : AppCompatActivity() {
             (getMainModuleFragment(R.id.nav_music) as? MusicPlayerFragment)?.scrollToTop()
         }
         return true
+    }
+
+    fun ensureHeaderVisibleForMusic() {
+        if (inSettings || inEqualizerFromSettings || inEqualizerFromPlayer || inScannerFromSettings) return
+        topAppBar.visibility = View.VISIBLE
+        configureHeaderActionForMainModules()
+        updateHeaderTitleForModule(R.id.nav_music)
+        bottomNav.visibility = View.VISIBLE
     }
 
     fun hideTopAppBarForSearch() {

@@ -708,9 +708,11 @@ class ScannerFragment : Fragment() {
 
         dialog.setContentView(content)
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.behavior.skipCollapsed = true
+        dialog.behavior.isFitToContents = true
         dialog.setOnShowListener {
-            dialog.findViewById<FrameLayout>(com.google.android.material.R.id.design_bottom_sheet)
-                ?.setBackgroundColor(Color.TRANSPARENT)
+            val bottomSheet = dialog.findViewById<FrameLayout>(com.google.android.material.R.id.design_bottom_sheet)
+            bottomSheet?.setBackgroundColor(Color.TRANSPARENT)
         }
         dialog.setOnDismissListener { 
             scanOptionsBottomSheet = null

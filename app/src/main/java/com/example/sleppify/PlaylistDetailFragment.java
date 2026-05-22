@@ -162,8 +162,7 @@ public class PlaylistDetailFragment extends Fragment
     private android.graphics.drawable.ColorDrawable toolbarBgDrawable;
     private long lastToolbarScrollUpdateMs = 0L;
 
-    private String lastSavedPlaylistKey = null;
-    private String lastSavedPlaylistName = null;
+    // lastSavedPlaylistKey/Name now read from CustomPlaylistsStore (global persistent)
     private final YouTubeMusicService youTubeMusicService = new YouTubeMusicService();
     private final ExecutorService urlPrefetchExecutor = Executors.newFixedThreadPool(2);
     private final ExecutorService trackStateLookupExecutor = Executors.newFixedThreadPool(2);
@@ -3438,9 +3437,11 @@ public class PlaylistDetailFragment extends Fragment
         tvFav.setText("Añadir a playlist");
         btnFavorite.setOnClickListener(v -> {
             dialog.dismiss();
-            if (lastSavedPlaylistKey != null && lastSavedPlaylistName != null) {
-                addTrackToPlaylistByKey(lastSavedPlaylistKey, selectedTrack);
-                showSavedInPlaylistBar(selectedTrack, lastSavedPlaylistKey, lastSavedPlaylistName);
+            String gKey = CustomPlaylistsStore.getLastSavedPlaylistKey(requireContext());
+            String gName = CustomPlaylistsStore.getLastSavedPlaylistName(requireContext());
+            if (gKey != null && gName != null) {
+                addTrackToPlaylistByKey(gKey, selectedTrack);
+                showSavedInPlaylistBar(selectedTrack, gKey, gName);
             } else {
                 showSaveToPlaylistSheet(selectedTrack, null);
             }
@@ -3496,19 +3497,18 @@ public class PlaylistDetailFragment extends Fragment
             );
         });
 
+        dialog.getBehavior().setSkipCollapsed(true);
+        dialog.getBehavior().setFitToContents(true);
+        dialog.setOnShowListener(d -> {
+            View bottomSheet = ((com.google.android.material.bottomsheet.BottomSheetDialog) d)
+                    .findViewById(com.google.android.material.R.id.design_bottom_sheet);
+            if (bottomSheet != null) {
+                View sheetParent = (View) view.getParent();
+                if (sheetParent != null) sheetParent.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+                bottomSheet.setBackgroundResource(android.R.color.transparent);
+            }
+        });
         dialog.show();
-
-        // Configure after show() so BottomSheetBehavior is attached and animation works
-        View parent = (View) view.getParent();
-        if (parent != null) {
-            parent.setBackgroundColor(android.graphics.Color.TRANSPARENT);
-        }
-        View bottomSheet = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
-        if (bottomSheet != null) {
-            com.google.android.material.bottomsheet.BottomSheetBehavior<?> behavior =
-                    com.google.android.material.bottomsheet.BottomSheetBehavior.from(bottomSheet);
-            behavior.setSkipCollapsed(true);
-        }
     }
 
     /**
@@ -3539,8 +3539,7 @@ public class PlaylistDetailFragment extends Fragment
         sheet.findViewById(R.id.btnSaveConfirm).setOnClickListener(v -> {
             saveDialog.dismiss();
             if (lastAddedKey[0] != null && lastAddedName[0] != null) {
-                lastSavedPlaylistKey = lastAddedKey[0];
-                lastSavedPlaylistName = lastAddedName[0];
+                CustomPlaylistsStore.setLastSavedPlaylist(requireContext(), lastAddedKey[0], lastAddedName[0]);
                 showSavedInPlaylistBar(track, lastAddedKey[0], lastAddedName[0]);
             } else if (didRemove[0]) {
                 String playlistName = resolveCurrentPlaylistName();
@@ -3657,17 +3656,18 @@ public class PlaylistDetailFragment extends Fragment
             llList.addView(row);
         }
 
+        saveDialog.getBehavior().setSkipCollapsed(true);
+        saveDialog.getBehavior().setFitToContents(true);
+        saveDialog.setOnShowListener(d -> {
+            View bottomSheetSave = ((com.google.android.material.bottomsheet.BottomSheetDialog) d)
+                    .findViewById(com.google.android.material.R.id.design_bottom_sheet);
+            if (bottomSheetSave != null) {
+                View sheetParent = (View) sheet.getParent();
+                if (sheetParent != null) sheetParent.setBackgroundColor(Color.TRANSPARENT);
+                bottomSheetSave.setBackgroundResource(android.R.color.transparent);
+            }
+        });
         saveDialog.show();
-
-        // Configure after show() so BottomSheetBehavior is attached and animation works
-        View parent = (View) sheet.getParent();
-        if (parent != null) parent.setBackgroundColor(Color.TRANSPARENT);
-        View bottomSheetSave = saveDialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
-        if (bottomSheetSave != null) {
-            com.google.android.material.bottomsheet.BottomSheetBehavior<?> behavior =
-                    com.google.android.material.bottomsheet.BottomSheetBehavior.from(bottomSheetSave);
-            behavior.setSkipCollapsed(true);
-        }
     }
 
     private boolean isTrackInPlaylist(@NonNull Context ctx, @NonNull String videoId, @NonNull String playlistKey) {
@@ -3757,22 +3757,30 @@ public class PlaylistDetailFragment extends Fragment
         }
     }
 
+    private int computeSnackbarBottomMargin(@NonNull Activity activity, float density) {
+        int margin = (int) (8 * density);
+        View bottomNav = activity.findViewById(R.id.bottomNavigation);
+        if (bottomNav != null && bottomNav.getVisibility() == View.VISIBLE) {
+            margin += bottomNav.getHeight();
+        }
+        View miniPlayer = activity.findViewById(R.id.llGlobalMiniPlayer);
+        if (miniPlayer != null && miniPlayer.getVisibility() == View.VISIBLE) {
+            margin += miniPlayer.getHeight();
+        }
+        return margin;
+    }
+
     private void showSavedInPlaylistBar(@NonNull PlaylistTrack track, @NonNull String playlistKey, @NonNull String playlistName) {
         if (!isAdded()) return;
         MainActivity activity = (MainActivity) requireActivity();
         ViewGroup rootView = activity.findViewById(android.R.id.content);
         if (rootView == null) return;
 
-        // Remove any existing saved bar
         View existing = rootView.findViewWithTag("saved_bar");
         if (existing != null) rootView.removeView(existing);
 
         float density = getResources().getDisplayMetrics().density;
-        int miniPlayerHeight = (int) (72 * density); // Height of llGlobalMiniPlayer
-        int bottomNavHeight = (int) (48 * density);  // Height of bottomNavigation
-        int marginAboveMiniPlayer = (int) (8 * density);
 
-        // Build the bar programmatically
         LinearLayout bar = new LinearLayout(requireContext());
         bar.setTag("saved_bar");
         bar.setId(View.generateViewId());
@@ -3780,15 +3788,17 @@ public class PlaylistDetailFragment extends Fragment
         bar.setGravity(android.view.Gravity.CENTER_VERTICAL);
         bar.setBackgroundColor(Color.parseColor("#FF1E1E1E"));
         int hPad = (int) (16 * density);
-        int vPad = (int) (20 * density);
+        int vPad = (int) (12 * density);
         bar.setPadding(hPad, vPad, hPad, vPad);
-        bar.setElevation(40 * density); // Higher than miniplayer (33dp)
+        bar.setElevation(8 * density);
 
         TextView tvSaved = new TextView(requireContext());
         tvSaved.setText("Se guardó en " + playlistName);
         tvSaved.setTextColor(Color.WHITE);
         tvSaved.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
-        tvSaved.setTypeface(null, android.graphics.Typeface.BOLD);
+        tvSaved.setTypeface(null, android.graphics.Typeface.NORMAL);
+        tvSaved.setMaxLines(1);
+        tvSaved.setEllipsize(android.text.TextUtils.TruncateAt.END);
         LinearLayout.LayoutParams tvParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
         tvSaved.setLayoutParams(tvParams);
         bar.addView(tvSaved);
@@ -3798,23 +3808,21 @@ public class PlaylistDetailFragment extends Fragment
         btnChange.setTextColor(Color.parseColor("#8AB4F8"));
         btnChange.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
         btnChange.setTypeface(null, android.graphics.Typeface.BOLD);
-        btnChange.setPadding((int) (12 * density), 0, 0, 0);
+        btnChange.setPadding((int) (16 * density), 0, 0, 0);
         btnChange.setOnClickListener(v -> {
             rootView.removeView(bar);
-            lastSavedPlaylistKey = null;
-            lastSavedPlaylistName = null;
+            CustomPlaylistsStore.clearLastSavedPlaylist(requireContext());
             showSaveToPlaylistSheet(track, playlistKey);
         });
         bar.addView(btnChange);
 
-        int barBottomMargin = miniPlayerHeight + bottomNavHeight + marginAboveMiniPlayer;
+        int barBottomMargin = computeSnackbarBottomMargin(activity, density);
         FrameLayout.LayoutParams flp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         flp.gravity = android.view.Gravity.BOTTOM;
         flp.bottomMargin = barBottomMargin;
         rootView.addView(bar, flp);
 
-        // Auto-dismiss after 4 seconds
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
             if (bar.getParent() != null) {
                 ((ViewGroup) bar.getParent()).removeView(bar);
@@ -3832,9 +3840,6 @@ public class PlaylistDetailFragment extends Fragment
         if (existing != null) rootView.removeView(existing);
 
         float density = getResources().getDisplayMetrics().density;
-        int miniPlayerHeight = (int) (72 * density); // Height of llGlobalMiniPlayer
-        int bottomNavHeight = (int) (48 * density);  // Height of bottomNavigation
-        int marginAboveMiniPlayer = (int) (8 * density);
 
         LinearLayout bar = new LinearLayout(requireContext());
         bar.setTag("saved_bar");
@@ -3843,16 +3848,18 @@ public class PlaylistDetailFragment extends Fragment
         bar.setGravity(android.view.Gravity.CENTER_VERTICAL);
         bar.setBackgroundColor(Color.parseColor("#FF1E1E1E"));
         int hPad = (int) (16 * density);
-        int vPad = (int) (20 * density);
+        int vPad = (int) (12 * density);
         bar.setPadding(hPad, vPad, hPad, vPad);
-        bar.setElevation(40 * density); // Higher than miniplayer (33dp)
+        bar.setElevation(8 * density);
 
         String title = TextUtils.isEmpty(track.title) ? "Tema" : track.title;
         TextView tvMsg = new TextView(requireContext());
         tvMsg.setText(title + " eliminado de " + playlistName);
         tvMsg.setTextColor(Color.WHITE);
         tvMsg.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
-        tvMsg.setTypeface(null, android.graphics.Typeface.BOLD);
+        tvMsg.setTypeface(null, android.graphics.Typeface.NORMAL);
+        tvMsg.setMaxLines(1);
+        tvMsg.setEllipsize(android.text.TextUtils.TruncateAt.END);
         LinearLayout.LayoutParams tvParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
         tvMsg.setLayoutParams(tvParams);
         bar.addView(tvMsg);
@@ -3862,7 +3869,7 @@ public class PlaylistDetailFragment extends Fragment
         btnUndo.setTextColor(Color.parseColor("#8AB4F8"));
         btnUndo.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
         btnUndo.setTypeface(null, android.graphics.Typeface.BOLD);
-        btnUndo.setPadding((int) (12 * density), 0, 0, 0);
+        btnUndo.setPadding((int) (16 * density), 0, 0, 0);
         btnUndo.setOnClickListener(v -> {
             rootView.removeView(bar);
             undoRemoveTrackFromPlaylist(track);
@@ -3870,7 +3877,7 @@ public class PlaylistDetailFragment extends Fragment
         });
         bar.addView(btnUndo);
 
-        int barBottomMargin = miniPlayerHeight + bottomNavHeight + marginAboveMiniPlayer;
+        int barBottomMargin = computeSnackbarBottomMargin(activity, density);
         FrameLayout.LayoutParams flp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         flp.gravity = android.view.Gravity.BOTTOM;

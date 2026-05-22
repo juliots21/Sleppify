@@ -208,4 +208,35 @@ object CustomPlaylistsStore {
 
         return true
     }
+
+    // --- Global last-used playlist for quick "Add to playlist" ---
+    private const val PREFS_QUICK_ADD = "sleppify_quick_add"
+    private const val KEY_LAST_PLAYLIST_KEY = "last_playlist_key"
+    private const val KEY_LAST_PLAYLIST_NAME = "last_playlist_name"
+
+    @JvmStatic
+    fun getLastSavedPlaylistKey(context: Context): String? {
+        return context.getSharedPreferences(PREFS_QUICK_ADD, Context.MODE_PRIVATE)
+            .getString(KEY_LAST_PLAYLIST_KEY, null)
+    }
+
+    @JvmStatic
+    fun getLastSavedPlaylistName(context: Context): String? {
+        return context.getSharedPreferences(PREFS_QUICK_ADD, Context.MODE_PRIVATE)
+            .getString(KEY_LAST_PLAYLIST_NAME, null)
+    }
+
+    @JvmStatic
+    fun setLastSavedPlaylist(context: Context, key: String?, name: String?) {
+        context.getSharedPreferences(PREFS_QUICK_ADD, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_LAST_PLAYLIST_KEY, key)
+            .putString(KEY_LAST_PLAYLIST_NAME, name)
+            .apply()
+    }
+
+    @JvmStatic
+    fun clearLastSavedPlaylist(context: Context) {
+        setLastSavedPlaylist(context, null, null)
+    }
 }
