@@ -359,6 +359,13 @@ class SearchFragment : Fragment() {
                 PlaybackHistoryStore.load(ctx).queue.forEach { tryAdd(it.videoId, it.title, it.artist, it.duration, it.imageUrl) }
             } catch (_: Exception) {}
 
+            // 5. Radio history tracks
+            try {
+                RadioHistoryStore.getRadios(ctx).forEach { radio ->
+                    radio.tracks.forEach { t -> tryAdd(t.videoId, t.title, t.artist, "", t.thumbnailUrl) }
+                }
+            } catch (_: Exception) {}
+
             launch(Dispatchers.Main) {
                 if (!isAdded) return@launch
                 localTrackIndex.clear()
@@ -637,10 +644,7 @@ class SearchFragment : Fragment() {
 
         fun isFuzzyMatch(tok: String, word: String): Boolean {
             if (word.startsWith(tok)) return true
-            if (tok.length >= 4 && word.length >= 4) {
-                return tok.substring(0, 4) == word.substring(0, 4)
-            }
-            return false
+            return suggestFuzzyMatch(tok, word)
         }
 
         val titleWords = t.split(Regex("\\s+"))
@@ -844,6 +848,14 @@ class SearchFragment : Fragment() {
         val lenDiff = kotlin.math.abs(a.length - b.length)
         if (lenDiff > 1) return false
         return levenshtein(a, b) <= 1
+    }
+
+    private fun suggestFuzzyMatch(tok: String, word: String): Boolean {
+        if (tok.length < 3 || word.length < 3) return false
+        val lenDiff = kotlin.math.abs(tok.length - word.length)
+        val maxDist = if (tok.length >= 5) 2 else 1
+        if (lenDiff > maxDist) return false
+        return levenshtein(tok, word) <= maxDist
     }
 
     private fun levenshtein(a: String, b: String): Int {
@@ -1917,15 +1929,20 @@ class SearchFragment : Fragment() {
             result.add(SuggestionItem.Suggestion(draft.trim()))
         }
 
-        // Text-based autocomplete: suggest full track titles that start with the typed text
+        // Text-based autocomplete: suggest full track titles/artists that match the typed text (with fuzzy fallback)
         if (normDraft.length >= 2 && localTrackIndex.isNotEmpty()) {
             val normDraftLower = normDraft.lowercase()
             val seenNorm = mutableSetOf<String>()
             val autocompleteCandidates = localTrackIndex
                 .mapNotNull { track ->
                     val normTitle = normalizeForFilter(track.title)
-                    if (normTitle.startsWith(normDraftLower) && normTitle != normDraftLower && seenNorm.add(normTitle)) {
-                        track.title.trim()
+                    val normArtist = normalizeForFilter(track.artist)
+                    val titleMatch = normTitle.startsWith(normDraftLower) || (normDraftLower.length >= 3 && normTitle.split(WHITESPACE_REGEX).any { suggestFuzzyMatch(normDraftLower, it) })
+                    val artistMatch = normArtist.startsWith(normDraftLower) || (normDraftLower.length >= 3 && normArtist.split(WHITESPACE_REGEX).any { suggestFuzzyMatch(normDraftLower, it) })
+                    val label = if (titleMatch) normTitle else normArtist
+                    val display = if (titleMatch) track.title.trim() else track.artist.trim()
+                    if ((titleMatch || artistMatch) && label != normDraftLower && seenNorm.add(label)) {
+                        display
                     } else null
                 }
                 .take(3)
@@ -1963,7 +1980,7 @@ class SearchFragment : Fragment() {
                     val artistWords = artistNorm.split(WHITESPACE_REGEX)
                     val allWords = titleWords + artistWords
                     val hits = draftTokens.count { tok ->
-                        allWords.any { w -> w.startsWith(tok) || (tok.length >= 4 && w.length >= 4 && tok.substring(0, 4) == w.substring(0, 4)) }
+                        allWords.any { w -> w.startsWith(tok) || suggestFuzzyMatch(tok, w) }
                     }
                     hits >= (draftTokens.size + 1) / 2
                 }
@@ -1983,10 +2000,13 @@ class SearchFragment : Fragment() {
                 trackMatches.forEach { result.add(SuggestionItem.Track(it)) }
             }
 
-            // Add artist suggestions from local library
+            // Add artist suggestions from local library (with fuzzy fallback)
             val matchingArtists = localTrackIndex
                 .map { it.artist.trim() }
-                .filter { it.isNotEmpty() && normalizeForFilter(it).contains(normDraft) }
+                .filter { it.isNotEmpty() &&
+                    (normalizeForFilter(it).contains(normDraft) ||
+                     normalizeForFilter(it).split(WHITESPACE_REGEX).any { w -> suggestFuzzyMatch(normDraft, w) })
+                }
                 .distinct()
                 .sorted()
                 .take(4)

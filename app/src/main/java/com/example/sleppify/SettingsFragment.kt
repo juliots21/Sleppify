@@ -103,7 +103,6 @@ class SettingsFragment : Fragment() {
             LocalFilesStore.setEnabled(requireContext(), true)
             scanAndCacheLocalFiles()
             renderLocalFilesSwitch()
-            (activity as? MainActivity)?.refreshMusicLibrary()
         } else {
             LocalFilesStore.setEnabled(requireContext(), false)
             renderLocalFilesSwitch()
@@ -257,6 +256,9 @@ class SettingsFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             val tracks = LocalFilesStore.scanLocalFiles(requireContext())
             LocalFilesStore.cacheFiles(requireContext(), tracks)
+            launch(Dispatchers.Main) {
+                (activity as? MainActivity)?.refreshMusicLibrary()
+            }
         }
     }
 

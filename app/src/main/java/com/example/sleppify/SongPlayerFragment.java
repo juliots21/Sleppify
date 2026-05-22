@@ -1053,6 +1053,30 @@ public class SongPlayerFragment extends Fragment {
             targetIndex = (currentIndex + delta + tracks.size()) % tracks.size();
         }
 
+        // When offline, skip to the next track that has offline audio available
+        if (!isNetworkAvailable() && isAdded()) {
+            int scanned = 0;
+            int step = delta >= 0 ? 1 : -1;
+            while (scanned < tracks.size()) {
+                PlayerTrack candidate = tracks.get(targetIndex);
+                if (candidate != null && !TextUtils.isEmpty(candidate.videoId)
+                        && (LocalFilesStore.isLocalVideoId(candidate.videoId)
+                            || OfflineAudioStore.hasOfflineAudio(requireContext(), candidate.videoId))) {
+                    break;
+                }
+                targetIndex = (targetIndex + step + tracks.size()) % tracks.size();
+                scanned++;
+            }
+            if (scanned >= tracks.size()) {
+                // No offline track found in the entire queue
+                isPlaying = false;
+                updatePlayPauseIcon();
+                updateMediaSessionState();
+                syncMiniStateWithPlaylist();
+                return;
+            }
+        }
+
         currentIndex = targetIndex;
         isPlaying = true;
         currentSeconds = 0;
@@ -1623,8 +1647,16 @@ public class SongPlayerFragment extends Fragment {
 
                 if (ok) {
                     OfflineAudioStore.markOfflineAudioState(normalized, true);
-                    PlaybackEventBus.notifyPlaybackSnapshotUpdated();
                     Log.d(TAG, "stream-as-download: saved " + normalized);
+                    localProgressHandler.post(() -> {
+                        if (!isAdded()) return;
+                        try {
+                            Fragment playlist = getParentFragmentManager().findFragmentByTag("playlist_detail");
+                            if (playlist instanceof PlaylistDetailFragment) {
+                                ((PlaylistDetailFragment) playlist).externalRefreshOfflineState();
+                            }
+                        } catch (Exception ignored) {}
+                    });
                 } else {
                     OfflineAudioStore.markOfflineAudioState(normalized, false);
                     if (targetFile.isFile()) targetFile.delete();
@@ -4845,10 +4877,10 @@ public class SongPlayerFragment extends Fragment {
         root.setScaleY(0.7f);
         root.setAlpha(0f);
 
-        // Position: left of button, vertically aligned with button center
-        int xOff = -popupWidthPx;
-        int yOff = -(int) (btnPlayerMore.getHeight() * 0.15f);
-        popup.showAsDropDown(btnPlayerMore, xOff, yOff, android.view.Gravity.END | android.view.Gravity.TOP);
+        // Position: right next to the left edge of the button
+        int xOff = -popupWidthPx - (int) (4 * density);
+        int yOff = -btnPlayerMore.getHeight();
+        popup.showAsDropDown(btnPlayerMore, xOff, yOff, android.view.Gravity.START | android.view.Gravity.TOP);
 
         // Entrance animation
         root.animate()

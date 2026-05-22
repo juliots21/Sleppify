@@ -95,6 +95,53 @@
                     app:tint="@color/text_primary" />
             </LinearLayout>
 
+            <!-- No connection state (radio offline) -->
+            <LinearLayout
+                android:id="@+id/flNoConnectionState"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:background="@color/surface_dark"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:orientation="vertical"
+                android:visibility="gone"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent">
+
+                <ImageView
+                    android:layout_width="64dp"
+                    android:layout_height="64dp"
+                    android:src="@drawable/ic_sync_offline"
+                    android:alpha="0.6"
+                    android:contentDescription="Sin conexión" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:text="Sin conexión a internet"
+                    android:textColor="@color/text_primary"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:id="@+id/btnRetryConnection"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="20dp"
+                    android:background="@drawable/bg_offline_state_outline_primary"
+                    android:paddingHorizontal="24dp"
+                    android:paddingVertical="10dp"
+                    android:text="Volver a intentar"
+                    android:textColor="@color/stitch_blue"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:clickable="true"
+                    android:focusable="true" />
+            </LinearLayout>
+
             <androidx.constraintlayout.widget.ConstraintLayout
                 android:id="@+id/flPlaylistLoadingOverlay"
                 android:layout_width="0dp"

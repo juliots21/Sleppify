@@ -184,6 +184,36 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
         maybeRestoreHiddenPlayerFromSnapshot();
         updateMiniPlayerUi();
         startMiniProgressTicker();
+
+        // --- TEMPORARY: Coming Soon Overlay ---
+        View flComingSoonOverlay = view.findViewById(R.id.flComingSoonOverlay);
+        ImageView ivComingSoonIcon = view.findViewById(R.id.ivComingSoonIcon);
+        View tvComingSoonBypass = view.findViewById(R.id.tvComingSoonBypass);
+        if (flComingSoonOverlay != null) {
+            flComingSoonOverlay.setVisibility(View.VISIBLE);
+            if (ivComingSoonIcon != null) {
+                ivComingSoonIcon.setColorFilter(0xFFFFFFFF, android.graphics.PorterDuff.Mode.SRC_IN);
+                android.animation.ObjectAnimator pulse = android.animation.ObjectAnimator.ofPropertyValuesHolder(
+                        ivComingSoonIcon,
+                        android.animation.PropertyValuesHolder.ofFloat("scaleX", 1f, 1.08f, 1f),
+                        android.animation.PropertyValuesHolder.ofFloat("scaleY", 1f, 1.08f, 1f)
+                );
+                pulse.setDuration(6000L);
+                pulse.setRepeatCount(android.animation.ObjectAnimator.INFINITE);
+                pulse.setInterpolator(new android.view.animation.AccelerateDecelerateInterpolator());
+                pulse.start();
+            }
+            if (tvComingSoonBypass != null) {
+                tvComingSoonBypass.setOnClickListener(v -> {
+                    flComingSoonOverlay.animate()
+                            .alpha(0f)
+                            .setDuration(300L)
+                            .withEndAction(() -> flComingSoonOverlay.setVisibility(View.GONE))
+                            .start();
+                });
+            }
+        }
+        // --- END TEMPORARY ---
     }
 
     @Override

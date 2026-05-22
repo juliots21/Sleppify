@@ -795,6 +795,12 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             if (!isAdded() || isRemoving() || isDetached()) return;
             maybeRestoreHiddenMiniPlayerFromPausedSnapshot();
         });
+        // Always start from the top — post so it runs AFTER RecyclerView restores saved scroll state
+        if (rvMusicResults != null) {
+            rvMusicResults.post(() -> {
+                if (rvMusicResults != null) rvMusicResults.scrollToPosition(0);
+            });
+        }
     }
     @Override
     public void onResume() {
@@ -1099,8 +1105,25 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         
         
         if (!isNetworkAvailable()) {
-            setLibraryPullRefreshState(false);
-            renderLibraryResults();
+            // Rescan local files so pull-to-refresh updates them even offline
+            if (LocalFilesStore.isEnabled(requireContext())) {
+                java.util.concurrent.Executors.newSingleThreadExecutor().execute(() -> {
+                    try {
+                        List<LocalFilesStore.LocalTrack> fresh = LocalFilesStore.scanLocalFiles(requireContext());
+                        LocalFilesStore.cacheFiles(requireContext(), fresh);
+                    } catch (Exception ignored) {}
+                    if (isAdded()) {
+                        requireActivity().runOnUiThread(() -> {
+                            displayLibraryDirty = true;
+                            setLibraryPullRefreshState(false);
+                            renderLibraryResults();
+                        });
+                    }
+                });
+            } else {
+                setLibraryPullRefreshState(false);
+                renderLibraryResults();
+            }
             return;
         }
         if (!streamingOauthCompleted) {
@@ -1640,6 +1663,10 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 }
                 String pid = playlist.contentId == null ? "" : playlist.contentId.trim();
                 if (pid.isEmpty()) continue;
+                if (LocalFilesStore.PLAYLIST_ID.equals(pid)) {
+                    visibleLibraryTracks.add(playlist);
+                    continue;
+                }
                 ArrayList<CachedPlaylistTrack> cachedTracks = loadCachedPlaylistTracksForOffline(offlineCtx, pid);
                 boolean hasDownload = false;
                 for (CachedPlaylistTrack t : cachedTracks) {
@@ -1663,8 +1690,8 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         }
         if (rvMusicResults != null) {
             rvMusicResults.animate().cancel();
+            rvMusicResults.scrollToPosition(0);
             if (rvMusicResults.getVisibility() != View.VISIBLE) {
-                rvMusicResults.scrollToPosition(0);
                 rvMusicResults.setAlpha(0f);
                 rvMusicResults.setVisibility(View.VISIBLE);
                 rvMusicResults.animate().alpha(1f).setDuration(180L).start();

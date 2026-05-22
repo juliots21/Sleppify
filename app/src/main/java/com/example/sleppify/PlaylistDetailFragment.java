@@ -151,6 +151,8 @@ public class PlaylistDetailFragment extends Fragment
     private RecyclerView rvPlaylistContent;
     private View playlistLoadingOverlay;
     private ProgressBar pbPlaylistLoading;
+    private View flNoConnectionState;
+    private View btnRetryConnection;
 
     // Playlist toolbar members (back + search + scroll-aware title)
     private View llPlaylistToolbar;
@@ -283,6 +285,8 @@ public class PlaylistDetailFragment extends Fragment
         rvPlaylistContent = view.findViewById(R.id.rvPlaylistContent);
         playlistLoadingOverlay = view.findViewById(R.id.flPlaylistLoadingOverlay);
         pbPlaylistLoading = view.findViewById(R.id.pbPlaylistLoading);
+        flNoConnectionState = view.findViewById(R.id.flNoConnectionState);
+        btnRetryConnection = view.findViewById(R.id.btnRetryConnection);
 
         // Playlist toolbar initialization (back + search + scroll title)
         llPlaylistToolbar = view.findViewById(R.id.llPlaylistToolbar);
@@ -472,10 +476,7 @@ public class PlaylistDetailFragment extends Fragment
     @Override
     public void onPlaybackSnapshotUpdated() {
         if (isAdded() && getActivity() != null) {
-            getActivity().runOnUiThread(() -> {
-                syncTrackStateFromPlayer();
-                refreshVisibleTrackRows();
-            });
+            getActivity().runOnUiThread(this::syncTrackStateFromPlayer);
         }
     }
 
@@ -696,6 +697,36 @@ public class PlaylistDetailFragment extends Fragment
         if (pbPlaylistLoading != null) {
             pbPlaylistLoading.setVisibility(View.GONE);
         }
+    }
+
+    private void showNoConnectionState(
+            @NonNull String playlistId,
+            @NonNull String accessToken,
+            boolean forceRefresh,
+            boolean loadMore
+    ) {
+        revealPlaylistContentIfNeeded(true);
+        if (flNoConnectionState != null) {
+            flNoConnectionState.setVisibility(View.VISIBLE);
+        }
+        if (btnRetryConnection != null) {
+            btnRetryConnection.setOnClickListener(v -> {
+                hideNoConnectionState();
+                showInitialLoadingOverlay();
+                bindTrackList(playlistId, accessToken, forceRefresh, loadMore);
+            });
+        }
+    }
+
+    private void hideNoConnectionState() {
+        if (flNoConnectionState != null) {
+            flNoConnectionState.setVisibility(View.GONE);
+        }
+    }
+
+    public void externalRefreshOfflineState() {
+        if (!isAdded() || getView() == null) return;
+        refreshVisibleTrackRows();
     }
 
     public void externalForceRefresh() {
@@ -1510,6 +1541,19 @@ public class PlaylistDetailFragment extends Fragment
 
         // Radio/Mix playlists (RDAMVM, RDEM, RDTMAK) use InnerTube API with cookie
         if (playlistId.startsWith("RDAMVM") || playlistId.startsWith("RDEM") || playlistId.startsWith("RDTMAK")) {
+            // Check no-internet before attempting network fetch
+            if (!hasValidatedInternet(requireContext())) {
+                List<PlaylistTrack> cached = sanitizeTracksForPlaylist(
+                        playlistId, loadCachedTracks(playlistId));
+                if (!cached.isEmpty()) {
+                    playlistTracksLoadMoreInFlight = false;
+                    renderTracks(cached, playlistId, true);
+                    return;
+                }
+                playlistTracksLoadMoreInFlight = false;
+                showNoConnectionState(playlistId, effectiveAccessToken, forceRefresh, loadMore);
+                return;
+            }
             String cookie = requireContext().getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE)
                     .getString("stream_last_youtube_web_cookie", "");
             if (cookie == null) cookie = "";
@@ -1560,6 +1604,7 @@ public class PlaylistDetailFragment extends Fragment
                             ));
                         }
                     }
+                    hideNoConnectionState();
                     cacheTracks(playlistId, mapped, true);
                     renderTracks(mapped, playlistId, false);
                 }
@@ -1575,7 +1620,7 @@ public class PlaylistDetailFragment extends Fragment
                         renderTracks(cached, playlistId, true);
                         return;
                     }
-                    revealPlaylistContentIfNeeded(true);
+                    showNoConnectionState(playlistId, effectiveAccessToken, forceRefresh, loadMore);
                 }
             });
             return;

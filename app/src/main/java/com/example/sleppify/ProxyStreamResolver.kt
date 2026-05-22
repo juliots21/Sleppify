@@ -1,8 +1,6 @@
 package com.example.sleppify
 
 import android.util.Log
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -17,8 +15,6 @@ object ProxyStreamResolver {
 
     private const val TAG = "ProxyStreamResolver"
     private const val CACHE_EXPIRY_MS = 4 * 60 * 60 * 1000L // 4 hours
-    private const val CONNECT_TIMEOUT_MS = 6000
-    private const val READ_TIMEOUT_MS = 4000
 
     private val STREAM_SERVERS = arrayOf(
         "https://sleppifydownload.alwaysdata.net",
@@ -33,8 +29,9 @@ object ProxyStreamResolver {
 
     /**
      * Returns the streaming proxy URL for the given videoId.
-     * Uses round-robin server selection with failover (health check via HEAD).
-     * The returned URL supports Range requests (seeking) via the proxy server.
+     * Uses round-robin server selection. No health check — if the server is down,
+     * ExoPlayer will fail and the caller handles retry/failover. This avoids a
+     * blocking 1-2s GET per resolution.
      */
     @JvmStatic
     fun resolveStreamUrl(videoId: String?): String? {
@@ -49,41 +46,13 @@ object ProxyStreamResolver {
             }
         }
 
-        val startIndex = roundRobinIndex.getAndUpdate { (it + 1) % STREAM_SERVERS.size }
+        val serverIndex = roundRobinIndex.getAndUpdate { (it + 1) % STREAM_SERVERS.size }
+        val server = STREAM_SERVERS[serverIndex]
+        val streamUrl = "$server/api/stream/$videoId"
 
-        for (attempt in 0 until STREAM_SERVERS.size) {
-            val serverIndex = (startIndex + attempt) % STREAM_SERVERS.size
-            val server = STREAM_SERVERS[serverIndex]
-            val streamUrl = "$server/api/stream/$videoId"
-
-            try {
-                // Verify the server is reachable with a quick health check
-                val healthUrl = URL("$server/api/health")
-                val conn = healthUrl.openConnection() as HttpURLConnection
-                conn.requestMethod = "GET"
-                conn.connectTimeout = CONNECT_TIMEOUT_MS
-                conn.readTimeout = READ_TIMEOUT_MS
-                val code = conn.responseCode
-                conn.disconnect()
-
-                if (code != 200) {
-                    Log.w(TAG, "Server $serverIndex health check failed: $code")
-                    continue
-                }
-
-                // Server is alive — use this proxy URL
-                urlCache[videoId] = CachedUrl(streamUrl, System.currentTimeMillis())
-                Log.d(TAG, "Resolved $videoId via server $serverIndex")
-                return streamUrl
-
-            } catch (e: Exception) {
-                Log.w(TAG, "Server $serverIndex unreachable for $videoId: ${e.message}")
-                continue
-            }
-        }
-
-        Log.e(TAG, "All servers failed for $videoId")
-        return null
+        urlCache[videoId] = CachedUrl(streamUrl, System.currentTimeMillis())
+        Log.d(TAG, "Resolved $videoId via server $serverIndex")
+        return streamUrl
     }
 
     /**

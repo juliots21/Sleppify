@@ -804,6 +804,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showMainShell() {
+        // Do not force header/bottomNav visible when inside overlay screens
+        if (inSettings || inEqualizerFromSettings || inEqualizerFromPlayer || inScannerFromSettings) return
         if (!isSearchFragmentVisible() && !isPlaylistDetailVisible()) {
             topAppBar.visibility = View.VISIBLE
         }
@@ -1475,26 +1477,27 @@ class MainActivity : AppCompatActivity() {
         showModuleLoadingOverlay()
         fragmentContainer.post {
             if (isFinishing || isDestroyed) { isNavigating = false; return@post }
+            // Re-resolve all fragment references to avoid stale properties after deferred post
+            restoreMainModuleReferences()
+            val resolvedTarget = supportFragmentManager.findFragmentByTag(tag) ?: target
             supportFragmentManager.beginTransaction().apply {
                 setReorderingAllowed(true)
-                playlistDetailFragment = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL)
-                songPlayerFragment = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER)
 
-                hideIfVisible(this, principalFragment, target)
-                hideIfVisible(this, musicFragment, target)
-                hideIfVisible(this, playlistDetailFragment, target)
-                hideIfVisible(this, songPlayerFragment, target)
-                hideIfVisible(this, settingsFragment, target)
-                hideIfVisible(this, equalizerFragment, target)
-                hideIfVisible(this, scannerFragment, target)
-                hideIfVisible(this, searchFragment, target)
+                hideIfVisible(this, principalFragment, resolvedTarget)
+                hideIfVisible(this, musicFragment, resolvedTarget)
+                hideIfVisible(this, playlistDetailFragment, resolvedTarget)
+                hideIfVisible(this, songPlayerFragment, resolvedTarget)
+                hideIfVisible(this, settingsFragment, resolvedTarget)
+                hideIfVisible(this, equalizerFragment, resolvedTarget)
+                hideIfVisible(this, scannerFragment, resolvedTarget)
+                hideIfVisible(this, searchFragment, resolvedTarget)
 
                 if (songPlayerFragment != null && songPlayerFragment!!.isAdded && !songPlayerFragment!!.isHidden) {
                     hide(songPlayerFragment!!)
                 }
 
-                if (target.isAdded) show(target) else add(R.id.fragmentContainer, target, tag)
-                setMaxLifecycle(target, Lifecycle.State.RESUMED)
+                if (resolvedTarget.isAdded) show(resolvedTarget) else add(R.id.fragmentContainer, resolvedTarget, tag)
+                setMaxLifecycle(resolvedTarget, Lifecycle.State.RESUMED)
                 commitAllowingStateLoss()
             }
 
