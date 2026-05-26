@@ -248,16 +248,42 @@ class YouTubeMusicService @JvmOverloads constructor(
     @Throws(Exception::class)
     private fun performInnertubeSearchRequest(query: String, maxResults: Int): List<TrackResult> {
         val endpoint = "https://music.youtube.com/youtubei/v1/search?prettyPrint=false"
+        
+        // Detectar si el usuario busca contenido tipo video (subtítulos, letras, en vivo, covers, karaoke, etc.)
+        val lower = query.lowercase(java.util.Locale.ROOT)
+        val isVideoQuery = lower.contains("sub") || 
+                           lower.contains("español") || 
+                           lower.contains("spanish") || 
+                           lower.contains("lyrics") || 
+                           lower.contains("letra") || 
+                           lower.contains("cover") || 
+                           lower.contains("live") || 
+                           lower.contains("en vivo") || 
+                           lower.contains("traducido") || 
+                           lower.contains("karaoke") || 
+                           lower.contains("video") || 
+                           lower.contains("clip") || 
+                           lower.contains("subtitulado") || 
+                           lower.contains("traduccion")
+                           
+        val searchParams = if (isVideoQuery) {
+            "EgWKAQIQAWoKEAkQChAFEAMQBA%3D%3D" // Filtro de Videos (para encontrar subtítulos, traducciones, covers, en vivo)
+        } else {
+            null // Sin filtro para permitir corrección ortográfica y autocompletado nativo
+        }
+
+        val clientContext = JSONObject().apply {
+            put("clientName", "WEB_REMIX")
+            put("clientVersion", "1.20240101.01.00")
+            put("hl", "en")
+        }
+
         val body = JSONObject().apply {
-            put("context", JSONObject().apply {
-                put("client", JSONObject().apply {
-                    put("clientName", "WEB_REMIX")
-                    put("clientVersion", "1.20240101.01.00")
-                    put("hl", "en")
-                })
-            })
+            put("context", JSONObject().apply { put("client", clientContext) })
             put("query", query)
-            put("params", "EgWKAQIIAWoKEAkQChAFEAMQBA%3D%3D") // songs filter
+            if (searchParams != null) {
+                put("params", searchParams)
+            }
         }.toString().toByteArray(StandardCharsets.UTF_8)
 
         val url = URL(endpoint)
@@ -271,6 +297,7 @@ class YouTubeMusicService @JvmOverloads constructor(
         connection.setRequestProperty("User-Agent", "Mozilla/5.0")
         connection.setRequestProperty("Origin", "https://music.youtube.com")
         connection.setRequestProperty("Referer", "https://music.youtube.com/")
+        val rootJson: JSONObject
         try {
             connection.outputStream.use { it.write(body) }
             val statusCode = connection.responseCode
@@ -278,10 +305,146 @@ class YouTubeMusicService @JvmOverloads constructor(
             if (statusCode != HttpURLConnection.HTTP_OK) {
                 throw IllegalStateException("Innertube search error $statusCode")
             }
-            return parseInnertubeSearchResults(JSONObject(responseBody), maxResults)
+            rootJson = JSONObject(responseBody)
         } finally {
             connection.disconnect()
         }
+
+        val results = parseInnertubeSearchResults(rootJson, maxResults).toMutableList()
+
+        // Paginar con continuation tokens hasta alcanzar maxResults (máx 4 páginas adicionales)
+        var continuationToken = extractSearchContinuationToken(rootJson)
+        var continuationCount = 0
+        val maxContinuations = 4
+        while (continuationToken != null && results.size < maxResults && continuationCount < maxContinuations) {
+            continuationCount++
+            try {
+                val contBody = JSONObject().apply {
+                    put("context", JSONObject().apply { put("client", clientContext) })
+                    put("continuation", continuationToken)
+                }.toString().toByteArray(StandardCharsets.UTF_8)
+
+                val contUrl = URL(endpoint)
+                val contConn = contUrl.openConnection() as HttpURLConnection
+                contConn.requestMethod = "POST"
+                contConn.connectTimeout = 12000
+                contConn.readTimeout = 15000
+                contConn.doOutput = true
+                contConn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                contConn.setRequestProperty("Accept", "application/json")
+                contConn.setRequestProperty("User-Agent", "Mozilla/5.0")
+                contConn.setRequestProperty("Origin", "https://music.youtube.com")
+                contConn.setRequestProperty("Referer", "https://music.youtube.com/")
+                val contJson: JSONObject
+                try {
+                    contConn.outputStream.use { it.write(contBody) }
+                    val contStatus = contConn.responseCode
+                    val contBody2 = readResponse(contConn, contStatus >= 400)
+                    if (contStatus != HttpURLConnection.HTTP_OK) break
+                    contJson = JSONObject(contBody2)
+                } finally {
+                    contConn.disconnect()
+                }
+
+                val pageResults = parseInnertubeSearchContinuation(contJson, maxResults - results.size)
+                val existingIds = results.map { it.videoId }.toSet()
+                for (r in pageResults) {
+                    if (r.videoId.isNotEmpty() && r.videoId !in existingIds) {
+                        results.add(r)
+                    }
+                }
+                continuationToken = extractSearchContinuationTokenFromContinuation(contJson)
+            } catch (e: Exception) {
+                Log.w("YouTubeMusicService", "Search continuation #$continuationCount failed: ${e.message}")
+                break
+            }
+        }
+
+        return results
+    }
+
+    private fun extractSearchContinuationToken(root: JSONObject): String? {
+        val tabs = root.optJSONObject("contents")
+            ?.optJSONObject("tabbedSearchResultsRenderer")
+            ?.optJSONArray("tabs") ?: return null
+        for (t in 0 until tabs.length()) {
+            val contents = tabs.optJSONObject(t)
+                ?.optJSONObject("tabRenderer")
+                ?.optJSONObject("content")
+                ?.optJSONObject("sectionListRenderer")
+                ?.optJSONArray("contents") ?: continue
+            for (c in 0 until contents.length()) {
+                val shelf = contents.optJSONObject(c)
+                    ?.optJSONObject("musicShelfRenderer") ?: continue
+                val token = shelf.optJSONArray("continuations")
+                    ?.optJSONObject(0)
+                    ?.optJSONObject("nextContinuationData")
+                    ?.optString("continuation", "")?.takeIf { it.isNotEmpty() }
+                if (token != null) return token
+            }
+        }
+        return null
+    }
+
+    private fun extractSearchContinuationTokenFromContinuation(contJson: JSONObject): String? {
+        return contJson.optJSONObject("continuationContents")
+            ?.optJSONObject("musicShelfContinuation")
+            ?.optJSONArray("continuations")
+            ?.optJSONObject(0)
+            ?.optJSONObject("nextContinuationData")
+            ?.optString("continuation", "")?.takeIf { it.isNotEmpty() }
+    }
+
+    private fun parseInnertubeSearchContinuation(contJson: JSONObject, limit: Int): List<TrackResult> {
+        val results = mutableListOf<TrackResult>()
+        try {
+            val shelf = contJson.optJSONObject("continuationContents")
+                ?.optJSONObject("musicShelfContinuation")
+                ?.optJSONArray("contents") ?: return results
+            for (i in 0 until shelf.length()) {
+                if (results.size >= limit) break
+                val renderer = shelf.optJSONObject(i)
+                    ?.optJSONObject("musicResponsiveListItemRenderer") ?: continue
+                val videoId = renderer.optJSONObject("playlistItemData")
+                    ?.optString("videoId", "")?.trim() ?: ""
+                if (videoId.isEmpty()) continue
+
+                val flexColumns = renderer.optJSONArray("flexColumns")
+                var title = ""
+                var artist = ""
+                if (flexColumns != null && flexColumns.length() > 0) {
+                    title = flexColumns.optJSONObject(0)
+                        ?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")
+                        ?.optJSONObject("text")
+                        ?.optJSONArray("runs")
+                        ?.optJSONObject(0)
+                        ?.optString("text", "") ?: ""
+                    if (flexColumns.length() > 1) {
+                        val runs = flexColumns.optJSONObject(1)
+                            ?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")
+                            ?.optJSONObject("text")
+                            ?.optJSONArray("runs")
+                        if (runs != null && runs.length() > 0) {
+                            artist = runs.optJSONObject(0)?.optString("text", "") ?: ""
+                        }
+                    }
+                }
+                if (title.isEmpty()) continue
+
+                val thumbs = renderer.optJSONObject("thumbnail")
+                    ?.optJSONObject("musicThumbnailRenderer")
+                    ?.optJSONObject("thumbnail")
+                    ?.optJSONArray("thumbnails")
+                val thumbUrl = thumbs?.let {
+                    it.optJSONObject(it.length() - 1)?.optString("url", "") ?: ""
+                } ?: ""
+
+                results.add(TrackResult("video", videoId, title, artist, thumbUrl))
+            }
+        } catch (e: Exception) {
+            Log.w("YouTubeMusicService", "parseInnertubeSearchContinuation error: ${e.message}")
+        }
+        return results
     }
 
     fun fetchMyPlaylists(accessToken: String, maxResults: Int, callback: PlaylistsCallback) {
@@ -1878,8 +2041,54 @@ class YouTubeMusicService @JvmOverloads constructor(
                     ?.optJSONObject("sectionListRenderer")
                     ?.optJSONArray("contents") ?: continue
                 for (c in 0 until contents.length()) {
-                    val shelf = contents.optJSONObject(c)
-                        ?.optJSONObject("musicShelfRenderer")
+                    val section = contents.optJSONObject(c) ?: continue
+                    
+                    // 1. Procesar el top result (musicCardShelfRenderer)
+                    val cardShelf = section.optJSONObject("musicCardShelfRenderer")
+                    if (cardShelf != null) {
+                        var videoId = cardShelf.optJSONObject("onTap")
+                            ?.optJSONObject("watchEndpoint")
+                            ?.optString("videoId", "") ?: ""
+                        if (videoId.isEmpty()) {
+                            videoId = cardShelf.optJSONArray("buttons")
+                                ?.optJSONObject(0)
+                                ?.optJSONObject("buttonRenderer")
+                                ?.optJSONObject("command")
+                                ?.optJSONObject("watchEndpoint")
+                                ?.optString("videoId", "") ?: ""
+                        }
+                        if (videoId.isEmpty()) {
+                            videoId = cardShelf.optJSONObject("title")
+                                ?.optJSONArray("runs")
+                                ?.optJSONObject(0)
+                                ?.optJSONObject("navigationEndpoint")
+                                ?.optJSONObject("watchEndpoint")
+                                ?.optString("videoId", "") ?: ""
+                        }
+                        if (videoId.isNotEmpty()) {
+                            val title = cardShelf.optJSONObject("title")
+                                ?.optJSONArray("runs")
+                                ?.optJSONObject(0)
+                                ?.optString("text", "") ?: ""
+                            val subtitle = cardShelf.optJSONObject("subtitle")
+                                ?.optJSONArray("runs")
+                                ?.optJSONObject(0)
+                                ?.optString("text", "") ?: ""
+                            val thumbs = cardShelf.optJSONObject("thumbnail")
+                                ?.optJSONObject("musicThumbnailRenderer")
+                                ?.optJSONObject("thumbnail")
+                                ?.optJSONArray("thumbnails")
+                            val thumbUrl = thumbs?.let {
+                                it.optJSONObject(it.length() - 1)?.optString("url", "") ?: ""
+                            } ?: ""
+                            if (title.isNotEmpty() && results.none { it.videoId == videoId }) {
+                                results.add(TrackResult("video", videoId, title, subtitle, thumbUrl))
+                            }
+                        }
+                    }
+                    
+                    // 2. Procesar las listas estándares (musicShelfRenderer)
+                    val shelf = section.optJSONObject("musicShelfRenderer")
                         ?.optJSONArray("contents") ?: continue
                     for (i in 0 until shelf.length()) {
                         if (results.size >= maxResults) return results
@@ -1888,7 +2097,7 @@ class YouTubeMusicService @JvmOverloads constructor(
                         val videoId = renderer.optJSONObject("playlistItemData")
                             ?.optString("videoId", "")?.trim() ?: ""
                         if (videoId.isEmpty()) continue
-
+ 
                         val flexColumns = renderer.optJSONArray("flexColumns")
                         var title = ""
                         var artist = ""
@@ -1910,7 +2119,7 @@ class YouTubeMusicService @JvmOverloads constructor(
                             }
                         }
                         if (title.isEmpty()) continue
-
+ 
                         val thumbs = renderer.optJSONObject("thumbnail")
                             ?.optJSONObject("musicThumbnailRenderer")
                             ?.optJSONObject("thumbnail")
@@ -1918,8 +2127,10 @@ class YouTubeMusicService @JvmOverloads constructor(
                         val thumbUrl = thumbs?.let {
                             it.optJSONObject(it.length() - 1)?.optString("url", "") ?: ""
                         } ?: ""
-
-                        results.add(TrackResult("video", videoId, title, artist, thumbUrl))
+ 
+                        if (results.none { it.videoId == videoId }) {
+                            results.add(TrackResult("video", videoId, title, artist, thumbUrl))
+                        }
                     }
                 }
             }

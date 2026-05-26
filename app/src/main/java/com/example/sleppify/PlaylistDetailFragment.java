@@ -574,7 +574,12 @@ public class PlaylistDetailFragment extends Fragment
         cachedSongPlayer = null;
         lastCachedSongPlayerTime = 0;
         if (getActivity() instanceof MainActivity) {
-            ((MainActivity) getActivity()).setContainerOverlayMode(false);
+            MainActivity main = (MainActivity) getActivity();
+            main.setContainerOverlayMode(false);
+            // Safety net: restore main shell when this fragment is popped off the back stack
+            if (isRemoving() && !main.isFinishing() && !main.isDestroyed()) {
+                main.ensureHeaderVisibleForMusic();
+            }
         }
         if (rvPlaylistContent != null) {
             try {
@@ -1411,7 +1416,9 @@ public class PlaylistDetailFragment extends Fragment
             playlistTracksCanLoadMore = false;
             if (!isAdded()) return;
             List<LocalFilesStore.LocalTrack> localTracks = LocalFilesStore.getCachedFiles(requireContext());
-            if (localTracks.isEmpty()) {
+            boolean needsRescan = localTracks.isEmpty()
+                    || (!localTracks.isEmpty() && TextUtils.isEmpty(localTracks.get(0).getAlbumArtUri()));
+            if (needsRescan) {
                 localTracks = LocalFilesStore.scanLocalFiles(requireContext());
                 LocalFilesStore.cacheFiles(requireContext(), localTracks);
             }
@@ -3073,7 +3080,7 @@ public class PlaylistDetailFragment extends Fragment
     @NonNull
     private PlaybackHistoryStore.Snapshot loadPlaybackSnapshot() {
         if (!isAdded()) {
-            return new PlaybackHistoryStore.Snapshot(new ArrayList<>(), 0, 1, false, 0L);
+            return new PlaybackHistoryStore.Snapshot(new ArrayList<>(), 0, 0, 1, false, 0L);
         }
         return PlaybackHistoryStore.load(requireContext());
     }
@@ -3386,7 +3393,7 @@ public class PlaylistDetailFragment extends Fragment
         // Slot 2 (top): Descargar / Eliminar descarga (hidden for local files)
         btnAddPrimary.setVisibility(isLocalFilesPlaylist ? View.GONE : View.VISIBLE);
         if (hasOfflineAudio) {
-            ivAddPrimary.setImageResource(R.drawable.ic_delete_modern);
+            ivAddPrimary.setImageResource(R.drawable.ic_check_small);
             tvAddPrimary.setText("Descargado");
         } else {
             ivAddPrimary.setImageResource(R.drawable.ic_download_bold);
@@ -6130,15 +6137,27 @@ public class PlaylistDetailFragment extends Fragment
             holder.tvTrackTitle.setText(track.title);
             Context context = holder.itemView.getContext();
 
-            // Image loading: local tracks always show music note icon (never cleared).
+            // Image loading: local tracks show album art if available, otherwise music note icon.
             // For remote tracks, during a fast fling show a grey placeholder only.
             boolean isLocalTrack = LocalFilesStore.isLocalVideoId(track.videoId);
             if (isLocalTrack) {
-                // Local files: always music note icon on grey background — never fade/clear
-                Glide.with(context).clear(holder.ivTrackArt);
-                holder.ivTrackArt.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                holder.ivTrackArt.setBackgroundColor(ContextCompat.getColor(context, R.color.surface_high));
-                holder.ivTrackArt.setImageResource(R.drawable.ic_music);
+                if (!TextUtils.isEmpty(track.imageUrl)) {
+                    holder.ivTrackArt.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                    holder.ivTrackArt.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+                    Glide.with(context)
+                        .load(android.net.Uri.parse(track.imageUrl))
+                        .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL)
+                        .placeholder(R.drawable.ic_music)
+                        .error(R.drawable.ic_music)
+                        .override(160, 160)
+                        .centerCrop()
+                        .into(holder.ivTrackArt);
+                } else {
+                    Glide.with(context).clear(holder.ivTrackArt);
+                    holder.ivTrackArt.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                    holder.ivTrackArt.setBackgroundColor(ContextCompat.getColor(context, R.color.surface_high));
+                    holder.ivTrackArt.setImageResource(R.drawable.ic_music);
+                }
             } else {
                 holder.ivTrackArt.setScaleType(ImageView.ScaleType.CENTER_CROP);
                 holder.ivTrackArt.setBackgroundColor(android.graphics.Color.TRANSPARENT);

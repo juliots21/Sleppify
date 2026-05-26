@@ -473,45 +473,27 @@ class SearchFragment : Fragment() {
             setSearchLoadingState(true, "Buscando música...")
         }
 
-        youTubeMusicService.searchTracksPaged(query, SEARCH_PAGE_SIZE, pageToken.takeIf { it.isNotEmpty() }, object : YouTubeMusicService.SearchPageCallback {
-            override fun onSuccess(pageResult: YouTubeMusicService.SearchPageResult) {
+        // Usamos la API de YouTube Music Innertube como buscador primario:
+        // - Es 100% gratuita, ilimitada (sin cuotas de API Key).
+        // - Devuelve canciones oficiales y audio de alta calidad, ignorando vlogs y ruido.
+        // - Su algoritmo de tolerancia a errores y autocompletado es extremadamente preciso.
+        val maxResultsToFetch = if (append) SEARCH_PAGE_SIZE else 100
+        youTubeMusicService.searchTracksViaInnertube(query, maxResultsToFetch, object : YouTubeMusicService.SearchCallback {
+            override fun onSuccess(tracks: List<YouTubeMusicService.TrackResult>) {
                 if (activity == null || !isAdded || requestId != latestSearchRequestId) return
                 
                 if (append) searchPaginationInFlight = false
                 
-                nextSearchPageToken = pageResult.nextPageToken
-                hasMoreSearchPages = nextSearchPageToken.isNotEmpty()
+                nextSearchPageToken = ""
+                hasMoreSearchPages = false // Innertube devuelve suficientes resultados de alta calidad de una sola vez
 
-                appendUniqueTracks(pageResult.tracks)
+                appendUniqueTracks(tracks)
                 applyActiveFilter(query, forceSort = true)
 
                 if (allTracks.isEmpty() && !append) {
-                    // YouTube Data API returned 0 results — try Innertube as fuzzy fallback
-                    youTubeMusicService.searchTracksViaInnertube(query, SEARCH_PAGE_SIZE, object : YouTubeMusicService.SearchCallback {
-                        override fun onSuccess(tracks: List<YouTubeMusicService.TrackResult>) {
-                            if (activity == null || !isAdded || requestId != latestSearchRequestId) return
-                            appendUniqueTracks(tracks)
-                            applyActiveFilter(query, forceSort = true)
-                            if (allTracks.isEmpty()) {
-                                setSearchLoadingState(false, "No encontré resultados para: $query")
-                            } else {
-                                setSearchLoadingState(false, "")
-                            }
-                            revealModuleContent()
-                            rvSearchResults.alpha = 0f
-                            rvSearchResults.animate().alpha(1f).setDuration(250).start()
-                            hideKeyboard()
-                        }
-                        override fun onError(error: String) {
-                            if (activity == null || !isAdded || requestId != latestSearchRequestId) return
-                            setSearchLoadingState(false, "No encontré resultados para: $query")
-                            revealModuleContent()
-                            hideKeyboard()
-                        }
-                    })
+                    setSearchLoadingState(false, "No encontré resultados para: $query")
                 } else if (!append) {
                     setSearchLoadingState(false, "")
-                    // Pre-fetch opcional para mejor latencia
                     allTracks.firstOrNull()?.videoId?.let { id ->
                         lifecycleScope.launch(Dispatchers.IO) {
                             InnertubeResolver.resolveStreamUrl(requireContext(), id)
@@ -526,39 +508,41 @@ class SearchFragment : Fragment() {
 
             override fun onError(error: String) {
                 if (activity == null || !isAdded || requestId != latestSearchRequestId) return
-                if (append) searchPaginationInFlight = false
                 
-                // Fallback: try Innertube (no API key needed)
-                if (!append && allTracks.isEmpty()) {
-                    youTubeMusicService.searchTracksViaInnertube(query, SEARCH_PAGE_SIZE, object : YouTubeMusicService.SearchCallback {
-                        override fun onSuccess(tracks: List<YouTubeMusicService.TrackResult>) {
-                            if (activity == null || !isAdded || requestId != latestSearchRequestId) return
-                            appendUniqueTracks(tracks)
-                            applyActiveFilter(query, forceSort = true)
-                            if (allTracks.isEmpty()) {
-                                setSearchLoadingState(false, "No encontré resultados para: $query")
-                            } else {
-                                setSearchLoadingState(false, "")
-                            }
+                // Fallback robusto al API de datos oficial de YouTube en caso de fallo de Innertube
+                youTubeMusicService.searchTracksPaged(query, SEARCH_PAGE_SIZE, pageToken.takeIf { it.isNotEmpty() }, object : YouTubeMusicService.SearchPageCallback {
+                    override fun onSuccess(pageResult: YouTubeMusicService.SearchPageResult) {
+                        if (activity == null || !isAdded || requestId != latestSearchRequestId) return
+                        
+                        if (append) searchPaginationInFlight = false
+                        
+                        nextSearchPageToken = pageResult.nextPageToken
+                        hasMoreSearchPages = nextSearchPageToken.isNotEmpty()
+
+                        appendUniqueTracks(pageResult.tracks)
+                        applyActiveFilter(query, forceSort = true)
+
+                        if (allTracks.isEmpty() && !append) {
+                            setSearchLoadingState(false, "No encontré resultados para: $query")
+                        } else if (!append) {
+                            setSearchLoadingState(false, "")
                             revealModuleContent()
-                            rvSearchResults.alpha = 0f
-                            rvSearchResults.animate().alpha(1f).setDuration(250).start()
                             hideKeyboard()
                         }
-                        override fun onError(error: String) {
-                            if (activity == null || !isAdded || requestId != latestSearchRequestId) return
-                            setSearchLoadingState(false, "Error: $error")
-                            revealModuleContent()
-                        }
-                    })
-                } else {
-                    if (allTracks.isEmpty()) {
-                        setSearchLoadingState(false, "Error: $error")
-                    } else {
-                        setSearchLoadingState(false, "")
-                        if (append) Toast.makeText(requireContext(), "Error al cargar más resultados", Toast.LENGTH_SHORT).show()
                     }
-                }
+
+                    override fun onError(error: String) {
+                        if (activity == null || !isAdded || requestId != latestSearchRequestId) return
+                        if (append) searchPaginationInFlight = false
+                        
+                        if (allTracks.isEmpty()) {
+                            setSearchLoadingState(false, "Error: $error")
+                        } else {
+                            setSearchLoadingState(false, "")
+                            if (append) Toast.makeText(requireContext(), "Error al cargar más resultados", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                })
             }
         })
     }
@@ -1912,9 +1896,11 @@ class SearchFragment : Fragment() {
     private fun refreshSearchSuggestions(draft: String?) {
         suggestionsJob?.cancel()
         val norm = draft?.trim() ?: ""
+        val recentSnapshot = recentSearchData.toList()
+        val trackSnapshot = localTrackIndex.toList()
         suggestionsJob = lifecycleScope.launch {
             val items = kotlinx.coroutines.withContext(Dispatchers.Default) {
-                poolSuggestionItems(norm)
+                poolSuggestionItems(norm, recentSnapshot, trackSnapshot)
             }
             if (!isAdded) return@launch
             (rvSearchSuggestions.adapter as? SuggestionsAdapter)?.updateItems(items)
@@ -1922,7 +1908,7 @@ class SearchFragment : Fragment() {
         }
     }
 
-    private fun poolSuggestionItems(draft: String): List<SuggestionItem> {
+    private fun poolSuggestionItems(draft: String, recentSearchData: List<RecentSearch> = this.recentSearchData, localTrackIndex: List<FavoritesPlaylistStore.FavoriteTrack> = this.localTrackIndex): List<SuggestionItem> {
         val normDraft = normalizeForFilter(draft)
         val recentQueries = recentSearchData.map { it.query }
 

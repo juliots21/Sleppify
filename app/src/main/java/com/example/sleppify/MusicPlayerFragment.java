@@ -555,6 +555,11 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         }
         return TextUtils.equals(currentPlayingPlaylistId, playlistId == null ? "" : playlistId.trim());
     }
+    private View llFragBrandHeader;
+    private TextView tvFragBrandTitle;
+    private ImageView btnFragHeaderSearch;
+    private com.google.android.material.button.MaterialButton btnFragSignIn;
+    private com.google.android.material.imageview.ShapeableImageView btnFragProfilePhoto;
     private View llLibraryHeaderRow;
     private View llLibraryInlineSearch;
     private View tvLibraryTitle;
@@ -596,6 +601,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
     private LinearLayoutManager musicResultsLayoutManager;
     private boolean loadingLibrary;
     private boolean libraryFetchInFlight;
+    private boolean pendingScrollToTop = false;
     @Nullable
     private Runnable pendingLibraryInlineSearchRunnable;
     @NonNull
@@ -633,6 +639,10 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
     private boolean offlineAutoQueueScanInFlight;
     private boolean offlineQueueHadActiveWork;
     private boolean offlineManualQueueHadActiveWork;
+    private final Map<String, Float> autoQueueProgressByPlaylist = new HashMap<>();
+    private final Set<String> autoQueueDownloading = new HashSet<>();
+    private final Map<String, Float> manualQueueProgressByPlaylist = new HashMap<>();
+    private final Set<String> manualQueueDownloading = new HashSet<>();
     private boolean cloudPlaylistFetchInFlight;
     private boolean lastMiniPlayerIsPlaying;
     private ActivityResultLauncher<Intent> signInLauncher;
@@ -707,6 +717,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
         PlaybackEventBus.addListener(this);
+        setupFragBrandHeader(view);
         llLibraryHeaderRow = view.findViewById(R.id.llLibraryHeaderRow);
         llLibraryInlineSearch = null;
         tvLibraryTitle = view.findViewById(R.id.tvLibraryTitle);
@@ -808,9 +819,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         offlineQueueHadActiveWork = false;
         offlineManualQueueHadActiveWork = false;
         if (isHidden()) return;
-        if (getActivity() instanceof MainActivity) {
-            ((MainActivity) getActivity()).ensureHeaderVisibleForMusic();
-        }
+        refreshFragHeaderProfilePhoto();
         startObservingOfflineQueue();
         maybeResumeStarledOfflineDownloads();
         refreshCurrentPlayingPlaylistState();
@@ -834,6 +843,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         super.onPause();
     }
     public void scrollToTop() {
+        pendingScrollToTop = true;
         if (rvMusicResults != null && musicResultsLayoutManager != null) {
             rvMusicResults.post(() -> {
                 if (rvMusicResults != null) musicResultsLayoutManager.scrollToPositionWithOffset(0, 0);
@@ -846,9 +856,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         if (hidden) {
             return;
         }
-        if (getActivity() instanceof MainActivity) {
-            ((MainActivity) getActivity()).ensureHeaderVisibleForMusic();
-        }
+        refreshFragHeaderProfilePhoto();
         scrollToTop();
         startObservingOfflineQueue();
         refreshCurrentPlayingPlaylistState();
@@ -859,6 +867,110 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         maybeRestoreHiddenMiniPlayerFromPausedSnapshot();
         maybeSyncLibraryIfAuthorized();
     }
+
+    private void setupFragBrandHeader(@NonNull View root) {
+        llFragBrandHeader = root.findViewById(R.id.llFragBrandHeader);
+        tvFragBrandTitle = root.findViewById(R.id.tvFragBrandTitle);
+        btnFragHeaderSearch = root.findViewById(R.id.btnFragHeaderSearch);
+        btnFragSignIn = root.findViewById(R.id.btnFragSignIn);
+        btnFragProfilePhoto = root.findViewById(R.id.btnFragProfilePhoto);
+
+        // Apply status bar inset as top padding so header doesn't render under the status bar
+        if (llFragBrandHeader != null) {
+            androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(llFragBrandHeader, (v, insets) -> {
+                int statusBarHeight = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()).top;
+                v.setPadding(v.getPaddingLeft(), statusBarHeight, v.getPaddingRight(), v.getPaddingBottom());
+                return insets;
+            });
+            llFragBrandHeader.requestApplyInsets();
+        }
+
+        // Brand title with icon — mirrors MainActivity.configureHeaderActionForMainModules()
+        if (tvFragBrandTitle != null) {
+            tvFragBrandTitle.setAllCaps(true);
+            tvFragBrandTitle.setLetterSpacing(0.08f);
+            try {
+                Typeface brandFont = androidx.core.content.res.ResourcesCompat.getFont(requireContext(), R.font.manrope_variable);
+                if (brandFont != null) tvFragBrandTitle.setTypeface(brandFont);
+            } catch (Exception ignored) {}
+            float density = getResources().getDisplayMetrics().density;
+            int iconSize = (int) (26 * density);
+            android.graphics.drawable.Drawable icon = androidx.core.content.ContextCompat.getDrawable(requireContext(), R.mipmap.ic_launcher);
+            if (icon != null) {
+                icon.setBounds(0, 0, iconSize, iconSize);
+                tvFragBrandTitle.setCompoundDrawablesRelative(icon, null, null, null);
+            }
+            tvFragBrandTitle.setCompoundDrawablePadding((int) (8 * density));
+        }
+
+        // Search button → opens SearchFragment via MainActivity
+        if (btnFragHeaderSearch != null) {
+            btnFragHeaderSearch.setOnClickListener(v -> {
+                if (getActivity() instanceof MainActivity) {
+                    ((MainActivity) getActivity()).openSearchFragment();
+                }
+            });
+        }
+
+        // Sign-in button → triggers auth via MainActivity
+        if (btnFragSignIn != null) {
+            btnFragSignIn.setOnClickListener(v -> {
+                if (getActivity() instanceof MainActivity) {
+                    btnFragSignIn.setEnabled(false);
+                    btnFragSignIn.setAlpha(0.56f);
+                    ((MainActivity) getActivity()).requireAuth(
+                        () -> {
+                            if (btnFragSignIn != null) { btnFragSignIn.setEnabled(true); btnFragSignIn.setAlpha(1f); }
+                            refreshFragHeaderProfilePhoto();
+                        },
+                        () -> {
+                            if (btnFragSignIn != null) { btnFragSignIn.setEnabled(true); btnFragSignIn.setAlpha(1f); }
+                        }
+                    );
+                }
+            });
+        }
+
+        // Profile photo → opens Settings
+        if (btnFragProfilePhoto != null) {
+            btnFragProfilePhoto.setOnClickListener(v -> {
+                if (getActivity() instanceof MainActivity) {
+                    ((MainActivity) getActivity()).enterSettings();
+                }
+            });
+        }
+
+        refreshFragHeaderProfilePhoto();
+    }
+
+    void refreshFragHeaderProfilePhoto() {
+        if (!isAdded() || btnFragProfilePhoto == null || btnFragSignIn == null) return;
+        android.content.SharedPreferences prefs = requireContext().getSharedPreferences("streaming_cache", android.app.Activity.MODE_PRIVATE);
+        String cachedUrl = prefs.getString("cached_google_profile_photo_url", "");
+        android.net.Uri photoUri = null;
+        com.google.firebase.auth.FirebaseUser user = com.google.firebase.auth.FirebaseAuth.getInstance().getCurrentUser();
+        if (user != null) photoUri = user.getPhotoUrl();
+        if (photoUri == null && cachedUrl != null && !cachedUrl.isEmpty()) {
+            photoUri = android.net.Uri.parse(cachedUrl);
+        }
+        boolean signedIn = (getActivity() instanceof MainActivity)
+                && ((MainActivity) getActivity()).getAuthManager().isSignedIn()
+                && photoUri != null;
+        if (signedIn) {
+            btnFragSignIn.setVisibility(View.GONE);
+            btnFragProfilePhoto.setVisibility(View.VISIBLE);
+            Glide.with(this)
+                    .load(photoUri)
+                    .diskCacheStrategy(DiskCacheStrategy.ALL)
+                    .circleCrop()
+                    .into(btnFragProfilePhoto);
+        } else {
+            btnFragProfilePhoto.setVisibility(View.GONE);
+            btnFragProfilePhoto.setImageDrawable(null);
+            btnFragSignIn.setVisibility(View.VISIBLE);
+        }
+    }
+
     private void maybeAutoLaunchWebSessionIfNeeded() {
         if (!isAdded()) {
             return;
@@ -1109,7 +1221,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         if (!isNetworkAvailable()) {
             // Rescan local files so pull-to-refresh updates them even offline
             if (LocalFilesStore.isEnabled(requireContext())) {
-                java.util.concurrent.Executors.newSingleThreadExecutor().execute(() -> {
+                offlineStateExecutor.execute(() -> {
                     try {
                         List<LocalFilesStore.LocalTrack> fresh = LocalFilesStore.scanLocalFiles(requireContext());
                         LocalFilesStore.cacheFiles(requireContext(), fresh);
@@ -3041,7 +3153,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
     @NonNull
     private PlaybackHistoryStore.Snapshot loadPlaybackSnapshot() {
         if (!isAdded()) {
-            return new PlaybackHistoryStore.Snapshot(new ArrayList<>(), 0, 1, false, 0L);
+            return new PlaybackHistoryStore.Snapshot(new ArrayList<>(), 0, 0, 1, false, 0L);
         }
         return PlaybackHistoryStore.load(requireContext());
     }
@@ -3296,7 +3408,14 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             ivArt.setBackgroundColor(android.graphics.Color.BLACK);
             ivArt.setImageResource(R.drawable.ic_folder_white);
         } else {
-            loadArtworkInto(ivArt, track.thumbnailUrl);
+            List<String> gridUrls = playlistId.isEmpty() ? java.util.Collections.emptyList() : resolvePlaylistGridUrls(playlistId);
+            if (gridUrls.size() >= 4) {
+                float density = getResources().getDisplayMetrics().density;
+                int sizePx = Math.round(60 * density);
+                PlaylistGridArtLoader.load(ivArt, gridUrls, sizePx);
+            } else {
+                loadArtworkInto(ivArt, track.thumbnailUrl);
+            }
         }
         // Top 3 buttons: Play, Share, Download/Delete Downloads
         View btnPlayNext = view.findViewById(R.id.btnBsPlayNext);
@@ -5742,6 +5861,13 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
 
                 // Dispatch granular updates instead of notifyDataSetChanged
                 diffResult.dispatchUpdatesTo(MusicResultsAdapter.this);
+
+                if (pendingScrollToTop) {
+                    pendingScrollToTop = false;
+                    if (rvMusicResults != null && musicResultsLayoutManager != null) {
+                        musicResultsLayoutManager.scrollToPositionWithOffset(0, 0);
+                    }
+                }
 
                 // Schedule offline refresh AFTER notify
                 for (YouTubeMusicService.TrackResult item : incoming) {

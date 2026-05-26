@@ -15,7 +15,7 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.cache.CacheDataSource
-import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
+import androidx.media3.datasource.cache.NoOpCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
@@ -55,7 +55,6 @@ class ExoMediaPlayer {
 
     companion object {
         private const val TAG = "ExoMediaPlayer"
-        private const val CACHE_SIZE_BYTES = 100L * 1024 * 1024 // 100 MB disk cache
 
         @Volatile
         private var sharedCache: SimpleCache? = null
@@ -66,7 +65,7 @@ class ExoMediaPlayer {
             return sharedCache ?: synchronized(cacheLock) {
                 sharedCache ?: run {
                     val cacheDir = File(context.cacheDir, "exo_stream_cache")
-                    val evictor = LeastRecentlyUsedCacheEvictor(CACHE_SIZE_BYTES)
+                    val evictor = NoOpCacheEvictor()
                     SimpleCache(cacheDir, evictor, androidx.media3.database.StandaloneDatabaseProvider(context)).also {
                         sharedCache = it
                     }

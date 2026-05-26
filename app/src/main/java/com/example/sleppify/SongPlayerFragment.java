@@ -53,7 +53,6 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
-import androidx.core.widget.NestedScrollView;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentManager;
 import androidx.recyclerview.widget.ItemTouchHelper;
@@ -164,7 +163,6 @@ public class SongPlayerFragment extends Fragment {
     private ImageButton btnPlayerClose;
     private ImageButton btnPlayerMore;
     private SeekBar sbPlaybackProgress;
-    private NestedScrollView svSongPlayerContent;
     private ImageButton btnShuffle;
     private ImageButton btnRepeat;
     private View vPlayerShuffleIndicator;
@@ -175,6 +173,7 @@ public class SongPlayerFragment extends Fragment {
     private View actionComments;
     private View actionFavorite;
     private ImageView ivActionFavoriteIcon;
+    private ImageView ivActionLikeIcon;
     private View actionRadio;
     private View actionShare;
     private View actionDownloadTrack;
@@ -268,9 +267,8 @@ public class SongPlayerFragment extends Fragment {
     private final Handler localProgressHandler = new Handler(Looper.getMainLooper());
     private final YouTubeMusicService radioMusicService = new YouTubeMusicService();
     private final ExecutorService streamResolverExecutor = Executors.newFixedThreadPool(3);
-    private final ExecutorService socialStatsExecutor = Executors.newSingleThreadExecutor();
-    private final ExecutorService persistenceExecutor = Executors.newSingleThreadExecutor();
-    private final Map<String, SocialStats> socialStatsCache = new HashMap<>();
+    private final ExecutorService backgroundExecutor = Executors.newSingleThreadExecutor();
+    private final android.util.LruCache<String, SocialStats> socialStatsCache = new android.util.LruCache<>(50);
 
     // Direct streaming & pre-fetching
     private volatile String prefetchedNextVideoId = null;
@@ -434,7 +432,7 @@ public class SongPlayerFragment extends Fragment {
                         );
                     }
                 }
-                if (currentSeconds % 2 == 0) {
+                if (currentSeconds % 5 == 0) {
                     persistPlaybackSnapshot(false);
                     updateMediaSessionState();
                 }
@@ -570,12 +568,12 @@ public class SongPlayerFragment extends Fragment {
         tvActionDownloadLabel = view.findViewById(R.id.tvActionDownloadLabel);
         tvActionLikeCount = view.findViewById(R.id.tvActionLikeCount);
         tvActionCommentCount = view.findViewById(R.id.tvActionCommentCount);
+        ivActionLikeIcon = view.findViewById(R.id.ivActionLikeIcon);
         tvActionFavoriteLabel = view.findViewById(R.id.tvActionFavoriteLabel);
         ivActionFavoriteIcon = view.findViewById(R.id.ivActionFavoriteIcon);
         tvCurrentTime = view.findViewById(R.id.tvCurrentTime);
         tvTotalTime = view.findViewById(R.id.tvTotalTime);
         sbPlaybackProgress = view.findViewById(R.id.sbPlaybackProgress);
-        svSongPlayerContent = null;
         btnShuffle = view.findViewById(R.id.btnShuffle);
         btnRepeat = view.findViewById(R.id.btnRepeat);
         vPlayerShuffleIndicator = view.findViewById(R.id.vPlayerShuffleIndicator);
@@ -617,8 +615,6 @@ public class SongPlayerFragment extends Fragment {
 
             setupSwipeToDismiss(view);
             setupBackPressToMiniMode();
-            resetPlayerScrollToTop();
-
             view.findViewById(R.id.btnPrev).setOnClickListener(v -> moveTrack(-1));
             view.findViewById(R.id.btnNext).setOnClickListener(v -> moveTrack(1));
             btnShuffle.setOnClickListener(v -> toggleShuffleMode());
@@ -689,12 +685,6 @@ public class SongPlayerFragment extends Fragment {
     }
 
     @Override
-    public void onStop() {
-        persistPlaybackSnapshot(false);
-        super.onStop();
-    }
-
-    @Override
     public void onPause() {
         appInBackground = true;
         updateBackPressedCallbackEnabled(true);
@@ -722,7 +712,6 @@ public class SongPlayerFragment extends Fragment {
                 }
                 getView().setVisibility(View.VISIBLE);
             }
-            resetPlayerScrollToTop();
             // Reparent video surface back to hero
             videoRouter.onPlayerVisible();
             // ✅ Restart ticker when visible if playing
@@ -747,7 +736,6 @@ public class SongPlayerFragment extends Fragment {
         }
         appInBackground = false;
         updateBackPressedCallbackEnabled(isHidden());
-        resetPlayerScrollToTop();
         ensureActivePlaybackIfExpected("onResume");
         persistPlaybackSnapshot(false);
     }
@@ -783,6 +771,17 @@ public class SongPlayerFragment extends Fragment {
                 startLocalProgressTicker();
             } catch (Exception e) {
                 if (localSourcePreparing || bootstrapWindow) {
+                    return;
+                }
+                // If the player instance still exists, it is in a transient state (e.g. MIUI
+                // paused the fragment briefly). Calling playCurrentTrack() here would reset
+                // currentSeconds to 0 and restart the song from scratch — that is the bug.
+                // Instead, schedule a short retry; if the player truly died the retry will
+                // find localExoMediaPlayer == null and reload cleanly.
+                if (localExoMediaPlayer != null) {
+                    Log.w(TAG, "ensureActivePlaybackIfExpected: start() failed but player alive, scheduling retry. reason=" + reason, e);
+                    final String retryReason = reason;
+                    localProgressHandler.postDelayed(() -> ensureActivePlaybackIfExpected("retry-" + retryReason), 500L);
                     return;
                 }
                 Log.w(TAG, "ensureActivePlaybackIfExpected: local restart failed, reloading track. reason=" + reason, e);
@@ -846,31 +845,10 @@ public class SongPlayerFragment extends Fragment {
         settingsPrefs = null;
         flPlayerHero = null;
         streamResolverExecutor.shutdownNow();
-        socialStatsExecutor.shutdownNow();
-        persistenceExecutor.shutdownNow();
+        backgroundExecutor.shutdownNow();
         super.onDestroyView();
     }
 
-    private void resetPlayerScrollToTop() {
-        if (svSongPlayerContent == null) {
-            return;
-        }
-        svSongPlayerContent.post(() -> {
-            if (svSongPlayerContent != null) {
-                svSongPlayerContent.scrollTo(0, 0);
-            }
-        });
-    }
-
-    private void disablePlayerContentScroll() {
-        if (svSongPlayerContent == null) return;
-        svSongPlayerContent.setNestedScrollingEnabled(false);
-        // Force scroll position back to top any time it drifts
-        svSongPlayerContent.setOnScrollChangeListener(
-                (NestedScrollView.OnScrollChangeListener) (v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
-                    if (scrollY != 0) v.scrollTo(0, 0);
-                });
-    }
 
     private void setupMediaSession() {
         if (!isAdded()) {
@@ -1103,7 +1081,9 @@ public class SongPlayerFragment extends Fragment {
         lastHandledEndedVideoId = loadedVideoId;
         lastHandledEndedAtMs = now;
 
-        if (isAdded() && currentIndex >= 0 && currentIndex < tracks.size()) {
+        if (!playCountRecordedForCurrentTrack
+                && isAdded() && currentIndex >= 0 && currentIndex < tracks.size()) {
+            playCountRecordedForCurrentTrack = true;
             PlayerTrack finished = tracks.get(currentIndex);
             PlayCountStore.incrementPlayCount(
                     requireContext(),
@@ -1237,7 +1217,7 @@ public class SongPlayerFragment extends Fragment {
 
             updatePlayPauseIcon();
             updateMediaSessionState();
-                syncMiniStateWithPlaylist();
+            syncMiniStateWithPlaylist();
             persistPlaybackSnapshot(false);
             return;
         }
@@ -1254,7 +1234,7 @@ public class SongPlayerFragment extends Fragment {
             stopLocalProgressTicker();
             updatePlayPauseIcon();
             updateMediaSessionState();
-                syncMiniStateWithPlaylist();
+            syncMiniStateWithPlaylist();
             persistPlaybackSnapshot(false);
             return;
         }
@@ -1865,7 +1845,7 @@ public class SongPlayerFragment extends Fragment {
             long requestToken,
             @NonNull Runnable onFailure
     ) {
-        final boolean networkSource = isHttpStreamSource(source) || isInnertubeSource(source);
+        final boolean networkSource = isHttpStreamSource(source);
         stopLocalProgressTicker();
         releaseLocalExoMediaPlayer();
         usingOfflineSource = !networkSource;
@@ -2062,7 +2042,7 @@ public class SongPlayerFragment extends Fragment {
         });
 
         try {
-            if ((isHttpStreamSource(source) || isInnertubeSource(source)) && isAdded()) {
+            if (isHttpStreamSource(source) && isAdded()) {
                 Map<String, String> headers = new HashMap<>();
                 headers.put("User-Agent", STREAM_HTTP_USER_AGENT);
                 headers.put("Accept", "*/*");
@@ -2236,6 +2216,9 @@ public class SongPlayerFragment extends Fragment {
         }
 
         audiusFallbackAttemptedVideoIds.add(track.videoId);
+        if (audiusFallbackAttemptedVideoIds.size() > 50) {
+            audiusFallbackAttemptedVideoIds.remove(audiusFallbackAttemptedVideoIds.iterator().next());
+        }
         
         Log.w(TAG, "tryResolveAudiusAndReplay: start videoId=" + track.videoId + " requestToken=" + requestToken);
 
@@ -2405,10 +2388,6 @@ public class SongPlayerFragment extends Fragment {
         return source.startsWith("https://") || source.startsWith("http://");
     }
 
-    private boolean isInnertubeSource(@NonNull String source) {
-        return false;
-    }
-
     private void scheduleSourcePrepareTimeout(
             @NonNull PlayerTrack track,
             long requestToken,
@@ -2464,10 +2443,6 @@ public class SongPlayerFragment extends Fragment {
 
         // No further fallbacks — skip forward.
         handleTrackEnded();
-
-        if (isAdded() && !message.trim().isEmpty()) {
-            
-        }
     }
 
     @NonNull
@@ -2703,7 +2678,7 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void loadNotificationArtworkOnly(@NonNull PlayerTrack track) {
-        if (!isAdded() && getContext() == null) return;
+        if (!isAdded() || getContext() == null) return;
         String videoId = track.videoId == null ? "" : track.videoId.trim();
         String imageUrl = track.imageUrl == null ? "" : track.imageUrl.trim();
         if (TextUtils.isEmpty(videoId) && TextUtils.isEmpty(imageUrl)) return;
@@ -2769,7 +2744,7 @@ public class SongPlayerFragment extends Fragment {
         releaseLocalExoMediaPlayer();
         cancelPendingStreamResolver();
         streamResolverExecutor.shutdownNow();
-        socialStatsExecutor.shutdownNow();
+        backgroundExecutor.shutdownNow();
         super.onDestroy();
     }
 
@@ -2860,9 +2835,7 @@ public class SongPlayerFragment extends Fragment {
             });
         }
         if (actionComments != null) {
-            actionComments.setOnClickListener(v -> {
-                // Visual only for now.
-            });
+            actionComments.setOnClickListener(v -> showCommentsSheet());
         }
         if (actionFavorite != null) {
             actionFavorite.setOnClickListener(v -> showSaveToPlaylistSheetFromPlayer());
@@ -3071,6 +3044,14 @@ public class SongPlayerFragment extends Fragment {
         }
     }
 
+    private void showCommentsSheet() {
+        if (!isAdded() || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) return;
+        PlayerTrack track = tracks.get(currentIndex);
+        if (TextUtils.isEmpty(track.videoId)) return;
+        String commentCountText = (tvActionCommentCount != null) ? tvActionCommentCount.getText().toString() : "0";
+        new CommentsBottomSheet(requireContext(), track.videoId, commentCountText).show();
+    }
+
     private void shareCurrentTrack() {
         if (!isAdded() || tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) return;
         PlayerTrack track = tracks.get(currentIndex);
@@ -3195,16 +3176,14 @@ public class SongPlayerFragment extends Fragment {
 
         final String videoId = track.videoId;
         final Context appCtx = requireContext().getApplicationContext();
-        localProgressHandler.post(() -> {
-            new Thread(() -> {
-                boolean isDownloaded = OfflineAudioStore.hasValidatedOfflineAudio(appCtx, videoId, null);
-                localProgressHandler.post(() -> {
-                    if (!isAdded() || actionDownloadTrack == null) return;
-                    if (currentIndex < 0 || currentIndex >= tracks.size()) return;
-                    if (!TextUtils.equals(tracks.get(currentIndex).videoId, videoId)) return;
-                    applyDownloadChipVisual(isDownloaded, videoId.equals(pendingDownloadVideoId));
-                });
-            }).start();
+        streamResolverExecutor.execute(() -> {
+            boolean isDownloaded = OfflineAudioStore.hasValidatedOfflineAudio(appCtx, videoId, null);
+            localProgressHandler.post(() -> {
+                if (!isAdded() || actionDownloadTrack == null) return;
+                if (currentIndex < 0 || currentIndex >= tracks.size()) return;
+                if (!TextUtils.equals(tracks.get(currentIndex).videoId, videoId)) return;
+                applyDownloadChipVisual(isDownloaded, videoId.equals(pendingDownloadVideoId));
+            });
         });
     }
 
@@ -3328,7 +3307,7 @@ public class SongPlayerFragment extends Fragment {
                 return;
             }
 
-            socialStatsExecutor.execute(() -> {
+            backgroundExecutor.execute(() -> {
                 SocialStats stats = fetchSocialStats(requestVideoId, apiKey);
                 localProgressHandler.post(() -> {
                     if (!isAdded() || !TextUtils.equals(pendingSocialStatsVideoId, requestVideoId)) {
@@ -3446,6 +3425,26 @@ public class SongPlayerFragment extends Fragment {
         }
         if (tvActionCommentCount != null) {
             tvActionCommentCount.setText(stats.commentCount);
+        }
+        refreshLikeIconState();
+    }
+
+    private void refreshLikeIconState() {
+        if (ivActionLikeIcon == null || !isAdded()) return;
+        if (tracks.isEmpty() || currentIndex < 0 || currentIndex >= tracks.size()) {
+            ivActionLikeIcon.setImageResource(R.drawable.ic_social_thumb_up);
+            ivActionLikeIcon.setColorFilter(ContextCompat.getColor(requireContext(), R.color.text_primary));
+            return;
+        }
+        String videoId = tracks.get(currentIndex).videoId;
+        boolean isFavorite = !TextUtils.isEmpty(videoId)
+                && FavoritesPlaylistStore.isFavorite(requireContext(), videoId);
+        if (isFavorite) {
+            ivActionLikeIcon.setImageResource(R.drawable.ic_thumb_up_liked);
+            ivActionLikeIcon.clearColorFilter();
+        } else {
+            ivActionLikeIcon.setImageResource(R.drawable.ic_social_thumb_up);
+            ivActionLikeIcon.setColorFilter(ContextCompat.getColor(requireContext(), R.color.text_primary));
         }
     }
 
@@ -4020,6 +4019,11 @@ public class SongPlayerFragment extends Fragment {
             transaction.commit();
         }
 
+        // Restore bottomNav visibility when returning to the main module
+        if (getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).ensureHeaderVisibleForMusic();
+        }
+
         collapsingToMiniMode = false;
         return true;
     }
@@ -4490,6 +4494,7 @@ public class SongPlayerFragment extends Fragment {
                         context,
                         queue,
                         safeIndex,
+                        Math.max(0, current),
                         Math.max(1, total),
                         effectivelyPlaying,
                         synchronous
@@ -4523,7 +4528,7 @@ public class SongPlayerFragment extends Fragment {
         if (synchronous) {
             task.run();
         } else {
-            persistenceExecutor.execute(task);
+            backgroundExecutor.execute(task);
         }
     }
 
@@ -5143,79 +5148,19 @@ public class SongPlayerFragment extends Fragment {
     }
 
     private void showSavedInPlaylistBarPlayer(@NonNull PlayerTrack track, @NonNull String playlistKey, @NonNull String playlistName) {
-        if (!isAdded() || getView() == null) return;
-
-        android.view.ViewGroup rootView = (android.view.ViewGroup) getView();
-
-        View existing = rootView.findViewWithTag("saved_bar");
-        if (existing != null) rootView.removeView(existing);
-
-        float density = getResources().getDisplayMetrics().density;
-
-        android.widget.LinearLayout bar = new android.widget.LinearLayout(requireContext());
-        bar.setTag("saved_bar");
-        bar.setId(View.generateViewId());
-        bar.setOrientation(android.widget.LinearLayout.HORIZONTAL);
-        bar.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        bar.setBackgroundColor(android.graphics.Color.parseColor("#FF1E1E1E"));
-        int hPad = (int) (16 * density);
-        int vPad = (int) (12 * density);
-        bar.setPadding(hPad, vPad, hPad, vPad);
-        bar.setElevation(8 * density);
-
-        TextView tvSaved = new TextView(requireContext());
-        tvSaved.setText("Se guardó en " + playlistName);
-        tvSaved.setTextColor(android.graphics.Color.WHITE);
-        tvSaved.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
-        tvSaved.setTypeface(null, android.graphics.Typeface.NORMAL);
-        tvSaved.setMaxLines(1);
-        tvSaved.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        android.widget.LinearLayout.LayoutParams tvParams = new android.widget.LinearLayout.LayoutParams(
-                0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        tvSaved.setLayoutParams(tvParams);
-        bar.addView(tvSaved);
-
-        TextView btnChange = new TextView(requireContext());
-        btnChange.setText("Cambiar");
-        btnChange.setTextColor(android.graphics.Color.parseColor("#8AB4F8"));
-        btnChange.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
-        btnChange.setTypeface(null, android.graphics.Typeface.BOLD);
-        btnChange.setPadding((int) (16 * density), 0, 0, 0);
-        btnChange.setOnClickListener(v -> {
-            rootView.removeView(bar);
+        showPlayerActionBar("Se guardó en " + playlistName, "Cambiar", v -> {
             CustomPlaylistsStore.clearLastSavedPlaylist(requireContext());
             showSaveToPlaylistSheet(track, playlistKey);
         });
-        bar.addView(btnChange);
-
-        int barBottomMargin = (int) (56 * density);
-        if (rootView instanceof androidx.constraintlayout.widget.ConstraintLayout) {
-            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams clp =
-                    new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
-                            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.MATCH_PARENT,
-                            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.WRAP_CONTENT);
-            clp.bottomToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
-            clp.bottomMargin = barBottomMargin;
-            clp.startToStart = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
-            clp.endToEnd = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
-            rootView.addView(bar, clp);
-        } else {
-            FrameLayout.LayoutParams flp = new FrameLayout.LayoutParams(
-                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
-            flp.gravity = android.view.Gravity.BOTTOM;
-            flp.bottomMargin = barBottomMargin;
-            rootView.addView(bar, flp);
-        }
-
-        new Handler(Looper.getMainLooper()).postDelayed(() -> {
-            if (bar.getParent() != null) {
-                ((android.view.ViewGroup) bar.getParent()).removeView(bar);
-            }
-        }, 4000L);
     }
 
     private void showRemovedFromPlaylistBarPlayer() {
+        showPlayerActionBar("Se eliminó correctamente", "Cambiar", v -> {
+            showSaveToPlaylistSheetFromPlayer();
+        });
+    }
+
+    private void showPlayerActionBar(@NonNull String message, @NonNull String actionLabel, @NonNull View.OnClickListener actionClick) {
         if (!isAdded() || getView() == null) return;
 
         android.view.ViewGroup rootView = (android.view.ViewGroup) getView();
@@ -5236,7 +5181,7 @@ public class SongPlayerFragment extends Fragment {
         bar.setElevation(8 * density);
 
         TextView tvMsg = new TextView(requireContext());
-        tvMsg.setText("Se eliminó correctamente");
+        tvMsg.setText(message);
         tvMsg.setTextColor(android.graphics.Color.WHITE);
         tvMsg.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
         tvMsg.setTypeface(null, android.graphics.Typeface.NORMAL);
@@ -5247,26 +5192,26 @@ public class SongPlayerFragment extends Fragment {
         tvMsg.setLayoutParams(tvParams);
         bar.addView(tvMsg);
 
-        TextView btnChange = new TextView(requireContext());
-        btnChange.setText("Cambiar");
-        btnChange.setTextColor(android.graphics.Color.parseColor("#8AB4F8"));
-        btnChange.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
-        btnChange.setTypeface(null, android.graphics.Typeface.BOLD);
-        btnChange.setPadding((int) (16 * density), 0, 0, 0);
-        btnChange.setOnClickListener(v -> {
+        TextView btnAction = new TextView(requireContext());
+        btnAction.setText(actionLabel);
+        btnAction.setTextColor(android.graphics.Color.parseColor("#8AB4F8"));
+        btnAction.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
+        btnAction.setTypeface(null, android.graphics.Typeface.BOLD);
+        btnAction.setPadding((int) (16 * density), 0, 0, 0);
+        btnAction.setOnClickListener(v -> {
             rootView.removeView(bar);
-            showSaveToPlaylistSheetFromPlayer();
+            actionClick.onClick(v);
         });
-        bar.addView(btnChange);
+        bar.addView(btnAction);
 
-        int barBM = (int) (56 * density);
+        int barBottomMargin = (int) (56 * density);
         if (rootView instanceof androidx.constraintlayout.widget.ConstraintLayout) {
             androidx.constraintlayout.widget.ConstraintLayout.LayoutParams clp =
                     new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
                             androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.MATCH_PARENT,
                             androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.WRAP_CONTENT);
             clp.bottomToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
-            clp.bottomMargin = barBM;
+            clp.bottomMargin = barBottomMargin;
             clp.startToStart = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
             clp.endToEnd = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
             rootView.addView(bar, clp);
@@ -5275,7 +5220,7 @@ public class SongPlayerFragment extends Fragment {
                     android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                     android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
             flp.gravity = android.view.Gravity.BOTTOM;
-            flp.bottomMargin = barBM;
+            flp.bottomMargin = barBottomMargin;
             rootView.addView(bar, flp);
         }
 
@@ -5389,40 +5334,32 @@ public class SongPlayerFragment extends Fragment {
         
         bottomSheetDialog.show();
 
-        streamResolverExecutor.execute(() -> {
-            List<PlayerTrack> computedQueue = new ArrayList<>();
-            if (!tracks.isEmpty() && currentIndex >= 0 && currentIndex < tracks.size()) {
-                computedQueue.add(tracks.get(currentIndex));
-            }
-            for (int i = 1; i < tracks.size(); i++) {
-                int idx = (currentIndex + i) % tracks.size();
-                computedQueue.add(tracks.get(idx));
-            }
+        // Queue computation is O(n) on an in-memory ArrayList — no need for a background thread
+        List<PlayerTrack> computedQueue = new ArrayList<>();
+        if (!tracks.isEmpty() && currentIndex >= 0 && currentIndex < tracks.size()) {
+            computedQueue.add(tracks.get(currentIndex));
+        }
+        for (int i = 1; i < tracks.size(); i++) {
+            int idx = (currentIndex + i) % tracks.size();
+            computedQueue.add(tracks.get(idx));
+        }
 
-            localProgressHandler.post(() -> {
-                if (!isAdded() || !bottomSheetDialog.isShowing()) {
-                    return;
-                }
+        nextUpTracks.clear();
+        if (computedQueue.size() > MAX_NEXT_UP) {
+            nextUpTracks.addAll(computedQueue.subList(0, MAX_NEXT_UP));
+        } else {
+            nextUpTracks.addAll(computedQueue);
+        }
+        nextUpAdapter.setItems(nextUpTracks);
 
-                nextUpTracks.clear();
-                // Limit queue size to avoid unbounded memory growth
-                if (computedQueue.size() > MAX_NEXT_UP) {
-                    nextUpTracks.addAll(computedQueue.subList(0, MAX_NEXT_UP));
-                } else {
-                    nextUpTracks.addAll(computedQueue);
-                }
-                nextUpAdapter.setItems(nextUpTracks);
-
-                pbQueueLoading.setVisibility(View.GONE);
-                if (nextUpTracks.isEmpty()) {
-                    rvQueue.setVisibility(View.GONE);
-                    tvEmptyQueue.setVisibility(View.VISIBLE);
-                } else {
-                    rvQueue.setVisibility(View.VISIBLE);
-                    tvEmptyQueue.setVisibility(View.GONE);
-                }
-            });
-        });
+        pbQueueLoading.setVisibility(View.GONE);
+        if (nextUpTracks.isEmpty()) {
+            rvQueue.setVisibility(View.GONE);
+            tvEmptyQueue.setVisibility(View.VISIBLE);
+        } else {
+            rvQueue.setVisibility(View.VISIBLE);
+            tvEmptyQueue.setVisibility(View.GONE);
+        }
     }
     private void setupSwipeToDismiss(View root) {
         if (!(root instanceof SwipeInterceptLayout)) return;

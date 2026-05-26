@@ -37,8 +37,13 @@ class YouTubeMusicWebSessionActivity : AppCompatActivity() {
 
         val imgAmbient = findViewById<ImageView>(R.id.imgAmbient)
         imgAmbient?.postDelayed({
-            val breatheAnim = AnimationUtils.loadAnimation(this, R.anim.bg_breathe)
-            imgAmbient.startAnimation(breatheAnim)
+            if (isFinishing || isDestroyed) return@postDelayed
+            try {
+                val breatheAnim = AnimationUtils.loadAnimation(this, R.anim.bg_breathe)
+                imgAmbient.startAnimation(breatheAnim)
+            } catch (e: Exception) {
+                Log.e("YouTubeMusicWebSession", "Error loading breathe animation", e)
+            }
         }, 400L)
 
         btnOverlayLogin?.setOnClickListener {
@@ -72,11 +77,33 @@ class YouTubeMusicWebSessionActivity : AppCompatActivity() {
         settings.cacheMode = WebSettings.LOAD_DEFAULT
         wv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
+        val defaultUserAgent = settings.userAgentString
+        if (!defaultUserAgent.isNullOrBlank()) {
+            val cleanUserAgent = defaultUserAgent
+                .replace("Version/4.0", "")
+                .replace("; wv", "")
+                .replace("  ", " ")
+                .trim()
+            settings.userAgentString = cleanUserAgent
+        }
+
         wv.webViewClient = object : WebViewClient() {
+            private fun isAllowedHost(host: String): Boolean {
+                val lowerHost = host.lowercase()
+                return lowerHost.contains("google") || 
+                       lowerHost.contains("youtube") || 
+                       lowerHost.contains("gstatic")
+            }
+
             override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean {
                 val uri = Uri.parse(url)
                 val host = uri.host.orEmpty()
-                return !(host.endsWith("youtube.com") || host.endsWith("google.com") || host.endsWith("gstatic.com"))
+                return !isAllowedHost(host)
+            }
+
+            override fun shouldOverrideUrlLoading(view: WebView, request: android.webkit.WebResourceRequest): Boolean {
+                val host = request.url.host.orEmpty()
+                return !isAllowedHost(host)
             }
 
             override fun onPageFinished(view: WebView, url: String?) {
@@ -177,7 +204,7 @@ class YouTubeMusicWebSessionActivity : AppCompatActivity() {
             .commit()
 
         // Trigger deferred heavy initialization now that login succeeded.
-        (applicationContext as SleppifyApp).performDeferredInit()
+        (applicationContext as? SleppifyApp)?.performDeferredInit()
 
         val data = Intent()
         data.putExtra(EXTRA_SESSION_COOKIE_HEADER, lastCookieHeader)
@@ -195,8 +222,12 @@ class YouTubeMusicWebSessionActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        webView?.stopLoading()
-        webView?.destroy()
+        webView?.let { wv ->
+            wv.stopLoading()
+            (wv.parent as? android.view.ViewGroup)?.removeView(wv)
+            wv.destroy()
+        }
+        webView = null
         super.onDestroy()
     }
 

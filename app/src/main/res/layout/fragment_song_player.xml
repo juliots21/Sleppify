@@ -190,7 +190,7 @@
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
                     android:paddingHorizontal="14dp">
-                    <ImageView android:layout_width="19dp" android:layout_height="19dp" android:src="@drawable/ic_thumb_up_liked" />
+                    <ImageView android:id="@+id/ivActionLikeIcon" android:layout_width="19dp" android:layout_height="19dp" android:src="@drawable/ic_social_thumb_up" app:tint="@color/text_primary" />
                     <TextView android:id="@+id/tvActionLikeCount" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:fontFamily="@font/inter_variable" android:text="0" android:textColor="@color/text_primary" android:textSize="14sp" android:textStyle="bold" />
                 </LinearLayout>
 
@@ -206,7 +206,7 @@
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
                     android:paddingHorizontal="14dp">
-                    <ImageView android:layout_width="19dp" android:layout_height="19dp" android:src="@drawable/ic_social_thumb_down" app:tint="@color/text_primary" />
+                    <ImageView android:layout_width="19dp" android:layout_height="19dp" android:src="@drawable/ic_social_thumb_down_outline" app:tint="@color/text_primary" />
                 </LinearLayout>
             </LinearLayout>
 

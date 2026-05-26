@@ -25,7 +25,9 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.viewpager2.widget.ViewPager2;
 
+import android.graphics.Typeface;
 import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.engine.DiskCacheStrategy;
 import com.bumptech.glide.load.resource.bitmap.CenterCrop;
 import com.bumptech.glide.load.resource.bitmap.RoundedCorners;
 import com.example.sleppify.utils.YouTubeCropTransformation;
@@ -48,6 +50,13 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
     private static final int SHORTCUTS_PER_PAGE = 9;
     private static final int SHORTCUTS_MAX_PAGES = 3;
     private static final PathInterpolator MATERIAL_EASE = new PathInterpolator(0.2f, 0f, 0f, 1f);
+
+    // Brand header views
+    private View llFragBrandHeader;
+    private TextView tvFragBrandTitle;
+    private ImageView btnFragHeaderSearch;
+    private com.google.android.material.button.MaterialButton btnFragSignIn;
+    private com.google.android.material.imageview.ShapeableImageView btnFragProfilePhoto;
 
     // Mini-player views
     private ImageView ivMiniPlayerArt;
@@ -151,6 +160,8 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
 
+        setupFragBrandHeader(view);
+
         ivMiniPlayerArt = view.findViewById(R.id.ivMiniPlayerArt);
         tvMiniPlayerTitle = view.findViewById(R.id.tvMiniPlayerTitle);
         tvMiniPlayerSubtitle = view.findViewById(R.id.tvMiniPlayerSubtitle);
@@ -221,6 +232,7 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
         super.onResume();
         PlaybackEventBus.addListener(this);
         if (isHidden()) return;
+        refreshFragHeaderProfilePhoto();
         refreshShortcuts();
         refreshMixes();
         loadGoogleProfilePhoto();
@@ -252,6 +264,11 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
         tabDotsShortcuts = null;
         rvMixes = null;
         tvMixesEmpty = null;
+        llFragBrandHeader = null;
+        tvFragBrandTitle = null;
+        btnFragHeaderSearch = null;
+        btnFragSignIn = null;
+        btnFragProfilePhoto = null;
         ivShortcutProfilePhoto = null;
         tvPersonalMixesLabel = null;
         rvPersonalMixes = null;
@@ -274,6 +291,7 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
             handler.postDelayed(() -> {
                 if (isAdded() && !isHidden()) refreshShortcuts();
             }, 200);
+            refreshFragHeaderProfilePhoto();
             refreshMixes();
             loadGoogleProfilePhoto();
             refreshCovers();
@@ -283,6 +301,105 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
             handler.postDelayed(() -> {
                 if (isAdded() && !isHidden()) updateMiniPlayerUi();
             }, 300);
+        }
+    }
+
+    private void setupFragBrandHeader(@NonNull View root) {
+        llFragBrandHeader = root.findViewById(R.id.llFragBrandHeader);
+        tvFragBrandTitle = root.findViewById(R.id.tvFragBrandTitle);
+        btnFragHeaderSearch = root.findViewById(R.id.btnFragHeaderSearch);
+        btnFragSignIn = root.findViewById(R.id.btnFragSignIn);
+        btnFragProfilePhoto = root.findViewById(R.id.btnFragProfilePhoto);
+
+        // Apply status bar inset as top padding so header doesn't render under the status bar
+        if (llFragBrandHeader != null) {
+            androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(llFragBrandHeader, (v, insets) -> {
+                int statusBarHeight = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()).top;
+                v.setPadding(v.getPaddingLeft(), statusBarHeight, v.getPaddingRight(), v.getPaddingBottom());
+                return insets;
+            });
+            llFragBrandHeader.requestApplyInsets();
+        }
+
+        if (tvFragBrandTitle != null) {
+            tvFragBrandTitle.setAllCaps(true);
+            tvFragBrandTitle.setLetterSpacing(0.08f);
+            try {
+                Typeface brandFont = androidx.core.content.res.ResourcesCompat.getFont(requireContext(), R.font.manrope_variable);
+                if (brandFont != null) tvFragBrandTitle.setTypeface(brandFont);
+            } catch (Exception ignored) {}
+            float density = getResources().getDisplayMetrics().density;
+            int iconSize = (int) (26 * density);
+            android.graphics.drawable.Drawable icon = androidx.core.content.ContextCompat.getDrawable(requireContext(), R.mipmap.ic_launcher);
+            if (icon != null) {
+                icon.setBounds(0, 0, iconSize, iconSize);
+                tvFragBrandTitle.setCompoundDrawablesRelative(icon, null, null, null);
+            }
+            tvFragBrandTitle.setCompoundDrawablePadding((int) (8 * density));
+        }
+
+        if (btnFragHeaderSearch != null) {
+            btnFragHeaderSearch.setOnClickListener(v -> {
+                if (getActivity() instanceof MainActivity) {
+                    ((MainActivity) getActivity()).openSearchFragment();
+                }
+            });
+        }
+
+        if (btnFragSignIn != null) {
+            btnFragSignIn.setOnClickListener(v -> {
+                if (getActivity() instanceof MainActivity) {
+                    btnFragSignIn.setEnabled(false);
+                    btnFragSignIn.setAlpha(0.56f);
+                    ((MainActivity) getActivity()).requireAuth(
+                        () -> {
+                            if (btnFragSignIn != null) { btnFragSignIn.setEnabled(true); btnFragSignIn.setAlpha(1f); }
+                            refreshFragHeaderProfilePhoto();
+                        },
+                        () -> {
+                            if (btnFragSignIn != null) { btnFragSignIn.setEnabled(true); btnFragSignIn.setAlpha(1f); }
+                        }
+                    );
+                }
+            });
+        }
+
+        if (btnFragProfilePhoto != null) {
+            btnFragProfilePhoto.setOnClickListener(v -> {
+                if (getActivity() instanceof MainActivity) {
+                    ((MainActivity) getActivity()).enterSettings();
+                }
+            });
+        }
+
+        refreshFragHeaderProfilePhoto();
+    }
+
+    private void refreshFragHeaderProfilePhoto() {
+        if (!isAdded() || btnFragProfilePhoto == null || btnFragSignIn == null) return;
+        android.content.SharedPreferences prefs = requireContext().getSharedPreferences("streaming_cache", android.app.Activity.MODE_PRIVATE);
+        String cachedUrl = prefs.getString("cached_google_profile_photo_url", "");
+        android.net.Uri photoUri = null;
+        com.google.firebase.auth.FirebaseUser user = com.google.firebase.auth.FirebaseAuth.getInstance().getCurrentUser();
+        if (user != null) photoUri = user.getPhotoUrl();
+        if (photoUri == null && cachedUrl != null && !cachedUrl.isEmpty()) {
+            photoUri = android.net.Uri.parse(cachedUrl);
+        }
+        boolean signedIn = (getActivity() instanceof MainActivity)
+                && ((MainActivity) getActivity()).getAuthManager().isSignedIn()
+                && photoUri != null;
+        if (signedIn) {
+            btnFragSignIn.setVisibility(View.GONE);
+            btnFragProfilePhoto.setVisibility(View.VISIBLE);
+            Glide.with(this)
+                    .load(photoUri)
+                    .diskCacheStrategy(DiskCacheStrategy.ALL)
+                    .circleCrop()
+                    .into(btnFragProfilePhoto);
+        } else {
+            btnFragProfilePhoto.setVisibility(View.GONE);
+            btnFragProfilePhoto.setImageDrawable(null);
+            btnFragSignIn.setVisibility(View.VISIBLE);
         }
     }
 
@@ -1077,7 +1194,7 @@ public class PrincipalFragment extends Fragment implements PlaybackEventBus.List
     @NonNull
     private PlaybackHistoryStore.Snapshot loadPlaybackSnapshot() {
         if (!isAdded()) {
-            return new PlaybackHistoryStore.Snapshot(new ArrayList<>(), 0, 1, false, 0L);
+            return new PlaybackHistoryStore.Snapshot(new ArrayList<>(), 0, 0, 1, false, 0L);
         }
         long now = System.currentTimeMillis();
         if (miniSnapshotCache != null && (now - miniSnapshotCacheReadAtMs) < MINI_SNAPSHOT_REFRESH_MS) {

@@ -809,7 +809,9 @@ class MainActivity : AppCompatActivity() {
         // Do not force header/bottomNav visible when inside overlay screens
         if (inSettings || inEqualizerFromSettings || inEqualizerFromPlayer || inScannerFromSettings) return
         if (!isSearchFragmentVisible() && !isPlaylistDetailVisible()) {
-            topAppBar.visibility = View.VISIBLE
+            // Music and Principal fragments own their own header — hide topAppBar for them
+            val isFragOwnedHeader = currentMainNavItemId == R.id.nav_music || currentMainNavItemId == R.id.nav_principal
+            topAppBar.visibility = if (isFragOwnedHeader) View.GONE else View.VISIBLE
         }
         fragmentContainer.visibility = View.VISIBLE
         bottomNav.visibility = View.VISIBLE
@@ -1001,7 +1003,8 @@ class MainActivity : AppCompatActivity() {
                 }
                 commit()
             }
-            topAppBar.visibility = View.VISIBLE
+            val isFragOwnedHeader = selectedId == R.id.nav_music || selectedId == R.id.nav_principal
+            topAppBar.visibility = if (isFragOwnedHeader) View.GONE else View.VISIBLE
             configureHeaderActionForMainModules()
             setSolidNavigationBar(false)
             bottomNav.visibility = View.VISIBLE
@@ -1253,7 +1256,7 @@ class MainActivity : AppCompatActivity() {
 
     fun isSongPlayerVisible(): Boolean {
         val player = supportFragmentManager.findFragmentByTag(TAG_SONG_PLAYER) as? SongPlayerFragment ?: return false
-        return player.isAdded && !player.isHidden
+        return player.isAdded && !player.isHidden && !player.isRemoving
     }
 
     fun getGlobalMiniPlayer(): GlobalMiniPlayerController? = globalMiniPlayer
@@ -1272,12 +1275,12 @@ class MainActivity : AppCompatActivity() {
 
     fun isSearchFragmentVisible(): Boolean {
         val sf = searchFragment ?: return false
-        return sf.isAdded && !sf.isHidden
+        return sf.isAdded && !sf.isHidden && !sf.isRemoving
     }
 
     private fun isPlaylistDetailVisible(): Boolean {
         val pd = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL) ?: return false
-        return pd.isAdded && !pd.isHidden
+        return pd.isAdded && !pd.isHidden && !pd.isRemoving
     }
 
     fun openSearchFragmentWithQuery(query: String) {
@@ -1373,14 +1376,11 @@ class MainActivity : AppCompatActivity() {
         if (wasPlaylistDetailActive) {
             topAppBar.visibility = View.GONE
         } else {
-            // Always ensure header is visible when returning to main modules from search
-            topAppBar.visibility = View.VISIBLE
+            // Music and Principal own their header — keep topAppBar hidden for them
+            val isFragOwnedHeader = selectedId == R.id.nav_music || selectedId == R.id.nav_principal
+            topAppBar.visibility = if (isFragOwnedHeader) View.GONE else View.VISIBLE
             configureHeaderActionForMainModules()
             updateHeaderTitleForModule(selectedId)
-        }
-        // Defensive: ensure header is visible if we're in a valid main module state
-        if (!wasPlaylistDetailActive && selectedId != View.NO_ID) {
-            topAppBar.visibility = View.VISIBLE
         }
         
         lifecycleScope.launch {
@@ -1520,7 +1520,9 @@ class MainActivity : AppCompatActivity() {
 
             if (itemId == R.id.nav_music) markStreamingEntryAsLibrary()
             if (!isSearchFragmentVisible()) {
-                topAppBar.visibility = View.VISIBLE
+                // Music and Principal own their header — keep topAppBar hidden for them
+                val isFragOwnedHeader = itemId == R.id.nav_music || itemId == R.id.nav_principal
+                topAppBar.visibility = if (isFragOwnedHeader) View.GONE else View.VISIBLE
             }
             configureHeaderActionForMainModules()
             updateHeaderTitleForModule(itemId)
@@ -1628,6 +1630,10 @@ class MainActivity : AppCompatActivity() {
             }
             commitNowAllowingStateLoss()
         }
+        // Restore bottomNav when returning to a main module
+        val isFragOwnedHeader = currentMainNavItemId == R.id.nav_music || currentMainNavItemId == R.id.nav_principal
+        topAppBar.visibility = if (isFragOwnedHeader) View.GONE else View.VISIBLE
+        bottomNav.visibility = View.VISIBLE
         PlaybackEventBus.notifyPlaybackSnapshotUpdated()
     }
 
@@ -1660,27 +1666,18 @@ class MainActivity : AppCompatActivity() {
             // Single detail — pop all the way back to library
             markStreamingEntryAsLibrary()
             supportFragmentManager.popBackStackImmediate(TAG_PLAYLIST_DETAIL, androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE)
-            if (bottomNav.selectedItemId != R.id.nav_music) {
-                suppressNavListener = true
-                bottomNav.selectedItemId = R.id.nav_music
-                suppressNavListener = false
-            }
-            currentMainNavItemId = R.id.nav_music
-            if (!isSearchFragmentVisible()) {
-                topAppBar.visibility = View.VISIBLE
-                updateHeaderTitleForModule(R.id.nav_music)
-            }
-            // Scroll MusicPlayerFragment to top since onHiddenChanged won't fire
-            (getMainModuleFragment(R.id.nav_music) as? MusicPlayerFragment)?.scrollToTop()
+            
+            // Switch to the music module cleanly to hide any other main modules (like PrincipalFragment)
+            // and show MusicPlayerFragment.
+            switchToMainModule(R.id.nav_music)
         }
         return true
     }
 
     fun ensureHeaderVisibleForMusic() {
         if (inSettings || inEqualizerFromSettings || inEqualizerFromPlayer || inScannerFromSettings) return
-        topAppBar.visibility = View.VISIBLE
-        configureHeaderActionForMainModules()
-        updateHeaderTitleForModule(R.id.nav_music)
+        // Music fragment now owns its own header — just ensure bottomNav is visible
+        topAppBar.visibility = View.GONE
         bottomNav.visibility = View.VISIBLE
     }
 
