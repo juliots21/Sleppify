@@ -40,8 +40,11 @@ def _stream_and_cleanup(file_path, chunk_size=65536):
         try: os.rmdir(parent)
         except: pass
 
-# 360p pre-muxed mp4 (h264+aac, no ffmpeg merge needed)
-VIDEO_FORMAT = '18'
+# Offline download: 720p pre-muxed mp4 (h264+aac 192kbps, no ffmpeg merge needed). Falls back to 360p.
+VIDEO_FORMAT = '22/18'
+
+# Streaming: same 720p pre-muxed mp4 — instant seek via Range requests, no ffmpeg needed.
+STREAM_FORMAT = '22/18'
 
 # In-memory stream URL cache (avoids re-resolving on each Range/seek request)
 _stream_url_cache = {}  # {video_id: {'url': str, 'content_length': int, 'ts': float}}
@@ -49,7 +52,7 @@ _STREAM_CACHE_TTL = 4 * 3600  # 4 hours (googlevideo URLs expire ~6h)
 
 @app.route('/api/video', methods=['POST'])
 def api_video():
-    """Download 360p mp4 to temp file, then stream to client. No cookies needed."""
+    """Download 720p mp4 (fallback 360p) to temp file, then stream to client. No cookies needed."""
     data = request.get_json()
     if not data or 'url' not in data:
         return jsonify({"error": "URL missing"}), 400
@@ -100,7 +103,7 @@ def api_video():
 
 @app.route('/api/resolve', methods=['GET', 'POST'])
 def api_resolve():
-    """Resolve direct stream URL for 360p mp4. No cookies needed."""
+    """Resolve direct stream URL for 720p mp4 (fallback 360p). No cookies needed."""
     if request.method == 'POST':
         data = request.get_json()
         youtube_url = data.get('url') if data else None
@@ -139,7 +142,7 @@ def api_stream_cached(video_id):
     """
     Optimized streaming proxy: resolves once, caches URL, then proxies bytes.
     Supports Range requests for seeking without re-resolving yt-dlp each time.
-    ExoPlayer should point here: GET /api/stream/<video_id>
+    Streams 720p mp4 (fallback 360p). ExoPlayer should point here: GET /api/stream/<video_id>
     """
     import urllib.request
 
@@ -247,7 +250,7 @@ def api_stream_cached(video_id):
 
 @app.route('/api/streaming', methods=['GET', 'POST'])
 def api_streaming():
-    """Stream 360p mp4 via proxy. Supports Range requests for seeking. No cookies needed."""
+    """Stream 720p mp4 (fallback 360p) via proxy. Supports Range requests for seeking. No cookies needed."""
     import urllib.request
 
     if request.method == 'POST':
@@ -336,7 +339,7 @@ def api_streaming():
 
 @app.route('/api/resolve-for-stream', methods=['GET', 'POST'])
 def api_resolve_for_stream():
-    """Resolve direct googlevideo.com stream URL (360p mp4) for use with CF Worker proxy.
+    """Resolve direct googlevideo.com stream URL (720p mp4, fallback 360p) for use with CF Worker proxy.
     Returns JSON: {url, duration, title, content_length}. No cookies needed."""
     if request.method == 'POST':
         data = request.get_json()

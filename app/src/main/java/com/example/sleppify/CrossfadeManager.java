@@ -172,6 +172,9 @@ public final class CrossfadeManager {
         }
 
         int remainingMs = Math.max(0, durationMs - Math.max(0, positionMs));
+        if (remainingMs <= crossfadeDurationMs * 2) {
+            Log.d(TAG, "[CROSSFADE_DBG] tick remaining=" + remainingMs + " cfDur=" + crossfadeDurationMs + " pos=" + positionMs + " dur=" + durationMs + " inProgress=" + inProgress);
+        }
         if (remainingMs > crossfadeDurationMs) {
             return;
         }

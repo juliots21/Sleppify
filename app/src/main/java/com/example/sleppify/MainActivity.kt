@@ -977,10 +977,7 @@ class MainActivity : AppCompatActivity() {
             topAppBar.visibility = View.GONE
             setSolidNavigationBar(true)
             bottomNav.visibility = View.GONE
-            lifecycleScope.launch {
-                delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
-                revealModuleContent()
-            }
+            fragmentContainer.post { fragmentContainer.post { revealModuleContent() } }
         }
     }
 
@@ -1009,10 +1006,7 @@ class MainActivity : AppCompatActivity() {
             setSolidNavigationBar(false)
             bottomNav.visibility = View.VISIBLE
             updateHeaderTitleForModule(selectedId)
-            lifecycleScope.launch {
-                delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
-                revealModuleContent()
-            }
+            fragmentContainer.post { fragmentContainer.post { revealModuleContent() } }
         }
     }
 
@@ -1042,10 +1036,7 @@ class MainActivity : AppCompatActivity() {
             topAppBar.visibility = View.GONE
             setSolidNavigationBar(true)
             bottomNav.visibility = View.GONE
-            lifecycleScope.launch {
-                delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
-                revealModuleContent()
-            }
+            fragmentContainer.post { fragmentContainer.post { revealModuleContent() } }
         }
     }
 
@@ -1074,10 +1065,7 @@ class MainActivity : AppCompatActivity() {
             topAppBar.visibility = View.GONE
             setSolidNavigationBar(true)
             bottomNav.visibility = View.GONE
-            lifecycleScope.launch {
-                delay(MODULE_LOAD_OVERLAY_MIN_MS)
-                revealModuleContent()
-            }
+            fragmentContainer.post { fragmentContainer.post { revealModuleContent() } }
         }
     }
 
@@ -1107,10 +1095,7 @@ class MainActivity : AppCompatActivity() {
             topAppBar.visibility = View.GONE
             setSolidNavigationBar(true)
             bottomNav.visibility = View.GONE
-            lifecycleScope.launch {
-                delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
-                revealModuleContent()
-            }
+            fragmentContainer.post { fragmentContainer.post { revealModuleContent() } }
         }
     }
 
@@ -1132,10 +1117,7 @@ class MainActivity : AppCompatActivity() {
             topAppBar.visibility = View.GONE
             setSolidNavigationBar(true)
             bottomNav.visibility = View.GONE
-            lifecycleScope.launch {
-                delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
-                revealModuleContent()
-            }
+            fragmentContainer.post { fragmentContainer.post { revealModuleContent() } }
         }
     }
 
@@ -1184,15 +1166,14 @@ class MainActivity : AppCompatActivity() {
                 setMaxLifecycle(target, Lifecycle.State.RESUMED)
                 commit()
             }
-            lifecycleScope.launch {
-                delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 300 else MODULE_LOAD_OVERLAY_MIN_MS + 100)
-                if (isFinishing || isDestroyed) return@launch
+            fragmentContainer.post { fragmentContainer.post {
+                if (isFinishing || isDestroyed) return@post
                 scannerLoadingOverlay.animate()
                     .alpha(0f)
                     .setDuration(150L)
                     .withEndAction { scannerLoadingOverlay.visibility = View.GONE }
                     .start()
-            }
+            } }
         }
     }
 
@@ -1223,10 +1204,7 @@ class MainActivity : AppCompatActivity() {
             topAppBar.visibility = View.GONE
             bottomNav.visibility = View.GONE
             setSolidNavigationBar(true)
-            lifecycleScope.launch {
-                delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
-                revealModuleContent()
-            }
+            fragmentContainer.post { fragmentContainer.post { revealModuleContent() } }
         }
     }
 
@@ -1328,11 +1306,7 @@ class MainActivity : AppCompatActivity() {
 
         topAppBar.visibility = View.GONE
         
-        val isNew = !target.isAdded || target.isHidden
-        lifecycleScope.launch {
-            delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
-            revealModuleContent()
-        }
+        fragmentContainer.post { fragmentContainer.post { revealModuleContent() } }
     }
 
     fun closeSearchFragment() {
@@ -1358,14 +1332,22 @@ class MainActivity : AppCompatActivity() {
         val playlistDetail = supportFragmentManager.findFragmentByTag(TAG_PLAYLIST_DETAIL)
         val wasPlaylistDetailActive = playlistDetail != null && playlistDetail.isAdded
 
+        restoreMainModuleReferences()
         supportFragmentManager.beginTransaction().apply {
             setReorderingAllowed(true)
             
             if (wasPlaylistDetailActive) {
+                hideIfVisible(this, principalFragment, playlistDetail!!)
+                hideIfVisible(this, musicFragment, playlistDetail!!)
                 show(playlistDetail!!)
                 setMaxLifecycle(playlistDetail, Lifecycle.State.RESUMED)
             } else {
-                target?.let { 
+                target?.let {
+                    hideIfVisible(this, principalFragment, it)
+                    hideIfVisible(this, musicFragment, it)
+                    hideIfVisible(this, equalizerFragment, it)
+                    hideIfVisible(this, settingsFragment, it)
+                    hideIfVisible(this, scannerFragment, it)
                     if (it.isAdded) show(it) else moduleTagForItem(selectedId)?.let { tag -> add(R.id.fragmentContainer, it, tag) }
                     setMaxLifecycle(it, Lifecycle.State.RESUMED)
                 }
@@ -1383,10 +1365,7 @@ class MainActivity : AppCompatActivity() {
             updateHeaderTitleForModule(selectedId)
         }
         
-        lifecycleScope.launch {
-            delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
-            revealModuleContent()
-        }
+        fragmentContainer.post { fragmentContainer.post { revealModuleContent() } }
     }
 
     private fun restoreMainModuleReferences() {
@@ -1530,10 +1509,7 @@ class MainActivity : AppCompatActivity() {
                 globalMiniPlayer?.hide()
             }
 
-            lifecycleScope.launch {
-                delay(if (isNew) MODULE_LOAD_OVERLAY_MIN_MS + 80 else MODULE_LOAD_OVERLAY_MIN_MS)
-                revealModuleContent()
-            }
+            fragmentContainer.post { fragmentContainer.post { revealModuleContent() } }
         }
         return true
     }

@@ -347,9 +347,10 @@
         app:layout_constraintEnd_toEndOf="parent">
 
         <ProgressBar
-            android:layout_width="32dp"
-            android:layout_height="32dp"
+            android:layout_width="62dp"
+            android:layout_height="62dp"
             android:layout_gravity="center"
+            android:alpha="0.76"
             android:indeterminate="true"
             android:indeterminateTint="@android:color/white" />
     </FrameLayout>

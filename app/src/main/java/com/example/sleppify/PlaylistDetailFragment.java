@@ -31,7 +31,6 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.FrameLayout;
 import android.widget.ProgressBar;
-import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -79,6 +78,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -230,7 +230,13 @@ public class PlaylistDetailFragment extends Fragment
     private boolean awaitingInitialPlaylistRender = true;
     private boolean isScrolling = false;
     private boolean pendingOfflineToggle = false;
-    private final Map<String, Long> lastOfflineStateLookupTimeByTrack = new HashMap<>();
+    private final Map<String, Long> lastOfflineStateLookupTimeByTrack = new LinkedHashMap<String, Long>(
+            PLAYLIST_TRACKS_FETCH_MAX_LIMIT / 4 + 1, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, Long> eldest) {
+            return size() > PLAYLIST_TRACKS_FETCH_MAX_LIMIT / 2;
+        }
+    };
     private SongPlayerFragment cachedSongPlayer = null;
     private long lastCachedSongPlayerTime = 0;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -441,7 +447,6 @@ public class PlaylistDetailFragment extends Fragment
         shuffleModeEnabled = loadPersistedShuffleMode();
         syncShuffleModeFromPlayer();
 
-
         final String requestPlaylistId = playlistId;
         final String requestToken = youtubeAccessToken;
         view.post(() -> {
@@ -555,11 +560,6 @@ public class PlaylistDetailFragment extends Fragment
                 .edit()
                 .putString(PREF_LAST_STREAM_SCREEN, screen)
                 .apply();
-    }
-
-    @Override
-    public void onPause() {
-        super.onPause();
     }
 
     @Override
@@ -775,8 +775,6 @@ public class PlaylistDetailFragment extends Fragment
 
         persistStreamingScreen(STREAM_SCREEN_LIBRARY);
     }
-
-
 
     private void notifyHeaderChanged() {
         if (headerAdapter != null) {
@@ -1004,7 +1002,6 @@ public class PlaylistDetailFragment extends Fragment
         startOfflinePlaylistDownload(false);
     }
 
-
     @NonNull
     private String safeArg(@NonNull String key) {
         Bundle args = getArguments();
@@ -1113,7 +1110,8 @@ public class PlaylistDetailFragment extends Fragment
                     }
                     // This will cache the URL in InnertubeResolver
                     InnertubeResolver.resolveStreamUrl(appContext, videoId);
-                } catch (Exception ignored) {
+                } catch (Exception e) {
+                    Log.w(TAG_OFFLINE_DOWNLOAD, "prefetchStreamUrl failed for " + videoId, e);
                 }
             });
             
@@ -1183,10 +1181,6 @@ public class PlaylistDetailFragment extends Fragment
     }
 
     public static void loadArtworkIntoStatic(@NonNull ImageView target, @Nullable String imageUrl, int fixedSizeDp) {
-        loadArtworkInto(target, imageUrl, fixedSizeDp, false);
-    }
-
-    private static void loadArtworkInto(@NonNull ImageView target, @Nullable String imageUrl, int fixedSizeDp) {
         loadArtworkInto(target, imageUrl, fixedSizeDp, false);
     }
 
@@ -1496,7 +1490,9 @@ public class PlaylistDetailFragment extends Fragment
                         }
 
                         @Override
-                        public void onError(@NonNull String error) {}
+                        public void onError(@NonNull String error) {
+                            Log.w(TAG_OFFLINE_DOWNLOAD, "fetchVideoDurations failed: " + error);
+                        }
                     });
                 } else {
                     persistEnrichedLocalTracks(enrichPlaylistId, tracksToEnrich, isFavContext);
@@ -1788,10 +1784,6 @@ public class PlaylistDetailFragment extends Fragment
         return getCachePrefs().getBoolean(PREF_PLAYLIST_OFFLINE_COMPLETE_PREFIX + currentPlaylistId, false);
     }
 
-    private void startOfflinePlaylistDownload() {
-        startOfflinePlaylistDownload(true);
-    }
-
     private void startOfflinePlaylistDownload(boolean userInitiated) {
         if (!isAdded()) {
             return;
@@ -1803,65 +1795,87 @@ public class PlaylistDetailFragment extends Fragment
             return;
         }
 
-        ArrayList<String> ids = new ArrayList<>();
-        ArrayList<String> titles = new ArrayList<>();
-        ArrayList<String> artists = new ArrayList<>();
-        ArrayList<String> durations = new ArrayList<>();
-        int skippedAlreadyOffline = 0;
-        int totalWithVideoId = 0;
-        for (PlaylistTrack track : currentTracks) {
-            if (!TextUtils.isEmpty(track.videoId)) {
-                totalWithVideoId++;
-                boolean alreadyOffline = OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), track.videoId, track.duration);
-                if (alreadyOffline) {
-                    skippedAlreadyOffline++;
-                    continue;
-                }
-                ids.add(track.videoId);
-                titles.add(track.title);
-                artists.add(track.artist);
-                durations.add(track.duration);
-            }
-        }
-        if (ids.isEmpty()) {
-            return;
-        }
-
-        String uniqueName = OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME;
-        Data input = new Data.Builder()
-                .putString(OfflinePlaylistDownloadWorker.INPUT_PLAYLIST_ID, currentPlaylistId)
-                .putString(OfflinePlaylistDownloadWorker.INPUT_PLAYLIST_TITLE, currentPlaylistTitle)
-                .putStringArray(OfflinePlaylistDownloadWorker.INPUT_VIDEO_IDS, ids.toArray(new String[0]))
-                .putStringArray(OfflinePlaylistDownloadWorker.INPUT_TITLES, titles.toArray(new String[0]))
-                .putStringArray(OfflinePlaylistDownloadWorker.INPUT_ARTISTS, artists.toArray(new String[0]))
-                .putStringArray(OfflinePlaylistDownloadWorker.INPUT_DURATIONS, durations.toArray(new String[0]))
-                .putInt(OfflinePlaylistDownloadWorker.INPUT_ALREADY_OFFLINE_COUNT, skippedAlreadyOffline)
-                .putInt(OfflinePlaylistDownloadWorker.INPUT_TOTAL_WITH_VIDEO_ID, totalWithVideoId)
-            .putBoolean(OfflinePlaylistDownloadWorker.INPUT_USER_INITIATED, userInitiated)
-            .putBoolean(OfflinePlaylistDownloadWorker.INPUT_MANUAL_QUEUE, false)
-                .build();
-
+        // Snapshot track data on main thread, then offload disk I/O to background
+        final List<PlaylistTrack> tracksSnapshot = new ArrayList<>(currentTracks);
+        final Context appContext = requireContext().getApplicationContext();
+        final String playlistId = currentPlaylistId;
+        final String playlistTitle = currentPlaylistTitle;
+        final String offlineTag = currentPlaylistOfflineTag();
         SharedPreferences prefs = requireContext().getSharedPreferences(CloudSyncManager.PREFS_SETTINGS, Context.MODE_PRIVATE);
-        boolean allowMobileData = prefs.getBoolean(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false);
-        Constraints constraints = new Constraints.Builder()
-                .setRequiredNetworkType(allowMobileData ? NetworkType.CONNECTED : NetworkType.UNMETERED)
-                .build();
+        final boolean allowMobileData = prefs.getBoolean(CloudSyncManager.KEY_OFFLINE_DOWNLOAD_ALLOW_MOBILE_DATA, false);
 
-        OneTimeWorkRequest request = new OneTimeWorkRequest.Builder(OfflinePlaylistDownloadWorker.class)
-                .setInputData(input)
-                .setConstraints(constraints)
-                .addTag(uniqueName)
-                .addTag(currentPlaylistOfflineTag())
-                .build();
-
-        enqueueOfflineDownloadUniqueWork(uniqueName, request);
-
+        // Optimistic UI: show queued state immediately
         offlineDownloadQueued = true;
         notifyHeaderChanged();
-        observeOfflineDownload(uniqueName);
 
-        // Notify MusicPlayerFragment to update its offline state for this playlist
-        notifyMusicPlayerOfflineChanged();
+        trackStateLookupExecutor.execute(() -> {
+            ArrayList<String> ids = new ArrayList<>();
+            ArrayList<String> titles = new ArrayList<>();
+            ArrayList<String> artists = new ArrayList<>();
+            ArrayList<String> durations = new ArrayList<>();
+            int skippedAlreadyOffline = 0;
+            int totalWithVideoId = 0;
+            for (PlaylistTrack track : tracksSnapshot) {
+                if (!TextUtils.isEmpty(track.videoId)) {
+                    totalWithVideoId++;
+                    boolean alreadyOffline = OfflineAudioStore.hasValidatedOfflineAudio(appContext, track.videoId, track.duration);
+                    if (alreadyOffline) {
+                        skippedAlreadyOffline++;
+                        continue;
+                    }
+                    ids.add(track.videoId);
+                    titles.add(track.title);
+                    artists.add(track.artist);
+                    durations.add(track.duration);
+                }
+            }
+            if (ids.isEmpty()) {
+                mainHandler.post(() -> {
+                    offlineDownloadQueued = false;
+                    notifyHeaderChanged();
+                });
+                return;
+            }
+
+            final int finalSkipped = skippedAlreadyOffline;
+            final int finalTotal = totalWithVideoId;
+            mainHandler.post(() -> {
+                if (!isAdded()) return;
+
+                String uniqueName = OFFLINE_DOWNLOAD_QUEUE_UNIQUE_NAME;
+                Data input = new Data.Builder()
+                        .putString(OfflinePlaylistDownloadWorker.INPUT_PLAYLIST_ID, playlistId)
+                        .putString(OfflinePlaylistDownloadWorker.INPUT_PLAYLIST_TITLE, playlistTitle)
+                        .putStringArray(OfflinePlaylistDownloadWorker.INPUT_VIDEO_IDS, ids.toArray(new String[0]))
+                        .putStringArray(OfflinePlaylistDownloadWorker.INPUT_TITLES, titles.toArray(new String[0]))
+                        .putStringArray(OfflinePlaylistDownloadWorker.INPUT_ARTISTS, artists.toArray(new String[0]))
+                        .putStringArray(OfflinePlaylistDownloadWorker.INPUT_DURATIONS, durations.toArray(new String[0]))
+                        .putInt(OfflinePlaylistDownloadWorker.INPUT_ALREADY_OFFLINE_COUNT, finalSkipped)
+                        .putInt(OfflinePlaylistDownloadWorker.INPUT_TOTAL_WITH_VIDEO_ID, finalTotal)
+                        .putBoolean(OfflinePlaylistDownloadWorker.INPUT_USER_INITIATED, userInitiated)
+                        .putBoolean(OfflinePlaylistDownloadWorker.INPUT_MANUAL_QUEUE, false)
+                        .build();
+
+                Constraints constraints = new Constraints.Builder()
+                        .setRequiredNetworkType(allowMobileData ? NetworkType.CONNECTED : NetworkType.UNMETERED)
+                        .build();
+
+                OneTimeWorkRequest request = new OneTimeWorkRequest.Builder(OfflinePlaylistDownloadWorker.class)
+                        .setInputData(input)
+                        .setConstraints(constraints)
+                        .addTag(uniqueName)
+                        .addTag(offlineTag)
+                        .build();
+
+                enqueueOfflineDownloadUniqueWork(uniqueName, request);
+
+                offlineDownloadQueued = true;
+                notifyHeaderChanged();
+                observeOfflineDownload(uniqueName);
+
+                notifyMusicPlayerOfflineChanged();
+            });
+        });
     }
 
     private void launchOfflineImportPicker(@NonNull List<String> videoIds) {
@@ -1944,7 +1958,6 @@ public class PlaylistDetailFragment extends Fragment
         return ids;
     }
 
-
     @NonNull
     private String resolvePlaylistType(@NonNull String playlistId) {
         if (isLocalFilesContext(playlistId)) return "local_files";
@@ -1997,7 +2010,8 @@ public class PlaylistDetailFragment extends Fragment
                 OfflineAudioStore.markOfflineAudioState(trackId, true);
             }
             return success;
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            Log.w(TAG_OFFLINE_DOWNLOAD, "handleOfflineImport copy failed", e);
             return false;
         } finally {
             if (!success && temp.exists()) {
@@ -2041,7 +2055,8 @@ public class PlaylistDetailFragment extends Fragment
                     return name == null ? "" : name;
                 }
             }
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            Log.w(TAG_OFFLINE_DOWNLOAD, "resolveDisplayName failed", e);
         }
         return "";
     }
@@ -2905,8 +2920,6 @@ public class PlaylistDetailFragment extends Fragment
         }
     }
 
-
-
     private void syncShuffleModeFromPlayer() {
         SongPlayerFragment player = findSongPlayerFragment();
         if (player == null || !player.isAdded()) {
@@ -3054,8 +3067,6 @@ public class PlaylistDetailFragment extends Fragment
         }
     }
 
-
-
     @NonNull
     private String getCurrentTrackVideoId() {
         if (currentTrackIndex < 0 || currentTrackIndex >= currentTracks.size()) {
@@ -3147,7 +3158,8 @@ public class PlaylistDetailFragment extends Fragment
                 }
                 result.add(new PlaylistTrack(videoId, title, artist, duration, imageUrl));
             }
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            Log.w(TAG_OFFLINE_DOWNLOAD, "loadCachedTracks parse failed", e);
             return new ArrayList<>();
         }
 
@@ -3193,7 +3205,8 @@ public class PlaylistDetailFragment extends Fragment
                     .putBoolean(PREF_TRACKS_FULL_CACHE_PREFIX + playlistId, cacheComplete)
                     .putString(PREF_TRACKS_DATA_PREFIX + playlistId, array.toString())
                     .apply();
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            Log.w(TAG_OFFLINE_DOWNLOAD, "cacheTracks failed for " + playlistId, e);
         }
     }
 
@@ -3212,7 +3225,9 @@ public class PlaylistDetailFragment extends Fragment
             getCachePrefs().edit()
                     .putString(PREF_PLAYLIST_GRID_URLS_PREFIX + playlistId, sb.toString())
                     .apply();
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            Log.w(TAG_OFFLINE_DOWNLOAD, "persistGridUrls failed", e);
+        }
     }
 
     @Nullable
@@ -3227,7 +3242,8 @@ public class PlaylistDetailFragment extends Fragment
                 if (!trimmed.isEmpty()) result.add(trimmed);
             }
             return result.size() >= 4 ? result : null;
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            Log.w(TAG_OFFLINE_DOWNLOAD, "loadCachedGridUrls parse failed", e);
             return null;
         }
     }
@@ -3333,9 +3349,7 @@ public class PlaylistDetailFragment extends Fragment
         }
 
         anchor.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
-        if (isAdded()) {
-            showTrackActionPopup(anchor, position);
-        }
+        showTrackActionPopup(anchor, position);
     }
 
     private void showTrackActionPopup(@NonNull View anchor, int position) {
@@ -3344,9 +3358,11 @@ public class PlaylistDetailFragment extends Fragment
         Context context = requireContext();
         PlaylistTrack selectedTrack = currentTracks.get(position);
         boolean isLocalFilesPlaylist = isLocalFilesContext(currentPlaylistId);
+        // Use adapter's in-memory cache to avoid main-thread disk I/O
         boolean hasOfflineAudio = !TextUtils.isEmpty(selectedTrack.videoId)
             && !isLocalFilesPlaylist
-            && OfflineAudioStore.hasValidatedOfflineAudio(context, selectedTrack.videoId, selectedTrack.duration);
+            && trackAdapter != null
+            && trackAdapter.isOfflineAvailable(context, selectedTrack.videoId, selectedTrack.duration, position);
 
         com.google.android.material.bottomsheet.BottomSheetDialog dialog = new com.google.android.material.bottomsheet.BottomSheetDialog(context);
         View view = LayoutInflater.from(context).inflate(R.layout.bottom_sheet_track_options, null);
@@ -3751,7 +3767,9 @@ public class PlaylistDetailFragment extends Fragment
                     .addTag("offline_add_track_" + videoId)
                     .build();
             WorkManager.getInstance(requireContext()).enqueue(request);
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            Log.w(TAG_OFFLINE_DOWNLOAD, "maybeEnqueueOfflineDownloadForAddedTrack failed", e);
+        }
     }
 
     private void removeTrackFromPlaylistByKey(@NonNull String playlistKey, @NonNull String videoId) {
@@ -3907,7 +3925,6 @@ public class PlaylistDetailFragment extends Fragment
         startActivity(Intent.createChooser(intent, "Compartir canción"));
     }
 
-
     private void queueTrackAsNext(int position) {
         if (!isAdded() || position < 0 || position >= currentTracks.size()) {
             return;
@@ -3951,9 +3968,6 @@ public class PlaylistDetailFragment extends Fragment
                 track.imageUrl == null ? "" : track.imageUrl,
                 accessToken
         );
-        if (getActivity() instanceof MainActivity) {
-            ((MainActivity) getActivity()).showModuleLoadingOverlay();
-        }
         androidx.fragment.app.Fragment existingDetail = getParentFragmentManager().findFragmentByTag("playlist_detail");
         androidx.fragment.app.FragmentTransaction transaction = getParentFragmentManager()
                 .beginTransaction()
@@ -4146,7 +4160,8 @@ public class PlaylistDetailFragment extends Fragment
         // Local device files don't need downloading
         if (LocalFilesStore.isLocalVideoId(track.videoId)) return;
 
-        if (OfflineAudioStore.hasValidatedOfflineAudio(requireContext(), track.videoId, track.duration)) {
+        // Use adapter's in-memory cache to avoid main-thread disk I/O
+        if (trackAdapter != null && trackAdapter.isOfflineAvailable(requireContext(), track.videoId, track.duration, position)) {
             
             return;
         }
@@ -4204,21 +4219,30 @@ public class PlaylistDetailFragment extends Fragment
             return;
         }
 
-        Context appContext = requireContext().getApplicationContext();
-        ArrayList<String> idsToDelete = new ArrayList<>(1);
-        idsToDelete.add(track.videoId);
-        OfflineAudioStore.deleteOfflineAudio(appContext, idsToDelete);
+        final Context appContext = requireContext().getApplicationContext();
+        final String videoId = track.videoId;
+        final ArrayList<String> idsToDelete = new ArrayList<>(1);
+        idsToDelete.add(videoId);
 
+        // Optimistically update UI before background deletion completes
         if (trackAdapter != null) {
-            trackAdapter.invalidateTrackStateCache(track.videoId);
+            trackAdapter.invalidateTrackStateCache(videoId);
             trackAdapter.notifyItemChanged(position);
         }
 
-        maybeUpdateOfflineReadyState();
-        maybeAutoDownloadForCurrentPlaylist();
-
-        // Notify MusicPlayerFragment to update its offline state for this playlist
-        notifyMusicPlayerOfflineChanged();
+        trackStateLookupExecutor.execute(() -> {
+            OfflineAudioStore.deleteOfflineAudio(appContext, idsToDelete);
+            mainHandler.post(() -> {
+                if (!isAdded()) return;
+                if (trackAdapter != null) {
+                    trackAdapter.invalidateTrackStateCache(videoId);
+                    trackAdapter.notifyItemChanged(position);
+                }
+                maybeUpdateOfflineReadyState();
+                maybeAutoDownloadForCurrentPlaylist();
+                notifyMusicPlayerOfflineChanged();
+            });
+        });
     }
 
     /**
@@ -4252,12 +4276,14 @@ public class PlaylistDetailFragment extends Fragment
     public void onReplacementUndone(@NonNull String playlistId, @NonNull String originalVideoId) {
         if (!isAdded()) return;
         Context ctx = requireContext();
+        final Context appContext = ctx.getApplicationContext();
 
         PlaylistOverrideStore.Override existing =
                 PlaylistOverrideStore.INSTANCE.getOverrides(ctx, playlistId).get(originalVideoId);
         String replacementVideoId = existing != null ? existing.getReplacementVideoId() : "";
         if (!TextUtils.isEmpty(replacementVideoId)) {
-            OfflineAudioStore.deleteOfflineAudio(ctx, replacementVideoId);
+            final String deleteId = replacementVideoId;
+            trackStateLookupExecutor.execute(() -> OfflineAudioStore.deleteOfflineAudio(appContext, deleteId));
         }
 
         PlaylistOverrideStore.INSTANCE.removeOverride(ctx, playlistId, originalVideoId);
@@ -4294,13 +4320,15 @@ public class PlaylistDetailFragment extends Fragment
 
         Context ctx = requireContext();
 
+        final Context appContext = ctx.getApplicationContext();
         PlaylistOverrideStore.Override previousOverride =
                 PlaylistOverrideStore.INSTANCE.getOverrides(ctx, playlistId).get(originalVideoId);
         String previousVideoId = previousOverride != null
                 ? previousOverride.getReplacementVideoId()
                 : originalVideoId;
         if (!TextUtils.isEmpty(previousVideoId)) {
-            OfflineAudioStore.deleteOfflineAudio(ctx, previousVideoId);
+            final String deleteId = previousVideoId;
+            trackStateLookupExecutor.execute(() -> OfflineAudioStore.deleteOfflineAudio(appContext, deleteId));
         }
 
         PlaylistOverrideStore.Override override = new PlaylistOverrideStore.Override(
@@ -4373,7 +4401,9 @@ public class PlaylistDetailFragment extends Fragment
                     .build();
 
             enqueueOfflineDownloadUniqueWork(uniqueName, request);
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            Log.w(TAG_OFFLINE_DOWNLOAD, "enqueueSingleTrackForOfflineDownload failed", e);
+        }
     }
 
     private void playAllInOrder() {
@@ -4394,9 +4424,6 @@ public class PlaylistDetailFragment extends Fragment
 
         openIntegratedPlayerAt(0, true);
     }
-
-
-
 
     private void openIntegratedPlayerAt(int position, boolean startFromBeginning) {
         if (position < 0 || position >= currentTracks.size()) {
@@ -4622,7 +4649,6 @@ public class PlaylistDetailFragment extends Fragment
             trackAdapter.setActiveIndex(displayIndex);
         }
     }
-
 
     private boolean launchPlayerFromLastTrackPrefs(boolean startPlaying, boolean showPlayer) {
         if (!isAdded()) {
@@ -5437,8 +5463,8 @@ public class PlaylistDetailFragment extends Fragment
         try {
             String url = "https://music.youtube.com/playlist?list=" + Uri.encode(playlistId);
             startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
-        } catch (Exception ignored) {
-            
+        } catch (Exception e) {
+            Log.w(TAG_OFFLINE_DOWNLOAD, "openPlaylistExternal failed", e);
         }
     }
 
@@ -5500,7 +5526,9 @@ public class PlaylistDetailFragment extends Fragment
         intent.putExtra(Intent.EXTRA_TEXT, shareText);
         try {
             startActivity(Intent.createChooser(intent, "Compartir playlist"));
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            Log.w(TAG_OFFLINE_DOWNLOAD, "shareCurrentPlaylist failed", e);
+        }
     }
 
     @Nullable
@@ -5573,7 +5601,13 @@ public class PlaylistDetailFragment extends Fragment
     private final class PlaylistTrackAdapter extends RecyclerView.Adapter<PlaylistTrackAdapter.TrackViewHolder> {
         private final List<PlaylistTrack> items;
         private final OnTrackTap onTrackTap;
-        private final Map<String, Boolean> offlineAvailabilityCache = new HashMap<>();
+        private final Map<String, Boolean> offlineAvailabilityCache = new LinkedHashMap<String, Boolean>(
+                TRACK_STATE_CACHE_MAX_SIZE + 1, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, Boolean> eldest) {
+                return size() > TRACK_STATE_CACHE_MAX_SIZE;
+            }
+        };
         private int activeIndex = -1;
         private int submitGeneration = 0;
         private boolean offlineDownloadRunning;

@@ -75,6 +75,23 @@ public final class VideoSurfaceRouter {
             @NonNull ExoMediaPlayer player,
             @NonNull String videoId
     ) {
+        // If the new player wraps the same underlying ExoPlayer that is already
+        // attached to the PlayerView, skip detach+reattach.  Re-assigning the
+        // same ExoPlayer to its PlayerView forces a surface reconfiguration which
+        // flushes decoder buffers and triggers a second STATE_READY → onPrepared
+        // → mp.start() cycle (the "double start" bug).
+        boolean sameUnderlying = activePlayer != null
+                && player.getExoPlayer() != null
+                && player.getExoPlayer() == activePlayer.getExoPlayer();
+
+        if (sameUnderlying) {
+            activePlayer = player;
+            activeVideoId = videoId;
+            videoActive = true;
+            if (callback != null) callback.onVideoConfirmed();
+            return;
+        }
+
         detachAndHide();
 
         activePlayer = player;

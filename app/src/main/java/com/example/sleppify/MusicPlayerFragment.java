@@ -15,7 +15,6 @@ import android.net.Uri;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
-import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
 import android.text.TextUtils;
@@ -25,12 +24,9 @@ import android.view.HapticFeedbackConstants;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.PopupWindow;
-import android.widget.PopupMenu;
 import android.widget.ProgressBar;
-import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.LinearLayout;
 import android.content.res.ColorStateList;
@@ -39,7 +35,6 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.annotation.StringRes;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.Observer;
 import androidx.recyclerview.widget.DiffUtil;
@@ -54,9 +49,7 @@ import androidx.work.NetworkType;
 import androidx.work.WorkInfo;
 import androidx.work.WorkManager;
 import com.bumptech.glide.Glide;
-import com.bumptech.glide.RequestBuilder;
 import com.bumptech.glide.load.engine.DiskCacheStrategy;
-import android.graphics.drawable.Drawable;
 import com.google.android.gms.auth.GoogleAuthException;
 import com.google.android.gms.auth.GoogleAuthUtil;
 import com.google.android.gms.auth.UserRecoverableAuthException;
@@ -71,7 +64,6 @@ import com.google.android.gms.common.api.Scope;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.android.material.button.MaterialButton;
-import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.google.android.material.imageview.ShapeableImageView;
 import com.google.android.material.textfield.TextInputEditText;
 import org.json.JSONArray;
@@ -81,7 +73,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -99,9 +90,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
     private static final String PREF_LAST_PLAYLIST_TITLE = "stream_last_playlist_title";
     private static final String PREF_LAST_PLAYLIST_SUBTITLE = "stream_last_playlist_subtitle";
     private static final String PREF_LAST_PLAYLIST_THUMBNAIL = "stream_last_playlist_thumbnail";
-    private static final String PREF_LAST_VIDEO_ID = "stream_last_video_id";
-    private static final String PREF_LAST_TRACK_TITLE = "stream_last_track_title";
-    private static final String PREF_LAST_TRACK_ARTIST = "stream_last_track_artist";
     private static final String PREF_LAST_TRACK_IMAGE = "stream_last_track_image";
     private static final String PREF_LAST_TRACK_DURATION = "stream_last_track_duration";
     private static final String PREF_LAST_IS_PLAYING = "stream_last_is_playing";
@@ -561,11 +549,8 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
     private com.google.android.material.button.MaterialButton btnFragSignIn;
     private com.google.android.material.imageview.ShapeableImageView btnFragProfilePhoto;
     private View llLibraryHeaderRow;
-    private View llLibraryInlineSearch;
     private View tvLibraryTitle;
     private View llMusicState;
-    private ImageView ivLibraryQuickClear;
-    private TextInputEditText etLibraryQuickSearch;
     private MaterialButton btnYoutubeLogin;
     private LinearLayout llLibraryEmptyState;
     private ProgressBar progressMusic;
@@ -590,13 +575,21 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
     private final ExecutorService offlineStateExecutor = Executors.newSingleThreadExecutor();
     private final List<YouTubeMusicService.TrackResult> tracks = new ArrayList<>();
     private final List<YouTubeMusicService.TrackResult> libraryTracks = new ArrayList<>();
-    private final Map<String, String> normalizedFilterCache = new HashMap<>();
+    private final android.util.LruCache<String, String> normalizedFilterCache = new android.util.LruCache<>(512);
     private final Set<String> offlinePrefetchInFlight = new HashSet<>();
     private final Object cachedPlaylistTracksLock = new Object();
-    private final Map<String, ArrayList<CachedPlaylistTrack>> cachedPlaylistTracksById = new HashMap<>();
+    private final Map<String, ArrayList<CachedPlaylistTrack>> cachedPlaylistTracksById = new LinkedHashMap<String, ArrayList<CachedPlaylistTrack>>(32, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<String, ArrayList<CachedPlaylistTrack>> eldest) {
+            return size() > 20;
+        }
+    };
     private final Map<String, Long> cachedPlaylistTracksUpdatedAtById = new HashMap<>();
     /** Cache: playlistId â†’ top-4 thumbnail URLs for the 2x2 grid cover. */
-    private final Map<String, List<String>> playlistGridUrlsCache = new HashMap<>();
+    private final Map<String, List<String>> playlistGridUrlsCache = new LinkedHashMap<String, List<String>>(64, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<String, List<String>> eldest) {
+            return size() > 100;
+        }
+    };
     private MusicResultsAdapter adapter;
     private LinearLayoutManager musicResultsLayoutManager;
     private boolean loadingLibrary;
@@ -719,11 +712,8 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         PlaybackEventBus.addListener(this);
         setupFragBrandHeader(view);
         llLibraryHeaderRow = view.findViewById(R.id.llLibraryHeaderRow);
-        llLibraryInlineSearch = null;
         tvLibraryTitle = view.findViewById(R.id.tvLibraryTitle);
         llMusicState = view.findViewById(R.id.llMusicState);
-        ivLibraryQuickClear = null;
-        etLibraryQuickSearch = null;
         btnYoutubeLogin = view.findViewById(R.id.btnYoutubeLogin);
         llLibraryEmptyState = view.findViewById(R.id.llLibraryEmptyState);
         progressMusic = view.findViewById(R.id.progressMusic);
@@ -775,24 +765,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             }
             shareTrackResult(featuredTrack);
         });
-        if (etLibraryQuickSearch != null) {
-            etLibraryQuickSearch.setFocusable(false);
-            etLibraryQuickSearch.setFocusableInTouchMode(false);
-            etLibraryQuickSearch.setOnClickListener(v -> {
-                launchSearchActivity();
-            });
-        }
-        if (ivLibraryQuickClear != null) {
-            ivLibraryQuickClear.setOnClickListener(v -> {
-                if (etLibraryQuickSearch == null) {
-                    return;
-                }
-                etLibraryQuickSearch.setText("");
-                etLibraryQuickSearch.clearFocus();
-                updateLibraryInlineClearButton();
-                applyLibraryInlineSongSearch();
-            });
-        }
         updateYoutubeButtonLabel();
         switchScreen(ScreenMode.LIBRARY);
         if (!isPlaylistDetailStatePending()) {
@@ -837,10 +809,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 renderLibraryResults();
             }
         }
-    }
-    @Override
-    public void onPause() {
-        super.onPause();
     }
     public void scrollToTop() {
         pendingScrollToTop = true;
@@ -1091,9 +1059,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         activeScreen = mode;
         updateLibraryPullRefreshAvailability();
         llLibraryEmptyState.setVisibility(View.GONE);
-        if (llLibraryInlineSearch != null) {
-            llLibraryInlineSearch.setVisibility(View.VISIBLE);
-        }
         updateLibraryInlineClearButton();
         updateYoutubeButtonLabel();
         llFeaturedResult.setVisibility(View.GONE);
@@ -1216,8 +1181,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 && !detailFragment.isHidden()) {
             ((PlaylistDetailFragment) detailFragment).externalForceRefresh();
         }
-        
-        
+
         if (!isNetworkAvailable()) {
             // Rescan local files so pull-to-refresh updates them even offline
             if (LocalFilesStore.isEnabled(requireContext())) {
@@ -1311,13 +1275,11 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         streamingOauthCompleted = false;
         youtubeAccessToken = "";
         clearCachedToken();
-        if (isAdded()) {
-            requireContext()
-                .getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE)
-                .edit()
-                .remove(PREF_LAST_YOUTUBE_WEB_COOKIE)
-                .apply();
-        }
+        requireContext()
+            .getSharedPreferences(PREFS_PLAYER_STATE, Activity.MODE_PRIVATE)
+            .edit()
+            .remove(PREF_LAST_YOUTUBE_WEB_COOKIE)
+            .apply();
         updateYoutubeButtonLabel();
         setLibraryLoading(true, "Abriendo sesion web de YouTube Music...");
         if (webSessionLauncher == null) {
@@ -1766,7 +1728,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         featuredTrack = null;
         llFeaturedResult.setVisibility(View.GONE);
         if (tvLibraryTitle != null) tvLibraryTitle.setVisibility(View.VISIBLE);
-        if (llLibraryInlineSearch != null) llLibraryInlineSearch.setVisibility(View.VISIBLE);
+
         llLibraryEmptyState.setVisibility(View.GONE);
         updateLibraryInlineClearButton();
         llMusicStateVisible(false);
@@ -1825,8 +1787,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
     }
     private void showLibraryEmptyState() {
         if (tvLibraryTitle != null) tvLibraryTitle.setVisibility(View.GONE);
-        if (llLibraryInlineSearch != null) llLibraryInlineSearch.setVisibility(View.GONE);
-        if (ivLibraryQuickClear != null) ivLibraryQuickClear.setVisibility(View.GONE);
         llMusicStateVisible(false);
         rvMusicResults.setVisibility(View.GONE);
         llLibraryEmptyState.setVisibility(View.VISIBLE);
@@ -1834,10 +1794,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
     }
     @NonNull
     private String getLibraryInlineQuery() {
-        if (etLibraryQuickSearch == null || etLibraryQuickSearch.getText() == null) {
-            return "";
-        }
-        return etLibraryQuickSearch.getText().toString().trim();
+        return "";
     }
     private void applyLibraryInlineSongSearch() {
         if (activeScreen != ScreenMode.LIBRARY) {
@@ -1875,7 +1832,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         cancelPendingLibraryInlineSearch();
         libraryInlinePendingReveal = false;
         if (tvLibraryTitle != null) tvLibraryTitle.setVisibility(View.VISIBLE);
-        if (llLibraryInlineSearch != null) llLibraryInlineSearch.setVisibility(View.VISIBLE);
+
         llLibraryEmptyState.setVisibility(View.GONE);
         updateLibraryInlineClearButton();
         featuredTrack = null;
@@ -1897,7 +1854,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             return;
         }
         if (tvLibraryTitle != null) tvLibraryTitle.setVisibility(View.VISIBLE);
-        if (llLibraryInlineSearch != null) llLibraryInlineSearch.setVisibility(View.VISIBLE);
+
         llLibraryEmptyState.setVisibility(View.GONE);
         updateLibraryInlineClearButton();
         featuredTrack = null;
@@ -1973,7 +1930,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         }
         lastLibraryInlineDispatchedQuery = query;
         if (tvLibraryTitle != null) tvLibraryTitle.setVisibility(View.VISIBLE);
-        if (llLibraryInlineSearch != null) llLibraryInlineSearch.setVisibility(View.VISIBLE);
+
         llLibraryEmptyState.setVisibility(View.GONE);
         updateLibraryInlineClearButton();
         llMusicStateVisible(true);
@@ -2001,7 +1958,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             }
         }
         if (tvLibraryTitle != null) tvLibraryTitle.setVisibility(View.VISIBLE);
-        if (llLibraryInlineSearch != null) llLibraryInlineSearch.setVisibility(View.VISIBLE);
+
         llLibraryEmptyState.setVisibility(View.GONE);
         updateLibraryInlineClearButton();
         llMusicStateVisible(true);
@@ -2039,7 +1996,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             }
         }
         if (tvLibraryTitle != null) tvLibraryTitle.setVisibility(View.VISIBLE);
-        if (llLibraryInlineSearch != null) llLibraryInlineSearch.setVisibility(View.VISIBLE);
+
         llLibraryEmptyState.setVisibility(View.GONE);
         updateLibraryInlineClearButton();
         llMusicStateVisible(true);
@@ -2119,14 +2076,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         return result;
     }
     private void updateLibraryInlineClearButton() {
-        if (ivLibraryQuickClear == null) {
-            return;
-        }
-        boolean visible = activeScreen == ScreenMode.LIBRARY
-                && etLibraryQuickSearch != null
-                && etLibraryQuickSearch.getText() != null
-                && !TextUtils.isEmpty(etLibraryQuickSearch.getText().toString().trim());
-        ivLibraryQuickClear.setVisibility(visible ? View.VISIBLE : View.GONE);
     }
     private void llMusicStateVisible(boolean visible) {
         if (llMusicState != null) {
@@ -2827,9 +2776,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             }
         }
         String normalized = builder.toString().trim();
-        if (normalizedFilterCache.size() > 1024) {
-            normalizedFilterCache.clear();
-        }
         normalizedFilterCache.put(value, normalized);
         return normalized;
     }
@@ -3140,6 +3086,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             shareIntent.putExtra(Intent.EXTRA_TEXT, title + "\n" + watchUrl);
             startActivity(Intent.createChooser(shareIntent, "Compartir"));
         } catch (Exception e) {
+            Log.w(TAG_STREAMING, "share_track_failed", e);
         }
     }
     @Nullable
@@ -3249,9 +3196,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 playlistThumbnail == null ? "" : playlistThumbnail,
             accessTokenForDetail
         );
-        if (getActivity() instanceof MainActivity) {
-            ((MainActivity) getActivity()).showModuleLoadingOverlay();
-        }
         androidx.fragment.app.Fragment existingDetail = getParentFragmentManager().findFragmentByTag("playlist_detail");
         androidx.fragment.app.FragmentTransaction transaction = getParentFragmentManager()
             .beginTransaction()
@@ -3403,10 +3347,20 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         ImageView ivArt = view.findViewById(R.id.ivBsTrackArt);
         tvTitle.setText(track.title);
         tvSubtitle.setText(searchTypeLabel(track));
+        boolean isLikedStyle = isLikedPlaylistStyle(track);
+        boolean isRadioItem = playlistId.startsWith("RDAMVM") || playlistId.startsWith("RDEM") || playlistId.startsWith("RDTMAK");
         if (isLocalFilesPlaylist) {
             ivArt.setScaleType(android.widget.ImageView.ScaleType.CENTER);
             ivArt.setBackgroundColor(android.graphics.Color.BLACK);
             ivArt.setImageResource(R.drawable.ic_folder_white);
+        } else if (isLikedStyle) {
+            ivArt.setScaleType(android.widget.ImageView.ScaleType.CENTER);
+            ivArt.setBackgroundResource(R.drawable.bg_music_liked_gradient);
+            ivArt.setImageResource(R.drawable.ic_thumb_up_liked);
+            ivArt.setColorFilter(android.graphics.Color.WHITE);
+        } else if (isRadioItem && !TextUtils.isEmpty(track.thumbnailUrl)) {
+            ivArt.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
+            loadArtworkInto(ivArt, track.thumbnailUrl);
         } else {
             List<String> gridUrls = playlistId.isEmpty() ? java.util.Collections.emptyList() : resolvePlaylistGridUrls(playlistId);
             if (gridUrls.size() >= 4) {
@@ -3584,6 +3538,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         }
         dialog.getBehavior().setSkipCollapsed(true);
         dialog.getBehavior().setFitToContents(true);
+        view.setAlpha(0f);
         dialog.setOnShowListener(d -> {
             View bottomSheet = ((com.google.android.material.bottomsheet.BottomSheetDialog) d)
                     .findViewById(com.google.android.material.R.id.design_bottom_sheet);
@@ -3592,6 +3547,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 if (sheetParent != null) sheetParent.setBackgroundColor(android.graphics.Color.TRANSPARENT);
                 bottomSheet.setBackgroundResource(android.R.color.transparent);
             }
+            view.animate().alpha(1f).setDuration(180L).start();
         });
         dialog.show();
     }
@@ -4039,6 +3995,9 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         if (!isAdded()) return;
         String playlistId = playlistTrack.contentId == null ? "" : playlistTrack.contentId.trim();
         if (playlistId.isEmpty()) return;
+        // Cancel any active download worker for this playlist before deleting files
+        WorkManager.getInstance(requireContext().getApplicationContext())
+                .cancelAllWorkByTag(OFFLINE_DOWNLOAD_UNIQUE_PREFIX + playlistId);
         // Get tracks from this playlist and delete their downloads
         java.util.List<String> trackIds = new java.util.ArrayList<>();
         // Check if it's a custom playlist
@@ -4057,6 +4016,15 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 break;
             }
         }
+        // For non-custom playlists, load tracks from cached playlist data
+        if (!isCustomPlaylist) {
+            ArrayList<CachedPlaylistTrack> cached = loadCachedPlaylistTracksForOffline(playlistId);
+            for (CachedPlaylistTrack ct : cached) {
+                if (!TextUtils.isEmpty(ct.videoId)) {
+                    trackIds.add(ct.videoId);
+                }
+            }
+        }
         // Delete offline audio for all tracks
         int deleted = OfflineAudioStore.deleteOfflineAudio(requireContext(), trackIds);
         // Clear offline enabled state for this playlist
@@ -4068,46 +4036,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         }
         String message = deleted > 0 ? "Eliminadas " + deleted + " descargas" : "No hay descargas para eliminar";
         android.widget.Toast.makeText(requireContext(), message, android.widget.Toast.LENGTH_SHORT).show();
-    }
-    @NonNull
-    private View createPlaylistActionRow(
-            int iconRes,
-            @NonNull String label,
-            @NonNull Runnable action,
-            @NonNull PopupWindow popupWindow
-    ) {
-        LinearLayout row = new LinearLayout(requireContext());
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(8), dp(10), dp(8), dp(10));
-        ImageView icon = new ImageView(requireContext());
-        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(18), dp(18));
-        icon.setLayoutParams(iconParams);
-        icon.setImageResource(iconRes);
-        icon.setColorFilter(ContextCompat.getColor(requireContext(), android.R.color.white));
-        TextView labelView = new TextView(requireContext());
-        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        );
-        labelParams.leftMargin = dp(10);
-        labelView.setLayoutParams(labelParams);
-        labelView.setText(label);
-        labelView.setTextSize(13f);
-        labelView.setTypeface(Typeface.DEFAULT_BOLD);
-        labelView.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_secondary));
-        row.addView(icon);
-        row.addView(labelView);
-        GradientDrawable rowContent = new GradientDrawable();
-        rowContent.setCornerRadius(dp(10));
-        rowContent.setColor(Color.TRANSPARENT);
-        int rippleColor = withAlpha(ContextCompat.getColor(requireContext(), R.color.stitch_blue_light), 0.32f);
-        row.setBackground(new RippleDrawable(ColorStateList.valueOf(rippleColor), rowContent, null));
-        row.setOnClickListener(v -> {
-            action.run();
-            popupWindow.dismiss();
-        });
-        return row;
     }
     private void dismissPlaylistActionTooltip() {
         if (playlistActionPopupWindow != null) {
@@ -4123,6 +4051,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         if (TextUtils.isEmpty(playlistId)) {
             return;
         }
+        offlineSyncRecentlyProcessedPlaylistIds.remove(playlistId);
         String playlistTitle = playlistTrack.title == null ? "" : playlistTrack.title.trim();
         if (TextUtils.isEmpty(playlistTitle)) {
             playlistTitle = playlistId;
@@ -4301,19 +4230,21 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
 
                 if (state == WorkInfo.State.RUNNING) {
                     Data progress = info.getProgress();
-                    int done = progress.getInt(OfflinePlaylistDownloadWorker.PROGRESS_DONE, 0);
+                    int downloaded = progress.getInt(OfflinePlaylistDownloadWorker.PROGRESS_DOWNLOADED, 0);
                     int total = progress.getInt(OfflinePlaylistDownloadWorker.PROGRESS_TOTAL, 0);
                     if (total > 0) {
                         float fraction = Math.max(0f, Math.min(1f,
-                                done / (float) total));
+                                downloaded / (float) total));
                         progressByPlaylist.put(playlistId, fraction);
                     }
                 }
             }
         }
-        if (adapter != null) {
-            adapter.updateDownloadProgress(progressByPlaylist, downloading);
-        }
+        autoQueueProgressByPlaylist.clear();
+        autoQueueProgressByPlaylist.putAll(progressByPlaylist);
+        autoQueueDownloading.clear();
+        autoQueueDownloading.addAll(downloading);
+        dispatchMergedDownloadProgress();
 
         if (hasActiveWork) {
             offlineQueueHadActiveWork = true;
@@ -4363,19 +4294,21 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 downloading.add(playlistId);
                 if (state == WorkInfo.State.RUNNING) {
                     Data progress = info.getProgress();
-                    int done = progress.getInt(OfflinePlaylistDownloadWorker.PROGRESS_DONE, 0);
+                    int downloaded = progress.getInt(OfflinePlaylistDownloadWorker.PROGRESS_DOWNLOADED, 0);
                     int total = progress.getInt(OfflinePlaylistDownloadWorker.PROGRESS_TOTAL, 0);
                     if (total > 0) {
                         float fraction = Math.max(0f, Math.min(1f,
-                                done / (float) total));
+                                downloaded / (float) total));
                         progressByPlaylist.put(playlistId, fraction);
                     }
                 }
             }
         }
-        if (adapter != null && !downloading.isEmpty()) {
-            adapter.updateDownloadProgress(progressByPlaylist, downloading);
-        }
+        manualQueueProgressByPlaylist.clear();
+        manualQueueProgressByPlaylist.putAll(progressByPlaylist);
+        manualQueueDownloading.clear();
+        manualQueueDownloading.addAll(downloading);
+        dispatchMergedDownloadProgress();
 
         boolean hasActiveWork = hasActiveOfflineWork(workInfos);
         if (hasActiveWork) {
@@ -4386,6 +4319,16 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             adapter.invalidatePlaylistOfflineState(null);
         }
         offlineManualQueueHadActiveWork = false;
+    }
+    private void dispatchMergedDownloadProgress() {
+        if (adapter == null) return;
+        Map<String, Float> merged = new HashMap<>(autoQueueProgressByPlaylist);
+        merged.putAll(manualQueueProgressByPlaylist);
+        Set<String> mergedDownloading = new HashSet<>(autoQueueDownloading);
+        mergedDownloading.addAll(manualQueueDownloading);
+        if (!mergedDownloading.isEmpty() || !adapter.playlistsCurrentlyDownloading.isEmpty()) {
+            adapter.updateDownloadProgress(merged, mergedDownloading);
+        }
     }
     private boolean hasActiveOfflineWork(@Nullable List<WorkInfo> workInfos) {
         if (workInfos == null || workInfos.isEmpty()) {
@@ -5115,8 +5058,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(track.getWatchUrl()));
             startActivity(intent);
         } catch (Exception ignored) {
-            if (isAdded()) {
-            }
         }
     }
     private boolean shouldUseRadioQueueForTrack(@NonNull YouTubeMusicService.TrackResult selectedTrack) {
@@ -5322,9 +5263,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 track.thumbnailUrl,
             accessTokenForDetail
         );
-        if (getActivity() instanceof MainActivity) {
-            ((MainActivity) getActivity()).showModuleLoadingOverlay();
-        }
         androidx.fragment.app.Fragment existingDetail = getParentFragmentManager().findFragmentByTag("playlist_detail");
         androidx.fragment.app.FragmentTransaction transaction = getParentFragmentManager()
             .beginTransaction()
@@ -5439,7 +5377,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         lastLibraryInlineDispatchedQuery = "";
         dismissPlaylistActionTooltip();
         stopObservingOfflineQueue();
-        normalizedFilterCache.clear();
+        normalizedFilterCache.evictAll();
         // Cancel ALL pending mainHandler callbacks to prevent leaks and stale UI updates
         mainHandler.removeCallbacksAndMessages(null);
         PlaybackEventBus.removeListener(this);
@@ -5745,7 +5683,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
         private final java.util.concurrent.atomic.AtomicReference<List<YouTubeMusicService.TrackResult>>
                 pendingIncoming = new java.util.concurrent.atomic.AtomicReference<>(null);
         private boolean diffInFlight = false;
-        private final android.os.Handler mainHandler = new android.os.Handler(android.os.Looper.getMainLooper());
 
         void submitResults(@NonNull List<YouTubeMusicService.TrackResult> newData) {
             // Always runs on UI thread. Store the incoming list as the latest pending.
@@ -6075,16 +6012,7 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
             }
             Context ctx = holder.itemView.getContext();
 
-            if (completeOffline && offlineAutoEnabled) {
-                // State: fully downloaded — filled circle + check
-                holder.flPlaylistOfflineContainer.setVisibility(View.VISIBLE);
-                holder.circularProgress.setVisibility(View.GONE);
-                holder.circularProgress.setProgressImmediate(0f);
-                holder.ivPlaylistOfflineAll.setImageResource(R.drawable.ic_check_small);
-                holder.ivPlaylistOfflineAll.setBackgroundResource(R.drawable.bg_offline_state_filled_primary);
-                holder.ivPlaylistOfflineAll.setColorFilter(ContextCompat.getColor(ctx, R.color.surface_dark));
-                holder.ivPlaylistOfflineAll.setAlpha(1f);
-            } else if (isDownloading) {
+            if (isDownloading) {
                 // State: downloading — circular arc + download icon (no background circle)
                 holder.flPlaylistOfflineContainer.setVisibility(View.VISIBLE);
                 holder.circularProgress.setVisibility(View.VISIBLE);
@@ -6092,6 +6020,15 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 holder.ivPlaylistOfflineAll.setImageResource(R.drawable.ic_download_bold);
                 holder.ivPlaylistOfflineAll.setBackground(null);
                 holder.ivPlaylistOfflineAll.setColorFilter(ContextCompat.getColor(ctx, R.color.stitch_blue));
+                holder.ivPlaylistOfflineAll.setAlpha(1f);
+            } else if (completeOffline && offlineAutoEnabled) {
+                // State: fully downloaded — filled circle + check
+                holder.flPlaylistOfflineContainer.setVisibility(View.VISIBLE);
+                holder.circularProgress.setVisibility(View.GONE);
+                holder.circularProgress.setProgressImmediate(0f);
+                holder.ivPlaylistOfflineAll.setImageResource(R.drawable.ic_check_small);
+                holder.ivPlaylistOfflineAll.setBackgroundResource(R.drawable.bg_offline_state_filled_primary);
+                holder.ivPlaylistOfflineAll.setColorFilter(ContextCompat.getColor(ctx, R.color.surface_dark));
                 holder.ivPlaylistOfflineAll.setAlpha(1f);
             } else if (offlineAutoEnabled) {
                 // State: queued (auto-offline enabled, waiting for worker)
@@ -6188,15 +6125,6 @@ public class MusicPlayerFragment extends Fragment implements PlaybackEventBus.Li
                 return true;
             });
             holder.itemView.setOnClickListener(v -> onTrackClick.onTrackClick(item));
-        }
-        private boolean isLikedPlaylistStyle(@NonNull YouTubeMusicService.TrackResult item) {
-            // ID-only check to match mapPlaylistsToLibraryTracks fix â€” avoids false positives
-            // on playlists whose title incidentally contains "gusto" or "liked"
-            String cid = item.contentId == null ? "" : item.contentId.trim();
-            return YouTubeMusicService.SPECIAL_LIKED_VIDEOS_ID.equals(cid)
-                    || "LL".equals(cid)
-                    || "LM".equals(cid)
-                    || cid.startsWith("VLLL");
         }
         private boolean isFavoritesPlaylistStyle(@NonNull YouTubeMusicService.TrackResult item) {
             return TextUtils.equals(FavoritesPlaylistStore.PLAYLIST_ID, item.contentId);

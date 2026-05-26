@@ -35,7 +35,7 @@ object SleppifyDownloaderResolver {
     private const val MIN_VALID_VIDEO_BYTES = 500_000L
 
     /**
-     * Downloads 360p mp4 video for [videoId] via server [serverIndex] into [targetFile].
+     * Downloads 720p mp4 video (fallback 360p) for [videoId] via server [serverIndex] into [targetFile].
      * Supports resumable downloads via HTTP Range header.
      * Returns true on success, false on any failure.
      */

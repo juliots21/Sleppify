@@ -98,6 +98,15 @@ class SearchFragment : Fragment() {
     private val tracks = mutableListOf<YouTubeMusicService.TrackResult>()
     private val recentSearchData = mutableListOf<RecentSearch>()
     private val localTrackIndex = mutableListOf<FavoritesPlaylistStore.FavoriteTrack>()
+    private data class IndexedTrack(
+        val track: FavoritesPlaylistStore.FavoriteTrack,
+        val normTitle: String,
+        val normArtist: String,
+        val titleWords: List<String>,
+        val artistWords: List<String>
+    )
+    @Volatile private var streamingCacheIndex: List<IndexedTrack> = emptyList()
+    @Volatile private var streamingCacheIndexReady = false
 
     private val suggestionsDebounceHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var suggestionsDebounceRunnable: Runnable? = null
@@ -127,6 +136,8 @@ class SearchFragment : Fragment() {
     private var searchPaginationInFlight = false
     private var hasMoreSearchPages = false
     private var nextSearchPageToken = ""
+    private var innertubeNextToken = ""
+    private var useInnertubePagination = false
     private var activeSearchQuery = ""
     private var latestSearchRequestId = 0L
 
@@ -153,6 +164,15 @@ class SearchFragment : Fragment() {
         refreshSearchSuggestions("")
 
         setupBackNavigation()
+
+        // Pre-load streaming_cache index in background so first search is fast
+        lifecycleScope.launch(Dispatchers.IO) {
+            val t = android.os.SystemClock.elapsedRealtime()
+            streamingCacheIndex = buildStreamingCacheIndex()
+            streamingCacheIndexReady = true
+            Log.d(TAG, "[SEARCH] streamingCacheIndex ready: ${streamingCacheIndex.size} tracks in ${android.os.SystemClock.elapsedRealtime() - t}ms")
+        }
+
 
         // Overlay starts visible from XML; onResume will hide it after layout is complete.
     }
@@ -424,6 +444,8 @@ class SearchFragment : Fragment() {
         adapter?.submitResults(emptyList())
         hasMoreSearchPages = false
         nextSearchPageToken = ""
+        innertubeNextToken = ""
+        useInnertubePagination = false
 
         refreshSearchSuggestions(query)
         rvSearchSuggestions.visibility = View.GONE
@@ -436,13 +458,21 @@ class SearchFragment : Fragment() {
 
     private fun requestPagedSearchResults(query: String, pageToken: String, append: Boolean) {
         val requestId = ++latestSearchRequestId
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        Log.d(TAG, "[SEARCH] START reqId=$requestId append=$append query=\"$query\"")
 
         // 1. Iniciar búsqueda local (Solo si no es scroll infinito/paginación)
         if (!append) {
             lifecycleScope.launch(Dispatchers.IO) {
+                val t1 = android.os.SystemClock.elapsedRealtime()
                 val localResults = performOfflineSearch(query)
+                Log.d(TAG, "[SEARCH] LOCAL done in ${android.os.SystemClock.elapsedRealtime() - t1}ms — ${localResults.size} results reqId=$requestId")
                 launch(Dispatchers.Main) {
-                    if (activity == null || !isAdded || requestId != latestSearchRequestId) return@launch
+                    if (activity == null || !isAdded || requestId != latestSearchRequestId) {
+                        Log.d(TAG, "[SEARCH] LOCAL discarded (online arrived first) reqId=$requestId elapsed=${android.os.SystemClock.elapsedRealtime() - t0}ms")
+                        return@launch
+                    }
+                    Log.d(TAG, "[SEARCH] LOCAL applied ${localResults.size} results elapsed=${android.os.SystemClock.elapsedRealtime() - t0}ms")
                     appendUniqueTracks(localResults)
                     applyActiveFilter(query, forceSort = true)
                     
@@ -468,26 +498,51 @@ class SearchFragment : Fragment() {
         // 2. Proceso de búsqueda Online
         if (append) {
             searchPaginationInFlight = true
-            tvSearchState.text = "Cargando mas resultados..."
         } else {
             setSearchLoadingState(true, "Buscando música...")
         }
 
-        // Usamos la API de YouTube Music Innertube como buscador primario:
-        // - Es 100% gratuita, ilimitada (sin cuotas de API Key).
-        // - Devuelve canciones oficiales y audio de alta calidad, ignorando vlogs y ruido.
-        // - Su algoritmo de tolerancia a errores y autocompletado es extremadamente preciso.
-        val maxResultsToFetch = if (append) SEARCH_PAGE_SIZE else 100
-        youTubeMusicService.searchTracksViaInnertube(query, maxResultsToFetch, object : YouTubeMusicService.SearchCallback {
-            override fun onSuccess(tracks: List<YouTubeMusicService.TrackResult>) {
-                if (activity == null || !isAdded || requestId != latestSearchRequestId) return
-                
-                if (append) searchPaginationInFlight = false
-                
-                nextSearchPageToken = ""
-                hasMoreSearchPages = false // Innertube devuelve suficientes resultados de alta calidad de una sola vez
+        // Innertube: 100% gratuita, ilimitada, sin cuotas de API Key.
+        val maxResultsToFetch = if (append) SEARCH_PAGE_SIZE else 150
 
-                appendUniqueTracks(tracks)
+        // For scroll-append with Innertube token, use continuation directly
+        if (append && useInnertubePagination && innertubeNextToken.isNotEmpty()) {
+            Log.d(TAG, "[SEARCH] CONTINUATION start reqId=$requestId")
+            val tCont = android.os.SystemClock.elapsedRealtime()
+            youTubeMusicService.continueInnertubeSearch(innertubeNextToken, SEARCH_PAGE_SIZE, object : YouTubeMusicService.SearchPageCallback {
+                override fun onSuccess(pageResult: YouTubeMusicService.SearchPageResult) {
+                    if (activity == null || !isAdded || requestId != latestSearchRequestId) return
+                    Log.d(TAG, "[SEARCH] CONTINUATION ok in ${android.os.SystemClock.elapsedRealtime() - tCont}ms — ${pageResult.tracks.size} tracks hasMore=${pageResult.nextPageToken.isNotEmpty()}")
+                    searchPaginationInFlight = false
+                    innertubeNextToken = pageResult.nextPageToken
+                    hasMoreSearchPages = innertubeNextToken.isNotEmpty()
+                    appendUniqueTracks(pageResult.tracks)
+                    applyActiveFilter(query, forceSort = false)
+                }
+                override fun onError(error: String) {
+                    if (activity == null || !isAdded || requestId != latestSearchRequestId) return
+                    Log.w(TAG, "[SEARCH] CONTINUATION error in ${android.os.SystemClock.elapsedRealtime() - tCont}ms — $error")
+                    searchPaginationInFlight = false
+                    hasMoreSearchPages = false
+                }
+            })
+            return
+        }
+
+        Log.d(TAG, "[SEARCH] INNERTUBE start maxResults=$maxResultsToFetch reqId=$requestId")
+        val tInnertube = android.os.SystemClock.elapsedRealtime()
+        youTubeMusicService.searchTracksViaInnertube(query, maxResultsToFetch, object : YouTubeMusicService.SearchPageCallback {
+            override fun onSuccess(pageResult: YouTubeMusicService.SearchPageResult) {
+                if (activity == null || !isAdded || requestId != latestSearchRequestId) return
+                Log.d(TAG, "[SEARCH] INNERTUBE ok in ${android.os.SystemClock.elapsedRealtime() - tInnertube}ms — ${pageResult.tracks.size} tracks hasMore=${pageResult.nextPageToken.isNotEmpty()} totalElapsed=${android.os.SystemClock.elapsedRealtime() - t0}ms")
+                if (append) searchPaginationInFlight = false
+
+                // Enable infinite scroll if Innertube returned a continuation token
+                innertubeNextToken = pageResult.nextPageToken
+                useInnertubePagination = innertubeNextToken.isNotEmpty()
+                hasMoreSearchPages = useInnertubePagination
+
+                appendUniqueTracks(pageResult.tracks)
                 applyActiveFilter(query, forceSort = true)
 
                 if (allTracks.isEmpty() && !append) {
@@ -508,16 +563,18 @@ class SearchFragment : Fragment() {
 
             override fun onError(error: String) {
                 if (activity == null || !isAdded || requestId != latestSearchRequestId) return
-                
-                // Fallback robusto al API de datos oficial de YouTube en caso de fallo de Innertube
+                Log.w(TAG, "[SEARCH] INNERTUBE error in ${android.os.SystemClock.elapsedRealtime() - tInnertube}ms — $error — falling back to YT Data API")
+                // Fallback al API de datos oficial de YouTube en caso de fallo de Innertube
+                val tFallback = android.os.SystemClock.elapsedRealtime()
                 youTubeMusicService.searchTracksPaged(query, SEARCH_PAGE_SIZE, pageToken.takeIf { it.isNotEmpty() }, object : YouTubeMusicService.SearchPageCallback {
                     override fun onSuccess(pageResult: YouTubeMusicService.SearchPageResult) {
                         if (activity == null || !isAdded || requestId != latestSearchRequestId) return
-                        
+                        Log.d(TAG, "[SEARCH] FALLBACK ok in ${android.os.SystemClock.elapsedRealtime() - tFallback}ms — ${pageResult.tracks.size} tracks totalElapsed=${android.os.SystemClock.elapsedRealtime() - t0}ms")
                         if (append) searchPaginationInFlight = false
                         
                         nextSearchPageToken = pageResult.nextPageToken
                         hasMoreSearchPages = nextSearchPageToken.isNotEmpty()
+                        useInnertubePagination = false
 
                         appendUniqueTracks(pageResult.tracks)
                         applyActiveFilter(query, forceSort = true)
@@ -533,6 +590,7 @@ class SearchFragment : Fragment() {
 
                     override fun onError(error: String) {
                         if (activity == null || !isAdded || requestId != latestSearchRequestId) return
+                        Log.w(TAG, "[SEARCH] FALLBACK error in ${android.os.SystemClock.elapsedRealtime() - tFallback}ms — $error totalElapsed=${android.os.SystemClock.elapsedRealtime() - t0}ms")
                         if (append) searchPaginationInFlight = false
                         
                         if (allTracks.isEmpty()) {
@@ -566,18 +624,61 @@ class SearchFragment : Fragment() {
         }
 
         // Favorites: highest user signal (matches Spotify "liked songs" priority)
-        FavoritesPlaylistStore.loadFavorites(requireContext()).forEach { tryAdd(it, sourceBonus = 500) }
+        var tPhase = android.os.SystemClock.elapsedRealtime()
+        val favs = FavoritesPlaylistStore.loadFavorites(requireContext())
+        favs.forEach { tryAdd(it, sourceBonus = 500) }
+        Log.d(TAG, "[SEARCH] LOCAL phase=favorites ${favs.size} tracks in ${android.os.SystemClock.elapsedRealtime() - tPhase}ms")
 
         // Custom playlists: strong user signal
+        tPhase = android.os.SystemClock.elapsedRealtime()
+        var customCount = 0
         for (name in CustomPlaylistsStore.getAllPlaylistNames(requireContext())) {
-            CustomPlaylistsStore.getTracksFromPlaylist(requireContext(), name).forEach { tryAdd(it, sourceBonus = 300) }
+            val playlist = CustomPlaylistsStore.getTracksFromPlaylist(requireContext(), name)
+            playlist.forEach { tryAdd(it, sourceBonus = 300) }
+            customCount += playlist.size
+        }
+        Log.d(TAG, "[SEARCH] LOCAL phase=custom_playlists $customCount tracks in ${android.os.SystemClock.elapsedRealtime() - tPhase}ms")
+
+        // Cached online playlists: moderate signal (use pre-loaded index with pre-normalized strings)
+        tPhase = android.os.SystemClock.elapsedRealtime()
+        val cachedIndex = if (streamingCacheIndexReady) streamingCacheIndex else buildStreamingCacheIndex()
+        cachedIndex.forEach { indexed ->
+            val key = "video|${indexed.track.videoId}"
+            if (key in seenIds) return@forEach
+            val score = computeFuzzyScoreNormalized(indexed.normTitle, indexed.normArtist, indexed.titleWords, indexed.artistWords, normalizedQuery, queryTokens, 100)
+            if (score <= 0) return@forEach
+            seenIds.add(key)
+            scored.add(YouTubeMusicService.TrackResult(
+                "video", indexed.track.videoId, indexed.track.title, indexed.track.artist, indexed.track.imageUrl
+            ) to score)
+        }
+        Log.d(TAG, "[SEARCH] LOCAL phase=streaming_cache ${cachedIndex.size} tracks in ${android.os.SystemClock.elapsedRealtime() - tPhase}ms (indexed=${streamingCacheIndexReady})")
+
+        // Playback history: listening behavior signal
+        tPhase = android.os.SystemClock.elapsedRealtime()
+        try {
+            val history = PlaybackHistoryStore.load(requireContext())
+            history.queue.forEach { q ->
+                val track = FavoritesPlaylistStore.FavoriteTrack(
+                    q.videoId, q.title, q.artist, q.duration, q.imageUrl
+                )
+                tryAdd(track, sourceBonus = 200)
+            }
+            Log.d(TAG, "[SEARCH] LOCAL phase=history ${history.queue.size} tracks in ${android.os.SystemClock.elapsedRealtime() - tPhase}ms")
+        } catch (e: Exception) {
+            Log.e(TAG, "[SEARCH] LOCAL phase=history error: ${e.message}")
         }
 
-        // Cached online playlists: moderate signal
+        scored.sortByDescending { it.second }
+        return scored.map { it.first }
+            .filter { !LocalFilesStore.isLocalVideoId(it.videoId) }
+    }
+
+    private fun buildStreamingCacheIndex(): List<IndexedTrack> {
+        val result = mutableListOf<IndexedTrack>()
         try {
-            val streamingCache = requireContext().getSharedPreferences("streaming_cache", Context.MODE_PRIVATE)
-            val allKeys = streamingCache.all
-            for ((key, value) in allKeys) {
+            val prefs = requireContext().getSharedPreferences("streaming_cache", Context.MODE_PRIVATE)
+            for ((key, value) in prefs.all) {
                 if (key.startsWith("playlist_tracks_data_") && value is String) {
                     val arr = org.json.JSONArray(value)
                     for (i in 0 until arr.length()) {
@@ -589,30 +690,64 @@ class SearchFragment : Fragment() {
                             obj.optString("duration", ""),
                             obj.optString("imageUrl")
                         )
-                        tryAdd(track, sourceBonus = 100)
+                        val nt = normalizeForFilter(track.title)
+                        val na = normalizeForFilter(track.artist)
+                        result.add(IndexedTrack(track, nt, na,
+                            nt.split(Regex("\\s+")),
+                            na.split(Regex("\\s+"))
+                        ))
                     }
                 }
             }
         } catch (e: Exception) {
-            Log.e("SearchFragment", "Error searching cached playlists: ${e.message}")
+            Log.e(TAG, "[SEARCH] buildStreamingCacheIndex error: ${e.message}")
+        }
+        return result
+    }
+
+    private fun computeFuzzyScoreNormalized(t: String, a: String, titleWords: List<String>, artistWords: List<String>, query: String, tokens: List<String>, sourceBonus: Int = 0): Int {
+        // Cheap pre-filter: skip fuzzy entirely if no token has any substring overlap
+        val combined = "$t $a"
+        val hasAnyOverlap = t.contains(query) || a.contains(query) ||
+            tokens.any { tok -> combined.contains(tok) }
+        if (!hasAnyOverlap) return 0
+
+        var score = 0
+
+        if (t == query) score += 1000
+        else if (t.startsWith("$query ")) score += 900
+        else if (t.startsWith(query)) score += 700
+        else if (t.contains(query)) score += 500
+
+        fun isFuzzyMatch(tok: String, word: String): Boolean {
+            if (word.startsWith(tok)) return true
+            return suggestFuzzyMatch(tok, word)
         }
 
-        // Playback history: listening behavior signal
-        try {
-            val history = PlaybackHistoryStore.load(requireContext())
-            history.queue.forEach { q ->
-                val track = FavoritesPlaylistStore.FavoriteTrack(
-                    q.videoId, q.title, q.artist, q.duration, q.imageUrl
-                )
-                tryAdd(track, sourceBonus = 200)
-            }
-        } catch (e: Exception) {
-            Log.e("SearchFragment", "Error searching history: ${e.message}")
+        val anyHits = tokens.count {
+            titleWords.contains(it) || artistWords.contains(it) ||
+            titleWords.any { w -> isFuzzyMatch(it, w) } ||
+            artistWords.any { w -> isFuzzyMatch(it, w) }
         }
 
-        scored.sortByDescending { it.second }
-        return scored.map { it.first }
-            .filter { !LocalFilesStore.isLocalVideoId(it.videoId) }
+        val exactMatchFallback = t.contains(query) || a.contains(query)
+        if (anyHits < (tokens.size + 1) / 2 && !exactMatchFallback) return 0
+
+        for (tok in tokens) {
+            if (titleWords.contains(tok)) score += 100
+            else if (titleWords.any { isFuzzyMatch(tok, it) }) score += 40
+            else if (t.contains(tok)) score += 10
+        }
+        if (a == query) score += 200
+        else if (a.startsWith("$query ")) score += 150
+        else if (a.startsWith(query)) score += 120
+        else if (a.contains(query)) score += 80
+        for (tok in tokens) {
+            if (artistWords.contains(tok)) score += 30
+            else if (artistWords.any { isFuzzyMatch(tok, it) }) score += 10
+        }
+        score += sourceBonus + 5
+        return score
     }
 
     private fun computeFuzzyScore(title: String, artist: String, query: String, tokens: List<String>, sourceBonus: Int = 0): Int {
@@ -811,17 +946,17 @@ class SearchFragment : Fragment() {
         if (s == query) score += 200
         else if (s.contains(query)) score += 100
 
-        // --- User signals ---
+        // --- User signals (moderate boost — don't overwhelm API relevance) ---
         val vid = track.videoId ?: ""
         if (vid.isNotEmpty()) {
-            if (vid in signals.favoriteIds) score += 2000
-            if (vid in signals.customPlaylistIds) score += 1500
-            if (vid in signals.historyIds) score += 800
+            if (vid in signals.favoriteIds) score += 600
+            if (vid in signals.customPlaylistIds) score += 400
+            if (vid in signals.historyIds) score += 200
         }
 
         // --- Offline availability boost ---
         val isDownloaded = vid.isNotEmpty() && OfflineAudioStore.hasOfflineAudio(requireContext(), vid)
-        if (isDownloaded) score += 5000
+        if (isDownloaded) score += 1500
 
         return score
     }
@@ -2165,13 +2300,11 @@ class SearchFragment : Fragment() {
         imm?.showSoftInput(etSearchQuery, InputMethodManager.SHOW_IMPLICIT)
     }
 
-    private var overlayShownAtMs = 0L
     private var hasBeenVisible = false
 
     private fun showModuleLoadingOverlay() {
         moduleLoadingOverlay.alpha = 1f
         moduleLoadingOverlay.visibility = View.VISIBLE
-        overlayShownAtMs = System.currentTimeMillis()
     }
 
     private fun revealModuleContent() {
@@ -2188,12 +2321,7 @@ class SearchFragment : Fragment() {
         v.viewTreeObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
             override fun onPreDraw(): Boolean {
                 v.viewTreeObserver.removeOnPreDrawListener(this)
-                val elapsed = System.currentTimeMillis() - overlayShownAtMs
-                val minVisibleMs = 180L
-                val delay = (minVisibleMs - elapsed).coerceAtLeast(0L)
-                v.postDelayed({
-                    if (isAdded && !isHidden) revealModuleContent()
-                }, delay)
+                if (isAdded && !isHidden) revealModuleContent()
                 return true
             }
         })
@@ -2215,15 +2343,20 @@ class SearchFragment : Fragment() {
 
         fun submitResults(newData: List<YouTubeMusicService.TrackResult>) {
             val old = data.toList()
-            val diff = DiffUtil.calculateDiff(object : DiffUtil.Callback() {
+            val callback = object : DiffUtil.Callback() {
                 override fun getOldListSize() = old.size
                 override fun getNewListSize() = newData.size
                 override fun areItemsTheSame(op: Int, np: Int) = old[op].contentId == newData[np].contentId && old[op].resultType == newData[np].resultType
                 override fun areContentsTheSame(op: Int, np: Int) = old[op] == newData[np]
-            })
-            data.clear()
-            data.addAll(newData)
-            diff.dispatchUpdatesTo(this)
+            }
+            kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+                val diff = DiffUtil.calculateDiff(callback)
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    data.clear()
+                    data.addAll(newData)
+                    diff.dispatchUpdatesTo(this@SearchResultsAdapter)
+                }
+            }
         }
 
         fun invalidateOfflineCache() {

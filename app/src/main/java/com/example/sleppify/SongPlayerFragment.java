@@ -700,8 +700,8 @@ public class SongPlayerFragment extends Fragment {
         if (hidden) {
             swipeDismissGestureActive = false;
             swipeDismissAnimationRunning = false;
-            // ✅ ALWAYS pause ticker when hidden to reduce CPU waste
-            stopLocalProgressTicker();
+            // Ticker must keep running in mini mode so crossfade can trigger.
+            // UI updates inside the ticker are already guarded by isHidden().
             // Reparent video surface to mini-player
             videoRouter.onPlayerHidden();
         } else {
@@ -749,6 +749,7 @@ public class SongPlayerFragment extends Fragment {
 
         long now = SystemClock.elapsedRealtime();
         boolean bootstrapWindow = (now - lastPlaybackStartRequestAtMs) < PLAYBACK_BOOTSTRAP_GRACE_MS;
+        Log.d(TAG, "[PLAYBACK_DBG] ensureActive reason=" + reason + " localPlayer=" + (localExoMediaPlayer != null) + " preparing=" + localSourcePreparing + " bootstrap=" + bootstrapWindow + " pending=" + hasPendingStreamResolution());
 
         if (localExoMediaPlayer != null) {
             if (localSourcePreparing && bootstrapWindow) {
@@ -1372,6 +1373,9 @@ public class SongPlayerFragment extends Fragment {
             return;
         }
 
+        final PlayerTrack track = tracks.get(currentIndex);
+        Log.d(TAG, "[PLAYBACK_DBG] playCurrentTrack videoId=" + track.videoId + " idx=" + currentIndex, new Throwable("caller"));
+
         // Safety: ensure no crossfade is active and no duplicate players exist
         cancelOfflineCrossfade();
         // Also ensure any lingering incoming player from a failed crossfade is released
@@ -1379,8 +1383,6 @@ public class SongPlayerFragment extends Fragment {
             releaseSingleExoMediaPlayer(localCrossfadeIncomingPlayer);
             localCrossfadeIncomingPlayer = null;
         }
-
-        final PlayerTrack track = tracks.get(currentIndex);
         loadedVideoId = track.videoId;
         playCountRecordedForCurrentTrack = false;
         currentSeconds = 0;
@@ -3091,9 +3093,6 @@ public class SongPlayerFragment extends Fragment {
                         TextUtils.isEmpty(track.imageUrl) ? "" : track.imageUrl,
                         accessToken
                 );
-                if (getActivity() instanceof MainActivity) {
-                    ((MainActivity) getActivity()).showModuleLoadingOverlay();
-                }
                 Fragment existingDetail = fm.findFragmentByTag(TAG_PLAYLIST_DETAIL);
                 androidx.fragment.app.FragmentTransaction transaction = fm.beginTransaction()
                         .setReorderingAllowed(true);
@@ -3848,6 +3847,7 @@ public class SongPlayerFragment extends Fragment {
         // Important: check if the track we ARE playing is the same as the one we WILL play
         boolean sameAsLoaded = !TextUtils.isEmpty(targetVideoId)
                 && TextUtils.equals(targetVideoId, loadedVideoId);
+        Log.d(TAG, "[PLAYBACK_DBG] replaceQueue sameAsLoaded=" + sameAsLoaded + " startFromBeginning=" + startFromBeginning + " videoId=" + targetVideoId + " loadedVideoId=" + loadedVideoId);
 
         // Push current track to global history before replacing queue
         if (!sameAsLoaded && currentIndex >= 0 && currentIndex < tracks.size()) {
