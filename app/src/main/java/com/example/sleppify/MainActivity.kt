@@ -631,13 +631,6 @@ class MainActivity : AppCompatActivity() {
         if (miniPlayer != null && miniPlayer.visibility == View.VISIBLE) {
             extraMiniPlayerMargin = miniPlayer.height
         }
-        // Also check per-fragment mini-player (PrincipalFragment still has its own)
-        if (extraMiniPlayerMargin == 0) {
-            val fragMiniPlayer = fragmentContainer.findViewById<View>(R.id.llMiniPlayer)
-            if (fragMiniPlayer != null && fragMiniPlayer.visibility == View.VISIBLE) {
-                extraMiniPlayerMargin = fragMiniPlayer.height
-            }
-        }
 
         val clp = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
             androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.MATCH_PARENT,
@@ -820,6 +813,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleSignedInUser(user: FirebaseUser, onSuccess: Runnable?) {
+        // Immediately refresh header so sign-in button swaps to profile photo
+        // without waiting for cloud hydration to complete.
+        runOnUiThread {
+            loadProfilePhoto()
+            val music = supportFragmentManager.findFragmentByTag(TAG_MODULE_MUSIC)
+            if (music is MusicPlayerFragment && music.isAdded) {
+                music.refreshFragHeaderProfilePhoto()
+            }
+            val principal = supportFragmentManager.findFragmentByTag(TAG_MODULE_PRINCIPAL)
+            if (principal is PrincipalFragment && principal.isAdded) {
+                principal.refreshFragHeaderProfilePhoto()
+            }
+        }
         cloudSyncManager.onUserSignedIn(user.uid) { ok, _ ->
             if (!ok) return@onUserSignedIn
             applyHydratedUserState(onSuccess)
@@ -894,15 +900,19 @@ class MainActivity : AppCompatActivity() {
         val photoUri = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.photoUrl
             ?: if (cachedUrl.isNotEmpty()) android.net.Uri.parse(cachedUrl) else null
 
-        val signedIn = authManagerLazy.isSignedIn() && photoUri != null
+        val signedIn = authManagerLazy.isSignedIn()
         if (signedIn) {
             btnSignInHeader?.visibility = View.GONE
             btnProfilePhoto.visibility = View.VISIBLE
-            com.bumptech.glide.Glide.with(this)
-                .load(photoUri)
-                .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL)
-                .circleCrop()
-                .into(btnProfilePhoto)
+            if (photoUri != null) {
+                com.bumptech.glide.Glide.with(this)
+                    .load(photoUri)
+                    .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.ALL)
+                    .circleCrop()
+                    .into(btnProfilePhoto)
+            } else {
+                btnProfilePhoto.setImageResource(android.R.drawable.ic_menu_myplaces)
+            }
         } else {
             btnProfilePhoto.visibility = View.GONE
             btnProfilePhoto.setImageDrawable(null)

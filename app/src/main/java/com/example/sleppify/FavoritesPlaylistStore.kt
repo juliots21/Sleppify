@@ -20,7 +20,9 @@ object FavoritesPlaylistStore {
 
     private var favoritesCache: List<FavoriteTrack>? = null
     private var favoritesIdSet: Set<String>? = null
+    private var likedMusicIdSet: Set<String>? = null
     private val CACHE_LOCK = Any()
+    private const val LIKED_PLAYLIST_ID = "__liked_videos__"
 
     @JvmStatic
     fun buildSubtitle(count: Int): String {
@@ -33,7 +35,38 @@ object FavoritesPlaylistStore {
         synchronized(CACHE_LOCK) {
             favoritesCache = null
             favoritesIdSet = null
+            likedMusicIdSet = null
         }
+    }
+
+    @JvmStatic
+    fun isInLikedMusic(context: Context, videoId: String): Boolean {
+        val target = safe(videoId)
+        if (target.isEmpty()) return false
+        synchronized(CACHE_LOCK) {
+            val cached = likedMusicIdSet
+            if (cached != null) return cached.contains(target)
+        }
+        val appContext = context.applicationContext
+        val raw = appContext.getSharedPreferences(PREFS_STREAMING_CACHE, Activity.MODE_PRIVATE)
+            .getString("playlist_tracks_data_$LIKED_PLAYLIST_ID", "").orEmpty()
+        val idSet = HashSet<String>()
+        if (raw.isNotBlank()) {
+            try {
+                val array = org.json.JSONArray(raw)
+                for (i in 0 until array.length()) {
+                    val vid = safe(array.optJSONObject(i)?.optString("videoId", ""))
+                    if (vid.isNotEmpty()) idSet.add(vid)
+                }
+            } catch (_: Exception) {}
+        }
+        synchronized(CACHE_LOCK) { likedMusicIdSet = idSet }
+        return idSet.contains(target)
+    }
+
+    @JvmStatic
+    fun invalidateLikedMusicCache() {
+        synchronized(CACHE_LOCK) { likedMusicIdSet = null }
     }
 
     @JvmStatic

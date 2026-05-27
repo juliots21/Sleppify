@@ -503,7 +503,8 @@ class SearchFragment : Fragment() {
         }
 
         // Innertube: 100% gratuita, ilimitada, sin cuotas de API Key.
-        val maxResultsToFetch = if (append) SEARCH_PAGE_SIZE else 150
+        // First page returns ~20 results instantly; more loaded via scroll/background fetch.
+        val maxResultsToFetch = SEARCH_PAGE_SIZE
 
         // For scroll-append with Innertube token, use continuation directly
         if (append && useInnertubePagination && innertubeNextToken.isNotEmpty()) {
@@ -558,6 +559,11 @@ class SearchFragment : Fragment() {
                     rvSearchResults.alpha = 0f
                     rvSearchResults.animate().alpha(1f).setDuration(250).start()
                     hideKeyboard()
+
+                    // Auto-fetch next page in background for faster scroll experience
+                    if (hasMoreSearchPages) {
+                        loadMoreSearchResults()
+                    }
                 }
             }
 
@@ -946,17 +952,17 @@ class SearchFragment : Fragment() {
         if (s == query) score += 200
         else if (s.contains(query)) score += 100
 
-        // --- User signals (moderate boost — don't overwhelm API relevance) ---
+        // --- User signals (light boost — don't overwhelm API relevance) ---
         val vid = track.videoId ?: ""
         if (vid.isNotEmpty()) {
-            if (vid in signals.favoriteIds) score += 600
-            if (vid in signals.customPlaylistIds) score += 400
-            if (vid in signals.historyIds) score += 200
+            if (vid in signals.favoriteIds) score += 300
+            if (vid in signals.customPlaylistIds) score += 200
+            if (vid in signals.historyIds) score += 100
         }
 
         // --- Offline availability boost ---
         val isDownloaded = vid.isNotEmpty() && OfflineAudioStore.hasOfflineAudio(requireContext(), vid)
-        if (isDownloaded) score += 1500
+        if (isDownloaded) score += 400
 
         return score
     }
@@ -2341,6 +2347,7 @@ class SearchFragment : Fragment() {
 
         override fun getItemId(position: Int) = data[position].let { "${it.resultType}|${it.contentId}|${it.title}".hashCode().toLong() }
 
+        @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
         fun submitResults(newData: List<YouTubeMusicService.TrackResult>) {
             val old = data.toList()
             val callback = object : DiffUtil.Callback() {

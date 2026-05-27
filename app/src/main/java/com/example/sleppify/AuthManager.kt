@@ -163,6 +163,15 @@ class AuthManager private constructor(context: Context) {
                     return@addOnCompleteListener
                 }
 
+                // Cache profile photo URL immediately so header UI can pick it up
+                // without waiting for PlaylistDetailFragment to open.
+                signedUser.photoUrl?.let { photoUri ->
+                    activity.getSharedPreferences("streaming_cache", Activity.MODE_PRIVATE)
+                        .edit()
+                        .putString("cached_google_profile_photo_url", photoUri.toString())
+                        .apply()
+                }
+
                 callback.onSuccess(signedUser)
             }
     }

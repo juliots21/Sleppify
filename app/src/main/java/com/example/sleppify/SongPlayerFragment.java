@@ -1727,7 +1727,7 @@ public class SongPlayerFragment extends Fragment {
         }
 
         Context appCtx = requireContext().getApplicationContext();
-        ExoMediaPlayer player = new ExoMediaPlayer(appCtx, true); // low buffer for pre-buffer
+        ExoMediaPlayer player = new ExoMediaPlayer(appCtx, false, true); // backgroundBuffer: progressive download
         player.isCrossfadeComponent = true; // Mark so it doesn't interfere with media session
 
         try {
@@ -3437,7 +3437,7 @@ public class SongPlayerFragment extends Fragment {
         }
         String videoId = tracks.get(currentIndex).videoId;
         boolean isFavorite = !TextUtils.isEmpty(videoId)
-                && FavoritesPlaylistStore.isFavorite(requireContext(), videoId);
+                && FavoritesPlaylistStore.isInLikedMusic(requireContext(), videoId);
         if (isFavorite) {
             ivActionLikeIcon.setImageResource(R.drawable.ic_thumb_up_liked);
             ivActionLikeIcon.clearColorFilter();

@@ -255,7 +255,7 @@ class YouTubeMusicService @JvmOverloads constructor(
             try {
                 val clientContext = JSONObject().apply {
                     put("clientName", "WEB_REMIX")
-                    put("clientVersion", "1.20240101.01.00")
+                    put("clientVersion", buildClientVersion())
                     put("hl", "en")
                 }
                 val endpoint = "https://music.youtube.com/youtubei/v1/search?prettyPrint=false"
@@ -301,7 +301,7 @@ class YouTubeMusicService @JvmOverloads constructor(
         val endpoint = "https://music.youtube.com/youtubei/v1/search?prettyPrint=false"
         
         // Detectar si el usuario busca contenido tipo video (subtítulos, letras, en vivo, covers, karaoke, etc.)
-        val lower = query.lowercase(java.util.Locale.ROOT)
+        val lower = query.lowercase(Locale.ROOT)
         val isVideoQuery = lower.contains("sub") || 
                            lower.contains("español") || 
                            lower.contains("spanish") || 
@@ -316,25 +316,28 @@ class YouTubeMusicService @JvmOverloads constructor(
                            lower.contains("clip") || 
                            lower.contains("subtitulado") || 
                            lower.contains("traduccion")
-                           
+
+        // Always use a filter to get 20+ results per page with proper continuation.
+        // Without filter, YTMusic only returns ~3 items per category (~12 total playable).
+        // Params from ytmusicapi reference (no URL-encoding needed — body is JSON):
+        //   songs:  EgWKAQIIAWoMEA4QChADEAQQCRAF
+        //   videos: EgWKAQIQAWoMEA4QChADEAQQCRAF
         val searchParams = if (isVideoQuery) {
-            "EgWKAQIQAWoKEAkQChAFEAMQBA%3D%3D" // Filtro de Videos (para encontrar subtítulos, traducciones, covers, en vivo)
+            "EgWKAQIQAWoMEA4QChADEAQQCRAF" // Videos filter
         } else {
-            null // Sin filtro: retorna todos los tipos (songs, videos, albums) — mayor cobertura
+            "EgWKAQIIAWoMEA4QChADEAQQCRAF" // Songs filter (default)
         }
 
         val clientContext = JSONObject().apply {
             put("clientName", "WEB_REMIX")
-            put("clientVersion", "1.20240101.01.00")
+            put("clientVersion", buildClientVersion())
             put("hl", "en")
         }
 
         val body = JSONObject().apply {
             put("context", JSONObject().apply { put("client", clientContext) })
             put("query", query)
-            if (searchParams != null) {
-                put("params", searchParams)
-            }
+            put("params", searchParams)
         }.toString().toByteArray(StandardCharsets.UTF_8)
 
         val url = URL(endpoint)
@@ -369,68 +372,35 @@ class YouTubeMusicService @JvmOverloads constructor(
             Log.w("YouTubeMusicService", "[INNERTUBE_DBG] raw=${rootJson.toString().take(2000)}")
         }
 
-        // Paginar con continuation tokens hasta alcanzar maxResults (máx 4 páginas adicionales)
-        var continuationToken = extractSearchContinuationToken(rootJson)
-        var continuationCount = 0
-        val maxContinuations = 6
-        while (continuationToken != null && results.size < maxResults && continuationCount < maxContinuations) {
-            continuationCount++
-            try {
-                val contBody = JSONObject().apply {
-                    put("context", JSONObject().apply { put("client", clientContext) })
-                    put("continuation", continuationToken)
-                }.toString().toByteArray(StandardCharsets.UTF_8)
-
-                val contUrl = URL(endpoint)
-                val contConn = contUrl.openConnection() as HttpURLConnection
-                contConn.requestMethod = "POST"
-                contConn.connectTimeout = 12000
-                contConn.readTimeout = 15000
-                contConn.doOutput = true
-                contConn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                contConn.setRequestProperty("Accept", "application/json")
-                contConn.setRequestProperty("User-Agent", "Mozilla/5.0")
-                contConn.setRequestProperty("Origin", "https://music.youtube.com")
-                contConn.setRequestProperty("Referer", "https://music.youtube.com/")
-                val contJson: JSONObject
-                try {
-                    contConn.outputStream.use { it.write(contBody) }
-                    val contStatus = contConn.responseCode
-                    val contBody2 = readResponse(contConn, contStatus >= 400)
-                    if (contStatus != HttpURLConnection.HTTP_OK) break
-                    contJson = JSONObject(contBody2)
-                } finally {
-                    contConn.disconnect()
-                }
-
-                val pageResults = parseInnertubeSearchContinuation(contJson, maxResults - results.size)
-                val existingIds = results.map { it.videoId }.toSet()
-                for (r in pageResults) {
-                    if (r.videoId.isNotEmpty() && r.videoId !in existingIds) {
-                        results.add(r)
-                    }
-                }
-                continuationToken = extractSearchContinuationTokenFromContinuation(contJson)
-            } catch (e: Exception) {
-                Log.w("YouTubeMusicService", "Search continuation #$continuationCount failed: ${e.message}")
-                break
-            }
-        }
-
-        val lastToken = continuationToken ?: ""
-        return SearchPageResult(results, lastToken)
+        // Return first page immediately — further pages loaded via continueInnertubeSearch + scroll
+        val continuationToken = extractSearchContinuationToken(rootJson) ?: ""
+        return SearchPageResult(results, continuationToken)
     }
 
     private fun extractSearchContinuationToken(root: JSONObject): String? {
-        val tabs = root.optJSONObject("contents")
-            ?.optJSONObject("tabbedSearchResultsRenderer")
-            ?.optJSONArray("tabs") ?: return null
-        for (t in 0 until tabs.length()) {
-            val contents = tabs.optJSONObject(t)
-                ?.optJSONObject("tabRenderer")
-                ?.optJSONObject("content")
-                ?.optJSONObject("sectionListRenderer")
-                ?.optJSONArray("contents") ?: continue
+        val rootContents = root.optJSONObject("contents") ?: return null
+
+        // Collect all sectionListRenderer content arrays (tabbed vs flat)
+        val allSections = mutableListOf<JSONArray>()
+
+        val tabbed = rootContents.optJSONObject("tabbedSearchResultsRenderer")
+        if (tabbed != null) {
+            val tabs = tabbed.optJSONArray("tabs") ?: JSONArray()
+            for (t in 0 until tabs.length()) {
+                val c = tabs.optJSONObject(t)
+                    ?.optJSONObject("tabRenderer")
+                    ?.optJSONObject("content")
+                    ?.optJSONObject("sectionListRenderer")
+                    ?.optJSONArray("contents") ?: continue
+                allSections.add(c)
+            }
+        } else {
+            val flat = rootContents.optJSONObject("sectionListRenderer")
+                ?.optJSONArray("contents")
+            if (flat != null) allSections.add(flat)
+        }
+
+        for (contents in allSections) {
             for (c in 0 until contents.length()) {
                 val shelf = contents.optJSONObject(c)
                     ?.optJSONObject("musicShelfRenderer") ?: continue
@@ -1497,7 +1467,7 @@ class YouTubeMusicService @JvmOverloads constructor(
             put("context", JSONObject().apply {
                 put("client", JSONObject().apply {
                     put("clientName", "WEB_REMIX")
-                    put("clientVersion", "1.20240101.01.00")
+                    put("clientVersion", buildClientVersion())
                     put("hl", "es")
                 })
             })
@@ -1627,7 +1597,7 @@ class YouTubeMusicService @JvmOverloads constructor(
             put("context", JSONObject().apply {
                 put("client", JSONObject().apply {
                     put("clientName", "WEB_REMIX")
-                    put("clientVersion", "1.20240101.01.00")
+                    put("clientVersion", buildClientVersion())
                     put("hl", "es")
                 })
             })
@@ -1735,7 +1705,7 @@ class YouTubeMusicService @JvmOverloads constructor(
             put("context", JSONObject().apply {
                 put("client", JSONObject().apply {
                     put("clientName", "WEB_REMIX")
-                    put("clientVersion", "1.20240101.01.00")
+                    put("clientVersion", buildClientVersion())
                     put("hl", "es")
                 })
             })
@@ -1824,7 +1794,7 @@ class YouTubeMusicService @JvmOverloads constructor(
         val endpoint = "https://music.youtube.com/youtubei/v1/browse?prettyPrint=false"
         val clientContext = JSONObject().apply {
             put("clientName", "WEB_REMIX")
-            put("clientVersion", "1.20240101.01.00")
+            put("clientVersion", buildClientVersion())
             put("hl", "es")
         }
         val body = JSONObject().apply {
@@ -2055,12 +2025,12 @@ class YouTubeMusicService @JvmOverloads constructor(
             put("context", JSONObject().apply {
                 put("client", JSONObject().apply {
                     put("clientName", "WEB_REMIX")
-                    put("clientVersion", "1.20240101.01.00")
+                    put("clientVersion", buildClientVersion())
                     put("hl", "es")
                 })
             })
             put("query", query)
-            put("params", "EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D")
+            put("params", "EgWKAQIIAWoMEA4QChADEAQQCRAF") // Songs filter
         }.toString().toByteArray(StandardCharsets.UTF_8)
 
         val url = URL(endpoint)
@@ -2343,6 +2313,12 @@ class YouTubeMusicService @JvmOverloads constructor(
         private const val MIN_PUBLIC_MUSIC_DURATION_SECONDS = 70
 
         private val SHARED_EXECUTOR: ExecutorService = Executors.newFixedThreadPool(3)
+
+        private fun buildClientVersion(): String {
+            val sdf = java.text.SimpleDateFormat("yyyyMMdd", Locale.US)
+            sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
+            return "1.${sdf.format(java.util.Date())}.01.00"
+        }
 
         private fun safeUrlEncode(value: String): String = try {
             URLEncoder.encode(value, StandardCharsets.UTF_8.name())

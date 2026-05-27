@@ -29,7 +29,6 @@
             android:layout_width="36dp"
             android:layout_height="36dp"
             android:scaleType="centerCrop"
-            android:background="@drawable/bg_comment_avatar"
             android:visibility="gone" />
 
     </FrameLayout>

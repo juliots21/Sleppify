@@ -1712,6 +1712,11 @@ public class PlaylistDetailFragment extends Fragment
 
         final String playlistIdSnapshot = currentPlaylistId;
         final List<PlaylistTrack> tracksSnapshot = new ArrayList<>(currentTracks);
+        // Skip computation entirely if tracks haven't loaded yet — avoids
+        // persisting a false negative (or positive) based on empty data.
+        if (tracksSnapshot.isEmpty()) {
+            return;
+        }
         final Context appContext = requireContext().getApplicationContext();
         final long generation = offlineReadyStateGeneration.incrementAndGet();
 
@@ -1735,7 +1740,9 @@ public class PlaylistDetailFragment extends Fragment
             @NonNull List<PlaylistTrack> tracksSnapshot
     ) {
         if (tracksSnapshot.isEmpty()) {
-            return true;
+            // Track list not loaded yet — do NOT claim complete.
+            // Return false so we don't persist a false positive.
+            return false;
         }
 
         int eligibleCount = 0;
@@ -2189,7 +2196,14 @@ public class PlaylistDetailFragment extends Fragment
                     safeDownloaded = Math.min(safeDownloaded, safeTotal);
                 }
 
-                setOfflineDownloadVisualState(true, currentId, activeIds, progressByTrackId);
+                // Only update track-level visual state if worker has emitted real progress
+                if (total > 0 || activeIds.length > 0) {
+                    setOfflineDownloadVisualState(true, currentId, activeIds, progressByTrackId);
+                } else if (!offlineDownloadRunning) {
+                    // First observer fire before worker emits — mark running without resetting tracks
+                    setOfflineDownloadVisualState(true, currentId,
+                            offlineDownloadingTrackIds.toArray(new String[0]), offlineTrackProgressFractions);
+                }
                 offlineDownloadQueued = queuedCount > 0;
 
                 if (!isInternetAvailable()) {
@@ -2295,7 +2309,7 @@ public class PlaylistDetailFragment extends Fragment
         };
 
         WorkManager.getInstance(requireContext().getApplicationContext())
-            .getWorkInfosByTagLiveData(observeTag)
+            .getWorkInfosForUniqueWorkLiveData(observeTag)
                 .observe(getViewLifecycleOwner(), offlineDownloadObserver);
     }
 
@@ -2308,7 +2322,7 @@ public class PlaylistDetailFragment extends Fragment
         }
 
         WorkManager.getInstance(requireContext().getApplicationContext())
-            .getWorkInfosByTagLiveData(observingOfflineUniqueName)
+            .getWorkInfosForUniqueWorkLiveData(observingOfflineUniqueName)
                 .removeObserver(offlineDownloadObserver);
 
         offlineDownloadObserver = null;

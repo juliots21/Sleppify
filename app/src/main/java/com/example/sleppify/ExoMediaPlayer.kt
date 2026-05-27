@@ -135,23 +135,35 @@ class ExoMediaPlayer {
     var isCrossfadeComponent: Boolean = false
 
     @JvmOverloads
-    constructor(context: Context, lowBuffer: Boolean = false) {
+    constructor(context: Context, lowBuffer: Boolean = false, backgroundBuffer: Boolean = false) {
         this.appContext = context.applicationContext
         val audioAttributes = androidx.media3.common.AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .build()
 
-        val loadControl = if (lowBuffer) {
-            DefaultLoadControl.Builder()
-                .setBufferDurationsMs(5_000, 15_000, 250, 500)
-                .setPrioritizeTimeOverSizeThresholds(true)
-                .build()
-        } else {
-            DefaultLoadControl.Builder()
-                .setBufferDurationsMs(15_000, 50_000, 250, 500)
-                .setPrioritizeTimeOverSizeThresholds(true)
-                .build()
+        val loadControl = when {
+            backgroundBuffer -> {
+                // Progressive background download: buffer up to 5 minutes of audio
+                // so the entire next track gets cached to disk via CacheDataSource.
+                // RAM usage is bounded (~5MB for 5 min of 128kbps MP3).
+                DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(30_000, 300_000, 250, 500)
+                    .setPrioritizeTimeOverSizeThresholds(false)
+                    .build()
+            }
+            lowBuffer -> {
+                DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(5_000, 15_000, 250, 500)
+                    .setPrioritizeTimeOverSizeThresholds(true)
+                    .build()
+            }
+            else -> {
+                DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(15_000, 50_000, 250, 500)
+                    .setPrioritizeTimeOverSizeThresholds(true)
+                    .build()
+            }
         }
 
         val player = ExoPlayer.Builder(appContext)

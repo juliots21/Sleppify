@@ -23,7 +23,7 @@ import java.net.URL
 import java.util.concurrent.Executors
 
 class CommentsBottomSheet(
-    context: Context,
+    private val context: Context,
     private val videoId: String,
     private val commentCountLabel: String
 ) {
@@ -139,7 +139,7 @@ class CommentsBottomSheet(
                 flPagingLoader.visibility = View.GONE
                 showLoading(false)
                 if (result == null) {
-                    if (comments.isEmpty()) showEmpty()
+                    if (comments.isEmpty()) showError()
                 } else {
                     nextPageToken = result.second
                     comments.addAll(result.first)
@@ -262,29 +262,40 @@ class CommentsBottomSheet(
     private fun showEmpty() {
         pbLoading.visibility = View.GONE
         rvComments.visibility = View.GONE
+        tvEmpty.text = "No hay comentarios"
+        tvEmpty.visibility = View.VISIBLE
+    }
+
+    private fun showError() {
+        pbLoading.visibility = View.GONE
+        rvComments.visibility = View.GONE
+        tvEmpty.text = "No se pudieron cargar los comentarios"
         tvEmpty.visibility = View.VISIBLE
     }
 
     private fun loadAvatarInto(profileUrl: String, ivAvatar: ImageView, itemView: View) {
         if (profileUrl.isNotEmpty()) {
-            ivAvatar.visibility = View.GONE
-            Glide.with(itemView)
-                .load(profileUrl)
-                .transform(CircleCrop())
-                .into(object : DrawableImageViewTarget(ivAvatar) {
-                    override fun onResourceReady(
-                        resource: android.graphics.drawable.Drawable,
-                        transition: com.bumptech.glide.request.transition.Transition<in android.graphics.drawable.Drawable>?
-                    ) {
-                        super.onResourceReady(resource, transition)
-                        ivAvatar.visibility = View.VISIBLE
-                    }
-                    override fun onLoadFailed(errorDrawable: android.graphics.drawable.Drawable?) {
-                        ivAvatar.visibility = View.GONE
-                    }
-                })
+            try {
+                Glide.with(context)
+                    .load(profileUrl)
+                    .transform(CircleCrop())
+                    .into(object : DrawableImageViewTarget(ivAvatar) {
+                        override fun onResourceReady(
+                            resource: android.graphics.drawable.Drawable,
+                            transition: com.bumptech.glide.request.transition.Transition<in android.graphics.drawable.Drawable>?
+                        ) {
+                            super.onResourceReady(resource, transition)
+                            ivAvatar.visibility = View.VISIBLE
+                        }
+                        override fun onLoadFailed(errorDrawable: android.graphics.drawable.Drawable?) {
+                            ivAvatar.visibility = View.GONE
+                        }
+                    })
+            } catch (e: Exception) {
+                ivAvatar.visibility = View.GONE
+            }
         } else {
-            Glide.with(itemView).clear(ivAvatar)
+            try { Glide.with(context).clear(ivAvatar) } catch (e: Exception) {}
             ivAvatar.visibility = View.GONE
         }
     }
